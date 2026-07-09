@@ -5,6 +5,14 @@ import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 
+const WINDOW_SHOW_TIMEOUT_MS = 1500
+const FONT_READY_SCRIPT = `
+  Promise.race([
+    document.fonts.ready.then(() => true),
+    new Promise(resolve => setTimeout(() => resolve(false), ${WINDOW_SHOW_TIMEOUT_MS}))
+  ])
+`
+
 function modelCachePath(modelId: string): string {
   const folder = 'models--' + modelId.replace(/[/.]/g, '--')
   return join(homedir(), '.cache', 'huggingface', 'hub', folder, 'snapshots', 'main')
@@ -113,7 +121,11 @@ function createWindow(): void {
     if (cancel) cancel()
   })
 
-  mainWindow.on('ready-to-show', () => {
+  mainWindow.on('ready-to-show', async () => {
+    try {
+      await mainWindow.webContents.executeJavaScript(FONT_READY_SCRIPT)
+    } catch {
+    }
     mainWindow.show()
   })
 

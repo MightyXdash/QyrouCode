@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { memo, useState, useEffect, useRef, useMemo } from 'react'
 import WindowControls from './WindowControls'
 import { MODEL_LIST, type CatalogModel, type Ratings } from './modelCatalog'
 import './WelcomeScreen.css'
@@ -41,9 +41,41 @@ const ENTER_CARD_STAGGER_MS = 55
 const ENTER_CARD_DURATION_MS = 170
 const TRANSITION_CLEARANCE_MS = 80
 const WELCOME_EXIT_STEP_COUNT = 4
+const DOWNLOAD_VISIBLE_ITEM_COUNT = 6
+const READY_TITLE_LINES = [
+  "You're all set! SupraCode will fetch these models",
+  'and the essentials from SupraLabs.',
+] as const
+const READY_SUBTITLE_LINES = [
+  'These models take a little while to download. Perfect time to',
+  'stretch your legs or grab a drink.',
+] as const
+const READY_TITLE_TEXT = READY_TITLE_LINES.join(' ')
+const READY_SUBTITLE_TEXT = READY_SUBTITLE_LINES.join(' ')
+const READY_SUBTITLE_CPS = 80
+const READY_TITLE_SCALE_MS = 360
+const READY_SUBTITLE_CHAR_FADE_MS = 120
+const READY_CARD_DELAY_AFTER_TEXT_MS = 110
+const READY_CARD_STAGGER_MS = 70
+const READY_CARD_POP_MS = 360
+const READY_MAX_DOWNLOAD_ITEM_COUNT = MODEL_LIST.length + ESSENTIAL_MODELS.length
 
 const staggeredDuration = (itemCount: number) =>
   ENTER_CARD_DELAY_MS + Math.max(itemCount - 1, 0) * ENTER_CARD_STAGGER_MS + ENTER_CARD_DURATION_MS
+
+const streamDuration = (text: string, charsPerSecond: number) =>
+  Math.ceil((text.length / charsPerSecond) * 1000)
+
+const readySubtitleDelay = () => READY_TITLE_SCALE_MS
+
+const readySubtitleDuration = () =>
+  streamDuration(READY_SUBTITLE_TEXT, READY_SUBTITLE_CPS) + READY_SUBTITLE_CHAR_FADE_MS
+
+const readyCardsDelay = () =>
+  readySubtitleDelay() + readySubtitleDuration() + READY_CARD_DELAY_AFTER_TEXT_MS
+
+const readyEnterDuration = () =>
+  readyCardsDelay() + Math.max(READY_MAX_DOWNLOAD_ITEM_COUNT - 1, 0) * READY_CARD_STAGGER_MS + READY_CARD_POP_MS
 
 const exitDuration = (currentPage: number) => {
   if (currentPage === 0) return (WELCOME_EXIT_STEP_COUNT - 1) * EXIT_STAGGER_MS + EXIT_DURATION_MS
@@ -55,10 +87,63 @@ const exitDuration = (currentPage: number) => {
 const enterDuration = (nextPage: number) => {
   if (nextPage === 1) return Math.max(ENTER_TITLE_MS, staggeredDuration(ROLES.length))
   if (nextPage === 2) return Math.max(ENTER_TITLE_MS, staggeredDuration(MODEL_LIST.length))
+  if (nextPage === 3) return readyEnterDuration()
   return ENTER_TITLE_MS
 }
 
 const animationDelay = (delayMs: number) => ({ animationDelay: `${delayMs}ms` })
+const transitionStyle = (delayMs: number, durationMs?: number) => ({
+  animationDelay: `${delayMs}ms`,
+  ...(durationMs ? { animationDuration: `${durationMs}ms` } : {}),
+})
+
+const ReadyStreamedText = memo(function ReadyStreamedText({
+  lines,
+  charsPerSecond,
+  delayMs,
+  className,
+  durationMs,
+}: {
+  lines: readonly string[]
+  charsPerSecond: number
+  delayMs: number
+  className: string
+  durationMs: number
+}): JSX.Element {
+  const charDelayMs = 1000 / charsPerSecond
+  let charIndex = 0
+
+  return (
+    <>
+      {lines.map((line) => (
+        <span key={line} className="ready-text-line">
+          {line.split(' ').map((word, wordIndex, words) => (
+            <span key={`${word}-${wordIndex}`} className="ready-text-word">
+              {[...word].map((char) => {
+                const currentIndex = charIndex
+                charIndex += 1
+
+                return (
+                  <span
+                    key={`${char}-${currentIndex}`}
+                    className={`${className} streaming`}
+                    style={transitionStyle(delayMs + currentIndex * charDelayMs, durationMs)}
+                  >
+                    {char}
+                  </span>
+                )
+              })}
+              {wordIndex < words.length - 1 && (() => {
+                charIndex += 1
+                return ' '
+              })()}
+            </span>
+          ))}
+        </span>
+      ))}
+    </>
+  )
+})
 
 function computeInterestScore(model: CatalogModel, selectedRoles: string[]): number {
   if (selectedRoles.length === 0) return 0
@@ -276,17 +361,26 @@ export default function WelcomeScreen(): JSX.Element {
       {displayPage === 3 && (
         <div className="page-inner ready-inner">
           <div className="ready-header">
-            <h2 className={`ready-title${phase === 'enter' ? ' enter-fade' : ''}`}
-                style={phase === 'enter' ? animationDelay(0) : undefined}>
-              You&apos;re all set! SupraCode will fetch these models and the essentials from SupraLabs.
+            <h2
+              className={`ready-title${phase === 'enter' ? ' ready-title-scale-in' : ''}`}
+              style={phase === 'enter' ? transitionStyle(0, READY_TITLE_SCALE_MS) : undefined}
+            >
+              {READY_TITLE_TEXT}
             </h2>
-            <p className={`ready-subtitle${phase === 'enter' ? ' enter-fade' : ''}`}
-               style={phase === 'enter' ? animationDelay(120) : undefined}>
-              These models take a little while to download. Perfect time to stretch your legs or grab a drink.
+            <p className="ready-subtitle" aria-label={READY_SUBTITLE_TEXT}>
+              <span aria-hidden="true">
+                <ReadyStreamedText
+                  lines={READY_SUBTITLE_LINES}
+                  charsPerSecond={READY_SUBTITLE_CPS}
+                  delayMs={readySubtitleDelay()}
+                  className="ready-subtitle-char"
+                  durationMs={READY_SUBTITLE_CHAR_FADE_MS}
+                />
+              </span>
             </p>
           </div>
-          <div className="download-list">
-            {downloadList.map((m) => (
+          <div className={`download-list${downloadList.length > DOWNLOAD_VISIBLE_ITEM_COUNT ? ' has-overflow' : ''}`}>
+            {downloadList.map((m, index) => (
               <DownloadItem
                 key={m.id}
                 name={m.name}
@@ -294,9 +388,11 @@ export default function WelcomeScreen(): JSX.Element {
                 active={activeDownloads.has(m.id)}
                 progress={downloadProgress[m.hf_repo]}
                 phase={phase}
+                index={index}
               />
             ))}
           </div>
+          <p className="ready-warning">DO NOT CLOSE THIS WINDOW!</p>
         </div>
       )}
     </div>
@@ -379,19 +475,26 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
-function DownloadItem({ name, done, active, progress, phase }: {
+function DownloadItem({ name, done, active, progress, phase, index }: {
   name: string
   done: boolean
   active: boolean
   progress?: { downloaded: number; total: number }
   phase: Phase
+  index: number
 }): JSX.Element {
   const pct = progress && progress.total > 0
     ? Math.min(100, (progress.downloaded / progress.total) * 100)
     : 0
+  const activeStatus = progress && progress.total > 0
+    ? `${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
+    : 'Starting…'
 
   return (
-    <div className={`download-item${done ? ' done' : ''}${active ? ' active' : ''}`}>
+    <div
+      className={`download-item${done ? ' done' : ''}${active ? ' active' : ''}${phase === 'enter' ? ' ready-pop-in' : ''}`}
+      style={phase === 'enter' ? transitionStyle(readyCardsDelay() + index * READY_CARD_STAGGER_MS, READY_CARD_POP_MS) : undefined}
+    >
       <div className="download-item-icon">
         {done ? (
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -412,8 +515,8 @@ function DownloadItem({ name, done, active, progress, phase }: {
               ? 'Done'
               : active
                 ? progress && progress.total > 0
-                  ? `${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
-                  : 'Starting…'
+                  ? activeStatus
+                  : activeStatus
                 : 'Queued'}
           </span>
         </div>
