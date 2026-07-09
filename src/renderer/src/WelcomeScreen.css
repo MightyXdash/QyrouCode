@@ -24,8 +24,13 @@
   --motion-exit-duration: 220ms;
   --motion-title-duration: 180ms;
   --motion-card-duration: 170ms;
+  --motion-roles-card-duration: 200ms;
   --motion-entrance-duration: 650ms;
+  --motion-welcome-exit-duration: 320ms;
   --motion-distance: 80px;
+  --motion-welcome-exit-distance: 28px;
+  --motion-roles-title-distance: 6px;
+  --motion-roles-card-distance: 24px;
   --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-ease-in: cubic-bezier(0.7, 0, 0.84, 0);
   --roles-list-balance-padding: 24px;
@@ -37,6 +42,19 @@
   --download-visible-items: 6;
   --download-list-fade-height: 48px;
   --ready-card-pop-distance: 10px;
+  --setup-intro-max-width: 560px;
+  --setup-intro-gap: 28px;
+  --preference-max-width: 760px;
+  --preference-header-gap: 10px;
+  --preference-choice-gap: 8px;
+  --preference-choice-padding-block: 13px;
+  --preference-choice-padding-inline: 16px;
+  --preference-footer-padding-block-start: 14px;
+  --motion-setup-duration: 280ms;
+  --motion-question-header-duration: 180ms;
+  --motion-question-card-duration: 200ms;
+  --motion-question-distance: 20px;
+  --motion-ready-exit-distance: 18px;
 }
 
 * {
@@ -60,6 +78,10 @@ body {
   display: flex;
   height: 100dvh;
   padding: var(--welcome-padding-block-start) var(--welcome-padding-inline) var(--welcome-padding-block-end);
+}
+
+.blank-state {
+  background: var(--bg);
 }
 
 .drag-region {
@@ -100,7 +122,6 @@ body {
   color: var(--text-strong);
   letter-spacing: 0;
   opacity: 0;
-  animation: scaleDownFadeIn var(--motion-entrance-duration) var(--motion-ease-out) both;
 }
 
 .welcome-subtitle {
@@ -109,7 +130,6 @@ body {
   color: var(--text-base);
   margin-top: 40px;
   opacity: 0;
-  animation: scaleDownFadeIn var(--motion-entrance-duration) var(--motion-ease-out) 0.08s both;
 }
 
 .welcome-description {
@@ -121,13 +141,37 @@ body {
   max-width: 600px;
   text-align: center;
   opacity: 0;
-  animation: scaleDownFadeIn var(--motion-entrance-duration) var(--motion-ease-out) 0.16s both;
 }
 
 .next-wrapper {
   margin-top: 160px;
   opacity: 0;
-  animation: scaleDownFadeIn var(--motion-entrance-duration) var(--motion-ease-out) 0.24s both;
+}
+
+.welcome-exit {
+  animation: welcomePageExit var(--motion-welcome-exit-duration) var(--motion-ease-out) both;
+  will-change: opacity, transform;
+}
+
+.initial-motion-pending .initial-enter {
+  visibility: hidden;
+}
+
+.initial-motion-ready .initial-enter:not(.exit-left) {
+  animation: scaleDownFadeIn var(--motion-entrance-duration) var(--motion-ease-out) both;
+  will-change: opacity, transform;
+}
+
+.initial-motion-ready .welcome-subtitle:not(.exit-left) {
+  animation-delay: 0.08s;
+}
+
+.initial-motion-ready .welcome-description:not(.exit-left) {
+  animation-delay: 0.16s;
+}
+
+.initial-motion-ready .next-wrapper:not(.exit-left) {
+  animation-delay: 0.24s;
 }
 
 /* ── Shared button ── */
@@ -172,6 +216,11 @@ body {
   max-width: 640px;
 }
 
+.roles-title.enter-fade {
+  animation: rolesTitleEnter var(--motion-title-duration) var(--motion-ease-out) both;
+  will-change: opacity, transform;
+}
+
 .roles-list {
   display: flex;
   flex-direction: column;
@@ -186,6 +235,10 @@ body {
 
 .roles-list::-webkit-scrollbar {
   display: none;
+}
+
+.roles-list .enter-right {
+  animation: rolesCardEnter var(--motion-roles-card-duration) var(--motion-ease-out) both;
 }
 
 .role-card {
@@ -264,6 +317,13 @@ body {
   font-size: 1.5rem;
   font-weight: 600;
   color: var(--text-strong);
+}
+
+.models-availability {
+  margin-top: 4px;
+  color: var(--text-weak);
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 
 .models-list {
@@ -538,6 +598,10 @@ body {
   border-color: rgba(18, 201, 5, 0.35);
 }
 
+.download-item.failed {
+  border-color: rgba(252, 83, 58, 0.45);
+}
+
 .download-item.ready-pop-in {
   opacity: 0;
   transform: translate3d(0, var(--ready-card-pop-distance), 0) scale(0.98);
@@ -568,6 +632,19 @@ body {
   border: 1.5px solid var(--text-weaker);
   border-top-color: var(--interactive);
   animation: spin 0.8s linear infinite;
+}
+
+.download-failure-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fc533a;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
 }
 
 @keyframes spin {
@@ -615,6 +692,10 @@ body {
   color: #12c905;
 }
 
+.download-item.failed .download-item-status {
+  color: #fc533a;
+}
+
 .download-item-track {
   width: 100%;
   height: 3px;
@@ -634,12 +715,343 @@ body {
   background: #12c905;
 }
 
+.download-failure-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #fc533a;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.download-failure-row button {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--interactive);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.ready-exit {
+  animation: readyPageExit var(--motion-exit-duration) var(--motion-ease-in) both;
+  will-change: opacity, transform;
+}
+
 .ready-warning {
   margin-top: auto;
   color: var(--text-weaker);
   font-size: 0.8rem;
   font-weight: 600;
   letter-spacing: 0;
+}
+
+/* ── Setup bridge ── */
+
+.setup-intro {
+  align-items: center;
+  justify-content: center;
+  gap: var(--setup-intro-gap);
+  text-align: center;
+}
+
+.setup-intro-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--preference-header-gap);
+  max-width: var(--setup-intro-max-width);
+}
+
+.setup-eyebrow,
+.preference-progress {
+  color: var(--text-weak);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.setup-intro h2 {
+  color: var(--text-strong);
+  font-size: 2.25rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.setup-intro p:not(.setup-eyebrow) {
+  color: var(--text-weak);
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+.setup-intro-enter {
+  animation: setupIntroEnter var(--motion-setup-duration) var(--motion-ease-out) both;
+  will-change: opacity, transform;
+}
+
+.setup-intro-exit {
+  animation: slideLeft var(--motion-exit-duration) var(--motion-ease-in) both;
+  will-change: opacity, transform;
+}
+
+/* ── Preferences ── */
+
+.preference-inner {
+  width: 100%;
+  max-width: var(--preference-max-width);
+  margin-inline: auto;
+  min-height: 0;
+}
+
+.preference-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--preference-header-gap);
+  flex-shrink: 0;
+}
+
+.preference-progress {
+  display: flex;
+  justify-content: space-between;
+}
+
+.preference-header h2 {
+  color: var(--text-strong);
+  font-size: 1.65rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.preference-header p {
+  color: var(--text-weak);
+  font-size: 0.92rem;
+  line-height: 1.5;
+  max-width: 680px;
+}
+
+.preference-choices {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--preference-choice-gap);
+  min-height: 0;
+  overflow-y: auto;
+  padding-block: 18px;
+  scrollbar-width: none;
+}
+
+.preference-choices::-webkit-scrollbar {
+  display: none;
+}
+
+.preference-choice {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 13px;
+  padding: var(--preference-choice-padding-block) var(--preference-choice-padding-inline);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.preference-choice:hover {
+  border-color: var(--text-weaker);
+}
+
+.preference-choice:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
+.preference-choice.selected {
+  border-color: var(--interactive);
+  background: rgba(3, 76, 255, 0.03);
+  box-shadow: 0 0 0 1px rgba(3, 76, 255, 0.08);
+}
+
+.preference-choice.caution.selected {
+  border-color: #fc533a;
+  background: rgba(252, 83, 58, 0.04);
+  box-shadow: 0 0 0 1px rgba(252, 83, 58, 0.08);
+}
+
+.preference-radio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1.5px solid var(--text-weaker);
+  border-radius: 50%;
+  color: #fff;
+}
+
+.preference-radio.checked {
+  border-color: var(--interactive);
+  background: var(--interactive);
+}
+
+.preference-choice.caution .preference-radio.checked {
+  border-color: #fc533a;
+  background: #fc533a;
+}
+
+.preference-choice-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.preference-choice-title {
+  color: var(--text-strong);
+  font-size: 0.93rem;
+  font-weight: 600;
+}
+
+.preference-choice-description {
+  color: var(--text-weak);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.preference-choice-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.preference-detail,
+.preference-recommended {
+  padding: 3px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.preference-detail {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-weak);
+}
+
+.preference-recommended {
+  background: rgba(3, 76, 255, 0.08);
+  color: var(--interactive);
+}
+
+.custom-response-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex-shrink: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.custom-response-field label {
+  color: var(--text-strong);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.custom-response-field textarea {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  padding: 9px 10px;
+}
+
+.custom-response-field textarea:focus {
+  outline: 2px solid rgba(3, 76, 255, 0.22);
+  border-color: var(--interactive);
+}
+
+.custom-response-field > span {
+  align-self: flex-end;
+  color: var(--text-weaker);
+  font-size: 0.7rem;
+}
+
+.preference-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  min-height: 52px;
+  padding-top: var(--preference-footer-padding-block-start);
+}
+
+.back-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-weak);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 8px 2px;
+}
+
+.back-btn:hover:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.back-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.preference-submit {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.preference-error {
+  color: #fc533a;
+  font-size: 0.78rem;
+}
+
+.preference-header-enter,
+.preference-enter-right,
+.preference-enter-left {
+  will-change: opacity, transform;
+}
+
+.preference-header-enter {
+  animation: preferenceHeaderEnter var(--motion-question-header-duration) var(--motion-ease-out) both;
+}
+
+.preference-enter-right {
+  animation: preferenceEnterRight var(--motion-question-card-duration) var(--motion-ease-out) both;
+}
+
+.preference-enter-left {
+  animation: preferenceEnterLeft var(--motion-question-card-duration) var(--motion-ease-out) both;
 }
 
 @keyframes readyTitleScaleIn {
@@ -673,11 +1085,72 @@ body {
   }
 }
 
+@keyframes readyPageExit {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(calc(var(--motion-ready-exit-distance) * -1), 0, 0);
+  }
+}
+
+@keyframes setupIntroEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--motion-question-distance), 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes preferenceHeaderEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, var(--motion-roles-title-distance), 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes preferenceEnterRight {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--motion-question-distance), 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes preferenceEnterLeft {
+  from {
+    opacity: 0;
+    transform: translate3d(calc(var(--motion-question-distance) * -1), 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 /* ── Exit Animation: slide left ── */
 
 .exit-left {
   opacity: 1;
   animation: slideLeft var(--motion-exit-duration) var(--motion-ease-in) both;
+  will-change: opacity, transform;
+}
+
+.exit-right {
+  opacity: 1;
+  animation: slideRight var(--motion-exit-duration) var(--motion-ease-in) both;
   will-change: opacity, transform;
 }
 
@@ -689,6 +1162,17 @@ body {
   to {
     opacity: 0;
     transform: translate3d(calc(var(--motion-distance) * -1), 0, 0);
+  }
+}
+
+@keyframes slideRight {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(var(--motion-distance), 0, 0);
   }
 }
 
@@ -716,6 +1200,28 @@ body {
   }
 }
 
+@keyframes rolesTitleEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, var(--motion-roles-title-distance), 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes rolesCardEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--motion-roles-card-distance), 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 /* ── Keyframes ── */
 
 @keyframes fadeIn {
@@ -731,5 +1237,40 @@ body {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes welcomePageExit {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(calc(var(--motion-welcome-exit-distance) * -1), 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .initial-motion-pending .initial-enter,
+  .initial-motion-ready .initial-enter {
+    visibility: visible;
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+
+  .welcome-exit {
+    animation: none;
+  }
+
+  .ready-exit,
+  .setup-intro-enter,
+  .setup-intro-exit,
+  .preference-header-enter,
+  .preference-enter-right,
+  .preference-enter-left,
+  .exit-right {
+    animation: none;
   }
 }

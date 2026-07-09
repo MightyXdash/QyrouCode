@@ -8,7 +8,8 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:settings": "tsc -p tsconfig.settings-test.json && node --test .test-dist/tests/settings.test.js"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",

@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "rootDir": ".",
+    "outDir": ".test-dist"
+  },
+  "include": [
+    "src/shared/settings.ts",
+    "tests/settings.test.ts"
+  ]
+}

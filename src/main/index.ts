@@ -4,14 +4,9 @@ import { existsSync, readdirSync, createWriteStream, mkdirSync, unlinkSync, rena
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { completeOnboarding, getOnboardingState } from './settings'
 
-const WINDOW_SHOW_TIMEOUT_MS = 1500
-const FONT_READY_SCRIPT = `
-  Promise.race([
-    document.fonts.ready.then(() => true),
-    new Promise(resolve => setTimeout(() => resolve(false), ${WINDOW_SHOW_TIMEOUT_MS}))
-  ])
-`
+const WINDOW_READY_TIMEOUT_MS = 2500
 
 function modelCachePath(modelId: string): string {
   const folder = 'models--' + modelId.replace(/[/.]/g, '--')
@@ -38,6 +33,32 @@ function createWindow(): void {
 
   ipcMain.on('minimize-window', () => mainWindow.minimize())
   ipcMain.on('close-window', () => mainWindow.close())
+  ipcMain.handle('get-onboarding-state', () => getOnboardingState())
+  ipcMain.handle('complete-onboarding', (_event, preferences: unknown) => completeOnboarding(preferences))
+
+  let windowShown = false
+  let windowReadyTimeout: ReturnType<typeof setTimeout> | undefined
+
+  const showWindow = () => {
+    if (windowShown || mainWindow.isDestroyed()) return
+    windowShown = true
+    if (windowReadyTimeout) clearTimeout(windowReadyTimeout)
+    mainWindow.show()
+  }
+
+  const handleRendererReady = (event: Electron.IpcMainEvent) => {
+    if (event.sender !== mainWindow.webContents) return
+    showWindow()
+    mainWindow.webContents.send('window-shown')
+  }
+
+  ipcMain.on('renderer-ready', handleRendererReady)
+  windowReadyTimeout = setTimeout(showWindow, WINDOW_READY_TIMEOUT_MS)
+
+  mainWindow.once('closed', () => {
+    if (windowReadyTimeout) clearTimeout(windowReadyTimeout)
+    ipcMain.removeListener('renderer-ready', handleRendererReady)
+  })
 
   ipcMain.handle('check-model-cache', (_event, modelId: string) => {
     const dir = modelCachePath(modelId)
@@ -119,14 +140,6 @@ function createWindow(): void {
   ipcMain.handle('cancel-download', (_event, repoId: string) => {
     const cancel = activeDownloads.get(repoId)
     if (cancel) cancel()
-  })
-
-  mainWindow.on('ready-to-show', async () => {
-    try {
-      await mainWindow.webContents.executeJavaScript(FONT_READY_SCRIPT)
-    } catch {
-    }
-    mainWindow.show()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

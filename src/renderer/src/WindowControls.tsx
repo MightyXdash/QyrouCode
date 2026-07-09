@@ -1,10 +1,15 @@
 import './WindowControls.css'
+import type { OnboardingPreferences, OnboardingState } from '../../shared/settings'
 
 declare global {
   interface Window {
     api: {
       minimize: () => void
       close: () => void
+      rendererReady: () => void
+      onWindowShown: (callback: () => void) => () => void
+      getOnboardingState: () => Promise<OnboardingState>
+      completeOnboarding: (preferences: OnboardingPreferences) => Promise<void>
       checkModelCache: (modelId: string) => Promise<boolean>
       downloadModel: (repoId: string) => Promise<void>
       cancelDownload: (repoId: string) => Promise<void>
