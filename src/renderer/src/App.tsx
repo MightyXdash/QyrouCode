@@ -1,5 +1,7 @@
+import WelcomeScreen from './WelcomeScreen'
+
 function App(): JSX.Element {
-  return <div>SupraCode</div>
+  return <WelcomeScreen />
 }
 
 export default App

@@ -1,0 +1,34 @@
+.window-controls {
+  position: fixed;
+  top: 12px;
+  right: 14px;
+  display: flex;
+  gap: 6px;
+  z-index: 100;
+}
+
+.win-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  color: var(--text-weak);
+  transition: background 0.12s ease, color 0.12s ease;
+  -webkit-app-region: no-drag;
+}
+
+.win-btn:hover {
+  background: var(--border);
+  color: var(--text-base);
+}
+
+.win-btn-close:hover {
+  background: var(--text-weak);
+  color: #fff;
+}
