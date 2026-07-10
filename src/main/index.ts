@@ -193,6 +193,7 @@ function createMainAppWindow(): BrowserWindow {
     resizable: true,
     maximizable: true,
     minimizable: true,
+    frame: false,
     title: 'SupraCode',
     show: false,
     icon: appIconPath(),
@@ -341,6 +342,12 @@ app.whenReady().then(() => {
 
   ipcMain.on('minimize-window', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize()
+  })
+  ipcMain.on('toggle-maximize-window', (event) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender)
+    if (!targetWindow) return
+    if (targetWindow.isMaximized()) targetWindow.unmaximize()
+    else targetWindow.maximize()
   })
   ipcMain.on('close-window', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close()

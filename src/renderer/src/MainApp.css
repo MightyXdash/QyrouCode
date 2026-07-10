@@ -1,5 +1,5 @@
 :root {
-  --app-sidebar-width: 252px;
+  --app-sidebar-width: 272px;
   --app-content-max-width: 760px;
   --app-composer-bottom: 42px;
   --app-page-padding: 28px;
@@ -7,6 +7,11 @@
   --app-icon-size: 18px;
   --app-menu-width: 320px;
   --app-reasoning-menu-width: 180px;
+  --window-control-height: 35px;
+  --app-titlebar-height: var(--window-control-height);
+  --app-titlebar-control-width: 34px;
+  --app-titlebar-drag-start: 280px;
+  --window-control-width: 46px;
   --background-base: light-dark(#f7f7f7, #1f1f1f);
   --background-weak: light-dark(#f1f1f1, #1c1c1c);
   --surface-base: light-dark(#ffffff, #252525);
@@ -15,7 +20,9 @@
   --surface-selected: light-dark(rgba(0, 0, 0, 0.065), rgba(255, 255, 255, 0.075));
   --surface-success: #12c905;
   --surface-warning: light-dark(#ffdc17, #fcd53a);
+  --surface-error: #fc533a;
   --text-invert: light-dark(#ffffff, #171717);
+  --text-on-color: #ffffff;
   --border-base: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.14));
   --border-weak: light-dark(rgba(0, 0, 0, 0.075), rgba(255, 255, 255, 0.08));
   --shadow-composer: 0 10px 30px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.3)), 0 0 0 0.5px var(--border-base);
@@ -31,45 +38,112 @@
   background: var(--background-base);
   color: var(--text-base);
   color-scheme: light dark;
+  transition: grid-template-columns 150ms var(--motion-ease-out);
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.app-titlebar {
+  position: fixed;
+  inset: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: var(--app-titlebar-height);
+  padding-right: calc(var(--window-control-width) * 3);
+  border-bottom: 1px solid var(--border-weak);
+  background: var(--background-weak);
+  z-index: 90;
+}
+
+.titlebar-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  -webkit-app-region: no-drag;
+  z-index: 2;
+}
+
+.titlebar-drag-region {
+  position: absolute;
+  top: 0;
+  right: calc(var(--window-control-width) * 3);
+  bottom: 0;
+  left: var(--app-titlebar-drag-start);
+  -webkit-app-region: drag;
+}
+
+.titlebar-icon-button,
+.titlebar-menu button {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-weak);
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-icon-button {
+  width: var(--app-titlebar-control-width);
+}
+
+.titlebar-icon-button:first-child {
+  margin-right: 5px;
+}
+
+.titlebar-icon-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.titlebar-icon-button:disabled {
+  color: var(--text-weaker);
+  cursor: default;
+}
+
+.titlebar-icon-button:not(:disabled):hover,
+.titlebar-menu button:hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.forward-arrow {
+  transform: scaleX(-1);
+}
+
+.titlebar-menu {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  margin-left: 3px;
+}
+
+.titlebar-menu button {
+  padding: 0 10px;
+  font-size: 13px;
 }
 
 .app-sidebar {
   position: relative;
-  padding: 46px 12px 18px;
+  padding: calc(var(--app-titlebar-height) + 13px) 8px 18px;
   background: var(--background-weak);
   border-right: 1px solid var(--border-weak);
+  overflow: hidden;
 }
 
-.sidebar-drag-region,
-.workspace-drag-region {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 34px;
-  -webkit-app-region: drag;
-}
-
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  height: 34px;
-  padding: 0 10px 12px;
-  color: var(--text-strong);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.brand-mark,
-.empty-state-mark {
-  display: grid;
-  place-items: center;
-  background: var(--text-strong);
-  color: var(--text-invert);
-  font-weight: 600;
-}
-
-.brand-mark { width: 21px; height: 21px; border-radius: var(--radius-md); font-size: 11px; }
-.sidebar-nav { display: grid; gap: 2px; margin-top: 12px; }
+.sidebar-nav { display: grid; gap: 1px; }
 
 .sidebar-action {
   display: grid;
@@ -77,8 +151,8 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 36px;
-  padding: 0 10px;
+  min-height: 32px;
+  padding: 0 9px;
   border: 0;
   border-radius: var(--radius-lg);
   background: transparent;
@@ -90,13 +164,32 @@
 }
 
 .sidebar-action:hover { background: var(--surface-hover); color: var(--text-strong); }
+.sidebar-action:first-child { background: var(--surface-selected); color: var(--text-strong); }
 .sidebar-action svg, .composer-icon-button svg { width: var(--app-icon-size); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
 .sidebar-action kbd { color: var(--text-weaker); font: 11px 'JetBrains Mono', monospace; opacity: 0; }
 .sidebar-action:hover kbd { opacity: 1; }
 
+.sidebar-section {
+  margin-top: 30px;
+  padding: 0 9px;
+}
+
+.sidebar-section-label {
+  color: var(--text-weak);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sidebar-empty-message {
+  max-width: 180px;
+  margin-top: 10px;
+  color: var(--text-weaker);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .app-workspace { position: relative; min-width: 0; background: var(--background-base); }
 .empty-state { position: absolute; top: 43%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
-.empty-state-mark { width: 36px; height: 36px; margin: 0 auto 18px; border-radius: var(--radius-xl); font-size: 17px; opacity: 0.13; }
 .empty-state h1 { color: var(--text-strong); font-size: 24px; font-weight: 500; letter-spacing: -0.02em; }
 .empty-state p { margin-top: 8px; color: var(--text-weak); font-size: 13px; }
 
@@ -160,7 +253,7 @@
 @keyframes menuEnter { from { opacity: 0; transform: scale(1.05) translateY(3px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 
 @media (max-width: 760px) {
-  :root { --app-sidebar-width: 190px; --app-page-padding: 18px; }
+  :root { --app-sidebar-width: 220px; --app-page-padding: 18px; }
   .sidebar-action kbd { display: none; }
   .empty-state { width: 80%; }
   .model-select { max-width: 160px; }

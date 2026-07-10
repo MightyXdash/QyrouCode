@@ -4,6 +4,7 @@ import type { LlamaRuntimeStatus } from '../shared/llama'
 
 const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
+  toggleMaximize: () => ipcRenderer.send('toggle-maximize-window'),
   close: () => ipcRenderer.send('close-window'),
   openMainWindow: (): Promise<void> => ipcRenderer.invoke('open-main-window'),
   rendererReady: () => ipcRenderer.send('renderer-ready'),
