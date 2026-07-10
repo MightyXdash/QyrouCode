@@ -15,6 +15,7 @@ export interface CatalogModel {
   id: string
   name: string
   hf_repo: string
+  gguf_file: string
   base_model: string
   developer: string
   quantizer: string
@@ -41,6 +42,7 @@ export const MODEL_LIST: CatalogModel[] = [
     id: 'qwen3_5_4b_q4km',
     name: 'Qwen3.5-4B GGUF Q4_K_M',
     hf_repo: 'hinny/Qwen3.5-4B-GGUF-Q4_K_M',
+    gguf_file: 'Qwen3.5-4B-Q4_K_M.gguf',
     base_model: 'Qwen/Qwen3.5-4B',
     developer: 'Qwen',
     quantizer: 'hinny',
@@ -68,6 +70,7 @@ export const MODEL_LIST: CatalogModel[] = [
     id: 'gemma4_e2b_it_q4_0',
     name: 'Gemma 4 E2B IT QAT GGUF Q4_0',
     hf_repo: 'google/gemma-4-E2B-it-qat-q4_0-gguf',
+    gguf_file: 'gemma-4-E2B_q4_0-it.gguf',
     base_model: 'google/gemma-4-E2B-it',
     developer: 'Google DeepMind',
     quantizer: 'Google',
@@ -95,6 +98,7 @@ export const MODEL_LIST: CatalogModel[] = [
     id: 'gemma4_e4b_it_q4_0',
     name: 'Gemma 4 E4B IT QAT GGUF Q4_0',
     hf_repo: 'google/gemma-4-E4B-it-qat-q4_0-gguf',
+    gguf_file: 'gemma-4-E4B_q4_0-it.gguf',
     base_model: 'google/gemma-4-E4B-it',
     developer: 'Google DeepMind',
     quantizer: 'Google',
@@ -122,6 +126,7 @@ export const MODEL_LIST: CatalogModel[] = [
     id: 'qwen3_5_9b_q4km',
     name: 'Qwen3.5-9B GGUF Q4_K_M',
     hf_repo: 'jc-builds/Qwen3.5-9B-Q4_K_M-GGUF',
+    gguf_file: 'Qwen3.5-9B-Q4_K_M.gguf',
     base_model: 'Qwen/Qwen3.5-9B',
     developer: 'Qwen',
     quantizer: 'jc-builds',
@@ -149,6 +154,7 @@ export const MODEL_LIST: CatalogModel[] = [
     id: 'qwen3_6_27b_q4km',
     name: 'Qwen3.6-27B GGUF Q4_K_M',
     hf_repo: 'sm54/Qwen3.6-27B-Q4_K_M-GGUF',
+    gguf_file: 'qwen3.6-27b-q4_k_m.gguf',
     base_model: 'Qwen/Qwen3.6-27B',
     developer: 'Qwen',
     quantizer: 'sm54',
@@ -176,6 +182,7 @@ export const MODEL_LIST: CatalogModel[] = [
     id: 'qwen3_6_35b_a3b_q4km',
     name: 'Qwen3.6-35B-A3B GGUF Q4_K_M',
     hf_repo: 'Abiray/Qwen3.6-35B-A3B-Q4_K_M-GGUF',
+    gguf_file: 'Qwen3.6-35B-A3B-Q4_K_M.gguf',
     base_model: 'Qwen/Qwen3.6-35B-A3B',
     developer: 'Qwen',
     quantizer: 'Abiray',
@@ -203,6 +210,7 @@ export const MODEL_LIST: CatalogModel[] = [
     id: 'gemma4_26b_a4b_it_q4_0',
     name: 'Gemma 4 26B A4B IT QAT GGUF Q4_0',
     hf_repo: 'google/gemma-4-26B-A4B-it-qat-q4_0-gguf',
+    gguf_file: 'gemma-4-26B_q4_0-it.gguf',
     base_model: 'google/gemma-4-26B-A4B-it',
     developer: 'Google DeepMind',
     quantizer: 'Google',
@@ -230,6 +238,7 @@ export const MODEL_LIST: CatalogModel[] = [
     id: 'gemma4_31b_it_q4_0',
     name: 'Gemma 4 31B IT QAT GGUF Q4_0',
     hf_repo: 'google/gemma-4-31B-it-qat-q4_0-gguf',
+    gguf_file: 'gemma-4-31B_q4_0-it.gguf',
     base_model: 'google/gemma-4-31B-it',
     developer: 'Google DeepMind',
     quantizer: 'Google',
