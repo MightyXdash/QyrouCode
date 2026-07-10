@@ -12,6 +12,7 @@
     "src/shared/settings.ts",
     "src/shared/llama.ts",
     "tests/llama.test.ts",
+    "tests/runtimeManifest.test.ts",
     "tests/settings.test.ts"
   ]
 }
