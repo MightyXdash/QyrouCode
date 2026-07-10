@@ -4,7 +4,9 @@ import {
   type OnboardingPreferences,
   type OnboardingState,
   type SettingsStoreData,
-  validateOnboardingPreferences
+  type ThemePreference,
+  validateOnboardingPreferences,
+  validateThemePreference
 } from '../shared/settings'
 
 const settingsStore = new Store<SettingsStoreData>({
@@ -27,4 +29,14 @@ export const completeOnboarding = (value: unknown): OnboardingPreferences => {
     onboardingPreferences: preferences
   })
   return preferences
+}
+
+export const getTheme = (): ThemePreference =>
+  settingsStore.get('onboardingPreferences')?.theme ?? 'system'
+
+export const setTheme = (value: unknown): ThemePreference => {
+  const theme = validateThemePreference(value)
+  const preferences = settingsStore.get('onboardingPreferences')
+  if (preferences) settingsStore.set('onboardingPreferences', { ...preferences, theme })
+  return theme
 }

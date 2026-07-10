@@ -1,16 +1,17 @@
 .window-controls {
   position: fixed;
-  top: 12px;
-  right: 14px;
+  top: 0;
+  right: 0;
   display: flex;
-  gap: 6px;
+  height: var(--window-control-height);
+  gap: 0;
   z-index: 100;
 }
 
 .win-btn {
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
+  width: var(--window-control-width);
+  height: var(--window-control-height);
+  border-radius: 0;
   border: none;
   cursor: pointer;
   display: flex;
@@ -29,6 +30,6 @@
 }
 
 .win-btn-close:hover {
-  background: var(--text-weak);
-  color: #fff;
+  background: var(--surface-error);
+  color: var(--text-on-color);
 }

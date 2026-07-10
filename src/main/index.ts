@@ -1,11 +1,17 @@
 import { app, shell, BrowserWindow, Menu, ipcMain, net } from 'electron'
+import { randomUUID } from 'crypto'
 import { dirname, join } from 'path'
 import { existsSync, readdirSync, createWriteStream, mkdirSync, unlinkSync, renameSync, statSync } from 'fs'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { completeOnboarding, getOnboardingState } from './settings'
+import { completeOnboarding, getOnboardingState, getTheme, setTheme } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
+import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
+import { resolveModelArtifact } from './modelResolver'
+import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManifest'
+import { FIRST_LOAD_CONTEXT_TOKENS } from '../shared/llama'
+import type { LocalCompletionEvent, LocalCompletionRequest, LocalCompletionStart } from './localCompletionClient'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -20,6 +26,7 @@ const MODEL_PROJECTOR_MARKERS = ['mmproj', 'projector']
 
 let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
+const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController }>()
 
 function appIconPath(): string {
   const filename = process.platform === 'win32' ? WINDOWS_ICON_FILENAME : DEFAULT_ICON_FILENAME
@@ -193,6 +200,7 @@ function createMainAppWindow(): BrowserWindow {
     resizable: true,
     maximizable: true,
     minimizable: true,
+    frame: false,
     title: 'SupraCode',
     show: false,
     icon: appIconPath(),
@@ -342,6 +350,19 @@ app.whenReady().then(() => {
   ipcMain.on('minimize-window', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize()
   })
+  ipcMain.on('toggle-maximize-window', (event) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender)
+    if (!targetWindow) return
+    if (targetWindow.isMaximized()) targetWindow.unmaximize()
+    else targetWindow.maximize()
+  })
+  ipcMain.on('run-window-command', (event, command: WindowCommand) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender)
+    if (!targetWindow) return
+    if (command === WINDOW_COMMANDS.reload) targetWindow.webContents.reload()
+    if (command === WINDOW_COMMANDS.toggleDevTools) targetWindow.webContents.toggleDevTools()
+    if (command === WINDOW_COMMANDS.toggleFullscreen) targetWindow.setFullScreen(!targetWindow.isFullScreen())
+  })
   ipcMain.on('close-window', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close()
   })
@@ -359,11 +380,38 @@ app.whenReady().then(() => {
     else targetWindow.once('ready-to-show', closeOnboardingWindow)
   }))
   ipcMain.handle('get-llama-status', () => llamaRuntime?.getStatus())
+  ipcMain.handle('get-theme', () => getTheme())
+  ipcMain.handle('set-theme', (_event, theme: unknown) => setTheme(theme))
+  ipcMain.handle('start-local-model', async (_event, modelId: string) => {
+    const artifact = getModelArtifact(INITIAL_MODEL_ARTIFACTS, modelId)
+    if (!artifact) throw new Error('The selected model is not approved for local runtime use')
+    if (!llamaRuntime) throw new Error('llama-server is not available')
+    const resolved = await resolveModelArtifact(huggingFaceHubPath(), artifact)
+    return llamaRuntime.start(resolved.path, FIRST_LOAD_CONTEXT_TOKENS)
+  })
   ipcMain.handle('start-llama-server', (_event, modelPath: string, contextTokens: number) => {
     const mmprojPath = findProjector(modelPath)
     return llamaRuntime?.start(modelPath, contextTokens, mmprojPath)
   })
   ipcMain.handle('stop-llama-server', () => llamaRuntime?.stop())
+  ipcMain.handle('start-local-completion', (event, request: LocalCompletionRequest): LocalCompletionStart => {
+    const requestId = randomUUID()
+    const controller = new AbortController()
+    activeCompletionRequests.set(requestId, { senderId: event.sender.id, controller })
+    const send = (completionEvent: LocalCompletionEvent): void => event.sender.send('local-completion-event', completionEvent)
+    if (!llamaRuntime) throw new Error('llama-server is not available')
+    void llamaRuntime.streamCompletion({ ...request, signal: controller.signal }, (delta) => send({ requestId, type: 'delta', delta }))
+      .then(() => send({ requestId, type: controller.signal.aborted ? 'cancelled' : 'complete' }))
+      .catch((error) => { if (!controller.signal.aborted) send({ requestId, type: 'error', message: error instanceof Error ? error.message : 'Local completion failed' }) })
+      .finally(() => activeCompletionRequests.delete(requestId))
+    return { requestId }
+  })
+  ipcMain.handle('cancel-local-completion', (event, requestId: string): boolean => {
+    const request = activeCompletionRequests.get(requestId)
+    if (!request || request.senderId !== event.sender.id) return false
+    request.controller.abort()
+    return true
+  })
   ipcMain.handle('check-model-cache', (_event, modelId: string) => {
     return containsGguf(modelCachePath(modelId))
   })

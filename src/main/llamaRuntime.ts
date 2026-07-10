@@ -11,6 +11,7 @@ import {
   type LlamaPlatform,
   type LlamaRuntimeStatus
 } from '../shared/llama'
+import { LocalCompletionClient, type LocalCompletionRequest } from './localCompletionClient'
 
 const SERVER_BINARY_NAME = platform() === 'win32' ? 'llama-server.exe' : 'llama-server'
 const HEALTH_PATH = '/health'
@@ -65,6 +66,11 @@ export class LlamaRuntime {
 
   getStatus(): LlamaRuntimeStatus {
     return { ...this.status }
+  }
+
+  async streamCompletion(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<void> {
+    if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
+    await new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${LLAMA_SERVER_PORT}`).stream(request, onDelta)
   }
 
   async start(modelPath: string, contextTokens: number, mmprojPath?: string): Promise<LlamaRuntimeStatus> {
