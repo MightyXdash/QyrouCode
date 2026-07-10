@@ -1,5 +1,6 @@
 export const LLAMA_SERVER_PORT = 39281
 export const LLAMA_SERVER_HOST = '127.0.0.1'
+export const FIRST_LOAD_CONTEXT_TOKENS = 8192
 
 export type LlamaPlatform = 'darwin' | 'linux' | 'win32'
 export type LlamaBackend = 'metal' | 'cuda' | 'vulkan' | 'cpu'
