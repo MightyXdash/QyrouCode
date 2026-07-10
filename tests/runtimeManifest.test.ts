@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  INITIAL_RUNTIME_ARTIFACTS,
   getRuntimeArtifact,
   validateRuntimeArtifacts,
   type RuntimeArtifact
@@ -23,6 +24,15 @@ test('accepts a pinned runtime artifact and selects it by platform, architecture
 
   assert.equal(getRuntimeArtifact(artifacts, 'linux', 'x64', 'cpu'), baseArtifact)
   assert.equal(getRuntimeArtifact(artifacts, 'linux', 'arm64', 'cpu'), undefined)
+})
+
+test('pins the first runtime source to a llama.cpp release commit and archive digest', () => {
+  const artifact = getRuntimeArtifact(INITIAL_RUNTIME_ARTIFACTS, 'linux', 'x64', 'cpu')
+
+  assert.equal(artifact?.release, 'b9951')
+  assert.equal(artifact?.sourceUrl, 'https://codeload.github.com/ggml-org/llama.cpp/tar.gz/082b326fc76f6e9bbb835b3920a3022bfdb6691c')
+  assert.equal(artifact?.sha256, '0bed19f882c98c452998311de58121cf74ec572eec3343cbcd33cc507766c359')
+  assert.equal(artifact?.executablePath, 'llama-server')
 })
 
 test('rejects unpinned runtime URLs and hashes', () => {
