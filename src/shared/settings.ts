@@ -39,6 +39,11 @@ export interface OnboardingState {
   completed: boolean
 }
 
+export const validateThemePreference = (value: unknown): ThemePreference => {
+  if (!includes(THEMES, value)) throw new Error('Invalid theme preference')
+  return value
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 

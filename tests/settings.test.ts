@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   MAX_CUSTOM_RESPONSE_STYLE_LENGTH,
-  validateOnboardingPreferences
+  validateOnboardingPreferences,
+  validateThemePreference
 } from '../src/shared/settings.js'
 
 const validPreferences = {
@@ -53,4 +54,9 @@ test('rejects unsupported preference values and oversized custom instructions', 
     }),
     /Invalid custom response instruction/
   )
+})
+
+test('validates supported standalone theme preferences', () => {
+  assert.equal(validateThemePreference('dark'), 'dark')
+  assert.throws(() => validateThemePreference('midnight'), /Invalid theme preference/)
 })

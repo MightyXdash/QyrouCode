@@ -1,5 +1,5 @@
 import './WindowControls.css'
-import type { OnboardingPreferences, OnboardingState } from '../../shared/settings'
+import type { OnboardingPreferences, OnboardingState, ThemePreference } from '../../shared/settings'
 import type { LlamaRuntimeStatus } from '../../shared/llama'
 import type { WindowCommand } from '../../shared/windowCommands'
 
@@ -15,6 +15,8 @@ declare global {
       onWindowShown: (callback: () => void) => () => void
       getOnboardingState: () => Promise<OnboardingState>
       completeOnboarding: (preferences: OnboardingPreferences) => Promise<void>
+      getTheme: () => Promise<ThemePreference>
+      setTheme: (theme: ThemePreference) => Promise<ThemePreference>
       checkModelCache: (modelId: string) => Promise<boolean>
       downloadModel: (repoId: string, ggufFile: string) => Promise<void>
       cancelDownload: (repoId: string) => Promise<void>

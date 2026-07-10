@@ -4,7 +4,7 @@ import { existsSync, readdirSync, createWriteStream, mkdirSync, unlinkSync, rena
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { completeOnboarding, getOnboardingState } from './settings'
+import { completeOnboarding, getOnboardingState, getTheme, setTheme } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 
@@ -374,6 +374,8 @@ app.whenReady().then(() => {
     else targetWindow.once('ready-to-show', closeOnboardingWindow)
   }))
   ipcMain.handle('get-llama-status', () => llamaRuntime?.getStatus())
+  ipcMain.handle('get-theme', () => getTheme())
+  ipcMain.handle('set-theme', (_event, theme: unknown) => setTheme(theme))
   ipcMain.handle('start-llama-server', (_event, modelPath: string, contextTokens: number) => {
     const mmprojPath = findProjector(modelPath)
     return llamaRuntime?.start(modelPath, contextTokens, mmprojPath)

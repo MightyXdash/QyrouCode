@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { OnboardingPreferences, OnboardingState } from '../shared/settings'
+import type { OnboardingPreferences, OnboardingState, ThemePreference } from '../shared/settings'
 import type { LlamaRuntimeStatus } from '../shared/llama'
 import type { WindowCommand } from '../shared/windowCommands'
 
@@ -18,6 +18,8 @@ const api = {
     ipcRenderer.invoke('get-onboarding-state'),
   completeOnboarding: (preferences: OnboardingPreferences): Promise<void> =>
     ipcRenderer.invoke('complete-onboarding', preferences),
+  getTheme: (): Promise<ThemePreference> => ipcRenderer.invoke('get-theme'),
+  setTheme: (theme: ThemePreference): Promise<ThemePreference> => ipcRenderer.invoke('set-theme', theme),
   checkModelCache: (modelId: string): Promise<boolean> =>
     ipcRenderer.invoke('check-model-cache', modelId),
   getDownloadedModels: (repos: string[]): Promise<string[]> =>

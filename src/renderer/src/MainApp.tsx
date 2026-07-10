@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { MODEL_LIST } from './modelCatalog'
 import type { LlamaRuntimeStatus } from '../../shared/llama'
+import type { ThemePreference } from '../../shared/settings'
 import { WINDOW_COMMANDS } from '../../shared/windowCommands'
 import WindowControls from './WindowControls'
 import './MainApp.css'
 
 const REASONING_EFFORTS = ['Low', 'Medium', 'High'] as const
-const COMPOSER_SHAPE_VIEW_BOX = '0 0 760 128'
-const COMPOSER_SHAPE_PATH = 'M24 0H736C750 0 756 2 759 9C760 13 760 18 760 24V104C760 110 760 115 759 119C756 126 750 128 736 128H24C10 128 4 126 1 119C0 115 0 110 0 104V24C0 18 0 13 1 9C4 2 10 0 24 0Z'
+const COMPOSER_SHAPE_WIDTH = 760
+const COMPOSER_CORNER_RADIUS = 32
+const COMPOSER_CURVE_UNIT_DIVISOR = 16
 
 type OpenMenu = 'advanced' | 'model' | 'reasoning' | null
-type TitlebarMenuId = 'file' | 'edit' | 'view' | 'help'
+type TitlebarMenuId = 'file' | 'edit' | 'view' | 'theme' | 'help'
 type TitlebarAction = 'new-thread' | 'close-window' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'select-all' | 'reload' | 'toggle-dev-tools' | 'toggle-fullscreen'
 
 interface TitlebarMenuItem {
@@ -19,6 +21,7 @@ interface TitlebarMenuItem {
   label?: string
   separator?: boolean
   shortcut?: string
+  theme?: ThemePreference
 }
 
 const TITLEBAR_MENUS: Record<TitlebarMenuId, TitlebarMenuItem[]> = {
@@ -41,6 +44,11 @@ const TITLEBAR_MENUS: Record<TitlebarMenuId, TitlebarMenuItem[]> = {
     { label: 'Toggle developer tools', shortcut: 'Ctrl Shift I', action: 'toggle-dev-tools' },
     { separator: true },
     { label: 'Toggle full screen', shortcut: 'F11', action: 'toggle-fullscreen' }
+  ],
+  theme: [
+    { label: 'System', theme: 'system' },
+    { label: 'Dark', theme: 'dark' },
+    { label: 'Light', theme: 'light' }
   ],
   help: [
     { label: 'SupraCode', disabled: true },
@@ -72,10 +80,18 @@ function ArrowIcon({ direction }: { direction: 'back' | 'forward' }): JSX.Elemen
   return <svg className={direction === 'forward' ? 'forward-arrow' : undefined} viewBox="0 0 16 16" aria-hidden="true"><path d="m9.75 3.5-4.5 4.5 4.5 4.5M5.5 8h6" /></svg>
 }
 
-function ComposerShape(): JSX.Element {
+function composerShapePath(height: number): string {
+  const radius = Math.min(COMPOSER_CORNER_RADIUS, height / 2)
+  const unit = radius / COMPOSER_CURVE_UNIT_DIVISOR
+  const right = COMPOSER_SHAPE_WIDTH
+  const bottom = height
+  return `M${radius} 0H${right - radius}C${right - (unit * 7)} 0 ${right - (unit * 3)} ${unit * 2} ${right - unit} ${unit * 7}C${right} ${unit * 9} ${right} ${unit * 12} ${right} ${radius}V${bottom - radius}C${right} ${bottom - (unit * 12)} ${right} ${bottom - (unit * 9)} ${right - unit} ${bottom - (unit * 7)}C${right - (unit * 3)} ${bottom - (unit * 2)} ${right - (unit * 7)} ${bottom} ${right - radius} ${bottom}H${radius}C${unit * 7} ${bottom} ${unit * 3} ${bottom - (unit * 2)} ${unit} ${bottom - (unit * 7)}C0 ${bottom - (unit * 9)} 0 ${bottom - (unit * 12)} 0 ${bottom - radius}V${radius}C0 ${unit * 12} 0 ${unit * 9} ${unit} ${unit * 7}C${unit * 3} ${unit * 2} ${unit * 7} 0 ${radius} 0Z`
+}
+
+function ComposerShape({ height }: { height: number }): JSX.Element {
   return (
-    <svg className="composer-shape" viewBox={COMPOSER_SHAPE_VIEW_BOX} preserveAspectRatio="none" aria-hidden="true">
-      <path d={COMPOSER_SHAPE_PATH} vectorEffect="non-scaling-stroke" />
+    <svg className="composer-shape" viewBox={`0 0 ${COMPOSER_SHAPE_WIDTH} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+      <path d={composerShapePath(height)} vectorEffect="non-scaling-stroke" />
     </svg>
   )
 }
@@ -87,17 +103,22 @@ export default function MainApp(): JSX.Element {
   const [reasoningEffort, setReasoningEffort] = useState<(typeof REASONING_EFFORTS)[number]>('Medium')
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
   const [openTitlebarMenu, setOpenTitlebarMenu] = useState<TitlebarMenuId | null>(null)
+  const [composerHeight, setComposerHeight] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [runtimeStatus, setRuntimeStatus] = useState<LlamaRuntimeStatus | null>(null)
+  const [theme, setTheme] = useState<ThemePreference>('system')
   const controlsRef = useRef<HTMLDivElement>(null)
   const titlebarMenuRef = useRef<HTMLElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
+  const promptTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const promptComposerRef = useRef<HTMLFormElement>(null)
   const downloadedModels = downloadedModelIds
     ? MODEL_LIST.filter((model) => downloadedModelIds.has(model.id))
     : []
   const selectedModel = downloadedModels.find((model) => model.id === selectedModelId)
 
   useEffect(() => {
+    void window.api.getTheme().then(setTheme)
     void window.api.getLlamaStatus().then(setRuntimeStatus)
     void window.api.getDownloadedModels(MODEL_LIST.map((model) => model.hf_repo)).then((downloadedRepos) => {
       const repoSet = new Set(downloadedRepos)
@@ -119,6 +140,20 @@ export default function MainApp(): JSX.Element {
     return () => window.removeEventListener('mousedown', closeMenus)
   }, [])
 
+  useEffect(() => {
+    if (theme === 'system') delete document.documentElement.dataset.theme
+    else document.documentElement.dataset.theme = theme
+  }, [theme])
+
+  useLayoutEffect(() => {
+    const textarea = promptTextareaRef.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${textarea.scrollHeight}px`
+    const height = promptComposerRef.current?.offsetHeight
+    if (height) setComposerHeight((current) => current === height ? current : height)
+  }, [prompt])
+
   const runTitlebarAction = (action: TitlebarAction): void => {
     setOpenTitlebarMenu(null)
     if (action === 'new-thread') setPrompt('')
@@ -138,6 +173,14 @@ export default function MainApp(): JSX.Element {
     if (!editCommand) return
     previousFocusRef.current?.focus()
     document.execCommand(editCommand)
+  }
+
+  const selectTheme = (nextTheme: ThemePreference): void => {
+    setTheme(nextTheme)
+    setOpenTitlebarMenu(null)
+    void window.api.setTheme(nextTheme).catch(() => {
+      void window.api.getTheme().then(setTheme)
+    })
   }
 
   return (
@@ -172,10 +215,11 @@ export default function MainApp(): JSX.Element {
                         role="menuitem"
                         type="button"
                         onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => item.action && runTitlebarAction(item.action)}
+                        onClick={() => item.theme ? selectTheme(item.theme) : item.action && runTitlebarAction(item.action)}
                       >
                         <span>{item.label}</span>
                         {item.shortcut && <kbd>{item.shortcut}</kbd>}
+                        {item.theme && <span className="titlebar-menu-check" aria-hidden="true">{theme === item.theme ? '✓' : ''}</span>}
                       </button>
                     ))}
                   </div>
@@ -213,14 +257,15 @@ export default function MainApp(): JSX.Element {
           <p>Start a new thread with a local model.</p>
         </div>
 
-        <form className="prompt-composer" onSubmit={(event) => event.preventDefault()}>
-          <ComposerShape />
+        <form className="prompt-composer" ref={promptComposerRef} onSubmit={(event) => event.preventDefault()}>
+          <ComposerShape height={composerHeight || COMPOSER_CORNER_RADIUS * 2} />
           <textarea
+            ref={promptTextareaRef}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             placeholder="Ask anything"
             aria-label="Prompt"
-            rows={3}
+            rows={2}
           />
           <div className="composer-toolbar" ref={controlsRef}>
             <button className="composer-icon-button" type="button" aria-label="Add context"><PlusIcon /></button>

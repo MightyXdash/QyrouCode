@@ -1,10 +1,18 @@
 :root {
+  color-scheme: light dark;
   --app-sidebar-width: 272px;
-  --app-content-max-width: 780px;
-  --app-composer-min-height: 128px;
-  --app-composer-bottom: 42px;
+  --app-content-max-width: 740px;
+  --app-composer-min-height: 104px;
+  --app-composer-bottom: 24px;
   --app-page-padding: 28px;
   --app-control-height: 30px;
+  --app-composer-max-height: 260px;
+  --app-composer-padding-block-start: 15px;
+  --app-composer-padding-block-end: 11px;
+  --app-composer-padding-inline: 14px;
+  --app-composer-toolbar-gap: 8px;
+  --app-composer-scrollbar-width: 10px;
+  --app-composer-scrollbar-inset: 3px;
   --app-icon-size: 18px;
   --app-menu-width: 320px;
   --app-reasoning-menu-width: 180px;
@@ -19,25 +27,33 @@
   --border-width-hairline: 0.5px;
   --background-base: light-dark(#f7f7f7, #1f1f1f);
   --background-weak: light-dark(#f1f1f1, #1c1c1c);
-  --surface-base: light-dark(#ffffff, #252525);
-  --surface-composer: light-dark(#f3f3f3, #242424);
+  --surface-composer: light-dark(#f8f8f8, #252525);
   --surface-raised: light-dark(#fbfbfb, #282828);
   --surface-hover: light-dark(rgba(0, 0, 0, 0.045), rgba(255, 255, 255, 0.055));
   --surface-selected: light-dark(rgba(0, 0, 0, 0.065), rgba(255, 255, 255, 0.075));
   --surface-success: #12c905;
   --surface-warning: light-dark(#ffdc17, #fcd53a);
   --surface-error: #fc533a;
+  --text-strong: light-dark(#171717, #ededed);
+  --text-base: light-dark(#6f6f6f, #a0a0a0);
+  --text-weak: light-dark(#8f8f8f, #707070);
+  --text-weaker: light-dark(#c7c7c7, #505050);
+  --interactive: #034cff;
   --text-invert: light-dark(#ffffff, #171717);
   --text-on-color: #ffffff;
   --border-base: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.14));
   --border-weak: light-dark(rgba(0, 0, 0, 0.075), rgba(255, 255, 255, 0.08));
-  --filter-shadow-composer: drop-shadow(0 10px 24px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.3)));
+  --filter-shadow-composer: drop-shadow(0 3px 10px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.24)));
   --shadow-menu: 0 14px 38px light-dark(rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.42)), 0 0 0 0.5px var(--border-base);
   --radius-sm: 0.25rem;
   --radius-md: 0.375rem;
   --radius-lg: 0.5rem;
   --radius-xl: 0.625rem;
+  --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+:root[data-theme='light'] { color-scheme: light; }
+:root[data-theme='dark'] { color-scheme: dark; }
 
 .app-shell {
   display: grid;
@@ -149,10 +165,11 @@
 
 .titlebar-menu-trigger {
   height: var(--titlebar-menu-trigger-height);
-  margin: 0 1px;
+  margin: 0 3px;
   padding: 0 8px;
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 400;
 }
 
 .titlebar-dropdown {
@@ -204,6 +221,12 @@
 .titlebar-dropdown-item kbd {
   color: var(--text-weak);
   font: 10px 'JetBrains Mono', monospace;
+}
+
+.titlebar-menu-check {
+  color: var(--interactive);
+  font-size: 12px;
+  text-align: center;
 }
 
 .titlebar-dropdown-separator {
@@ -292,8 +315,9 @@
   flex-direction: column;
   width: min(calc(100% - (var(--app-page-padding) * 2)), var(--app-content-max-width));
   min-height: var(--app-composer-min-height);
+  max-height: var(--app-composer-max-height);
   margin: auto;
-  padding: 15px 14px 11px;
+  padding: var(--app-composer-padding-block-start) var(--app-composer-padding-inline) var(--app-composer-padding-block-end);
   border: 0;
   background: transparent;
 }
@@ -314,9 +338,13 @@
   stroke-width: var(--border-width-hairline);
 }
 
-.prompt-composer textarea { position: relative; z-index: 1; flex: 1; width: 100%; resize: none; border: 0; outline: 0; background: transparent; color: var(--text-strong); font: 14px/1.5 'DM Sans', sans-serif; user-select: text; }
+.prompt-composer textarea { position: relative; z-index: 1; flex: 0 1 auto; width: 100%; min-height: 0; max-height: calc(var(--app-composer-max-height) - var(--app-composer-padding-block-start) - var(--app-composer-padding-block-end) - var(--app-composer-toolbar-gap) - var(--app-control-height)); resize: none; overflow-y: auto; border: 0; outline: 0; background: transparent; color: var(--text-strong); font: 14px/1.5 'DM Sans', sans-serif; scrollbar-color: var(--surface-selected) transparent; scrollbar-width: thin; user-select: text; }
 .prompt-composer textarea::placeholder { color: var(--text-weaker); }
-.composer-toolbar { position: relative; z-index: 1; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.prompt-composer textarea::-webkit-scrollbar { width: var(--app-composer-scrollbar-width); }
+.prompt-composer textarea::-webkit-scrollbar-track { background: transparent; }
+.prompt-composer textarea::-webkit-scrollbar-thumb { border: var(--app-composer-scrollbar-inset) solid transparent; border-radius: var(--radius-xl); background: var(--surface-selected); background-clip: padding-box; }
+.prompt-composer textarea::-webkit-scrollbar-button { display: none; }
+.composer-toolbar { position: relative; z-index: 1; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: var(--app-composer-toolbar-gap); }
 .composer-controls { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .composer-icon-button, .composer-select, .send-button { height: var(--app-control-height); border: 0; font: inherit; cursor: pointer; }
 .composer-icon-button { display: grid; place-items: center; width: var(--app-control-height); border-radius: var(--radius-md); background: transparent; color: var(--text-weak); }
