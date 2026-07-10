@@ -2,9 +2,9 @@
 
 > **For Hermes:** Execute this plan task-by-task with a separate commit and push after each verified cohesive task. Do not start Sequence 2 until Sequence 1 passes its acceptance gate.
 
-**Goal:** Reliably provision and start one exact locally downloaded GGUF model through an app-managed, pinned `llama-server` runtime, then report a truthful `ready` state after the server has loaded that model.
+**Goal:** Reliably start one exact locally downloaded GGUF model through a curated, app-bundled, pinned `llama-server` runtime, then report a truthful `ready` state after the server has loaded that model.
 
-**Architecture:** SupraCode will continue using an external `llama-server` child process rather than embedding native inference in Electron. The main process owns an app-managed runtime cache, a compile-time runtime manifest, exact model-path resolution, lifecycle control, and health validation. The renderer receives only typed runtime state and requests start/stop by catalog model ID; it never supplies paths, binary locations, or arbitrary server arguments.
+**Architecture:** SupraCode will continue using an external `llama-server` child process rather than embedding native inference in Electron. The packaged app owns a curated native runtime under `process.resourcesPath`; the main process owns its manifest, exact model-path resolution, lifecycle control, and health validation. The renderer receives only typed runtime state and requests start/stop by catalog model ID; it never supplies paths, binary locations, or arbitrary server arguments. A verified developer bootstrap/override exists only to support source-tree development.
 
 **Tech stack:** Electron main/preload/renderer, TypeScript, `llama.cpp` `llama-server`, Node HTTPS/streams/crypto/filesystem APIs, the existing Hugging Face GGUF cache, Node `node:test`.
 
@@ -16,7 +16,7 @@ This document is a planning artifact only. It does not authorize source implemen
 
 ### In scope — Sequence 1 only
 
-- Obtain and securely install one supported `llama-server` distribution.
+- Provide and securely verify one supported `llama-server` distribution.
 - Resolve one catalog model to its exact local GGUF path.
 - Start that model with a conservative known-good launch profile.
 - Report startup, readiness, stop, unsupported, and failure states honestly.
@@ -44,20 +44,20 @@ Those are retained for later sequences below.
 
 ## Decision record
 
-### Chosen runtime model: app-managed pinned `llama-server` distribution
+### Chosen runtime model: curated bundled `llama-server` distribution
 
-SupraCode should use `llama-server` as a supervised child process and install a platform/backend-specific runtime into an app-managed cache. The app should not rely on a user having an executable on `PATH` and should not execute binaries found next to models.
+SupraCode should use `llama-server` as a supervised child process and package one curated platform/backend-specific runtime as an Electron `extraResource`. The app should not rely on a user having an executable on `PATH` and should not execute binaries found next to models. This follows the layout that `src/main/llamaRuntime.ts` already expects: `process.resourcesPath/llama.cpp/<platform>-<arch>/llama-server` in packaged builds and `vendor/llama.cpp/<platform>-<arch>/llama-server` only in development.
 
 Initial supported proof target:
 
 - Platform: Linux x64.
-- Backend: a pinned, official Ubuntu x64 Vulkan `llama.cpp` distribution, subject to a manual compatibility check on the target machine.
+- Backend: a pinned, official Ubuntu x64 CPU `llama.cpp` distribution for the first proof; Vulkan/CUDA remain explicit later acceleration variants.
 - Model: one exact small Q4 GGUF catalog artifact.
 - Server binding: loopback only.
 - Context: 8K.
 - Parallel requests: one.
 
-This delivers a testable path on the active workstation without pretending that CUDA, Windows, macOS, or arbitrary Linux distributions are already supported. Runtime manifests for other platforms can be designed in the same shape now, but unsupported combinations must fail explicitly.
+CPU is deliberately the first proof because it separates runtime/model correctness from GPU driver and backend-distribution problems. It will not be treated as a performance result. This delivers a testable path on the active workstation without pretending that CUDA, Vulkan, Windows, macOS, or arbitrary Linux distributions are already supported. Runtime manifests for other platforms can be designed in the same shape now, but unsupported combinations must fail explicitly.
 
 ### Why not the alternatives for the first proof
 
@@ -65,13 +65,14 @@ This delivers a testable path on the active workstation without pretending that 
 |---|---|---|
 | `llama-server` child process | **Choose** | Matches existing code, isolates native crashes from Electron, has a stable local HTTP boundary, and avoids Electron-native ABI rebuilds. |
 | User-installed `llama-server` only | Developer override only | Fast for developers but unacceptable as the consumer default and impossible to support reliably. |
-| Bundle every runtime in each installer | Defer | Makes installers much larger and couples runtime/back-end upgrades to full app releases. May be revisited for offline distribution. |
+| Curated runtime in the app installer | **Choose** | Matches the existing packaged lookup path, avoids remote-code delivery at runtime, and makes the signed app release the runtime trust boundary. Ship one conservative CPU baseline first. |
+| Managed runtime download | Defer | Useful later for optional accelerator variants, but remote-code delivery adds manifest, rollback, notarization/quarantine, and recovery complexity that does not help the first proof. |
 | `node-llama-cpp` binding | Do not adopt now | Electron/native-module ABI, GPU build, and cross-platform packaging complexity would distract from proving the product loop. |
 | Ollama as the primary runtime | Do not adopt now | Adds an external daemon, separate model registry, and lifecycle/control ambiguity. It can become an optional provider later. |
 
 ### Trust boundary
 
-- The shipped manifest is the authority for a runtime asset: release identifier, HTTPS URL, archive type, SHA-256, expected extracted executable path, backend, platform, architecture, and companion libraries.
+- The shipped manifest is the authority for a runtime asset: release identifier, build ID, SHA-256, expected packaged executable path, backend, platform, architecture, companion libraries, and the source/release provenance used by CI to assemble it.
 - The model catalog/manifest is the authority for a model: repository, revision, exact GGUF filename, expected size, SHA-256 when available, required projector, supported context ceiling, and compatibility status.
 - Renderer requests reference catalog IDs only. Main resolves all paths and rejects unknown identifiers.
 - Runtime archives and model weights live in different roots. Never execute a file from the model cache.
@@ -81,9 +82,8 @@ This delivers a testable path on the active workstation without pretending that 
 
 1. Renderer asks main for runtime availability for a selected catalog model.
 2. Main resolves the catalog ID, exact cached GGUF file, platform/backend manifest entry, and installed runtime receipt.
-3. If the runtime is absent, main installs the pinned archive into:
-   `app.getPath('userData')/runtimes/llama.cpp/<release>/<platform>-<arch>-<backend>/`.
-4. The installer writes to a unique temporary directory, calculates SHA-256 while reading, validates the archive layout, writes a receipt, then atomically promotes the directory.
+3. In packaged builds, main resolves only the manifest-declared executable below `process.resourcesPath`. In development, a verified bootstrap populates the existing ignored `vendor/llama.cpp/...` layout, or a clearly labelled developer override may be used.
+4. The package build verifies the staged runtime's digest, expected layout, companion libraries, and executable permissions before the Electron artifact is assembled and signed.
 5. Main launches only the manifest-declared executable, binds it to loopback, captures stderr, and applies a bounded startup timeout.
 6. Main reports `starting`; after `/health` succeeds, reports `ready` with runtime version, backend, model catalog ID, exact model path, context size, and effective launch profile.
 7. Main owns stop/restart and always tears the child process down on app quit.
@@ -145,28 +145,28 @@ Every failure must include a user-safe summary and an internal diagnostic code. 
 
 **Acceptance:** The renderer never supplies an absolute model path, and “a repo contains some GGUF” is no longer treated as runnable.
 
-### Task 3: Implement secure runtime installation into app data
+### Task 3: Stage one verified runtime for development and packaging
 
-**Objective:** Install the one pinned runtime asset safely and atomically.
+**Objective:** Make one pinned runtime available in the existing development and packaged lookup layouts without committing native binaries to Git.
 
 **Files:**
-- Create: `src/main/runtimeInstaller.ts`
-- Create: `src/main/runtimePaths.ts`
-- Modify: `package.json` and lockfile only if an archive library is required
-- Create: `tests/runtimeInstaller.test.ts`
+- Create: `scripts/bootstrap-llama-runtime.mjs`
+- Create: `src/shared/runtimeManifest.ts` build/staging helpers if not covered by Task 1
+- Modify: `package.json` build configuration and lockfile only if an archive library is required
+- Modify: `.gitignore`
+- Create: `tests/runtimeStaging.test.ts`
 
 **Steps:**
-1. Define the app-data runtime root and temporary-install root; never use the source `vendor/` directory or the Hugging Face model cache for executables.
-2. Download only the manifest URL over HTTPS, stream to a temporary artifact, and calculate SHA-256 during download.
-3. Reject an incorrect hash, unexpected size, redirect to a different scheme/host if policy forbids it, malformed archive, missing manifest executable, symlink escape, or unexpected executable permissions.
-4. Extract into a unique temporary directory, validate all resolved paths remain beneath it, write an installation receipt, and atomically rename into the final runtime directory.
-5. On cancellation/failure, remove only the temporary installation. Never remove an already-valid runtime.
-6. Add tests for hash mismatch, path traversal, interrupted download cleanup, idempotent install, and receipt validation using local fixtures/fake downloads.
-7. Run lint and all tests.
-8. Commit and push:
-   `feat(runtime): install pinned llama-server artifacts`.
+1. Add an ignored developer-runtime path matching the existing `vendor/llama.cpp/<platform>-<arch>/` lookup. Never use the Hugging Face model cache for executables.
+2. Implement a developer bootstrap that downloads only the manifest-declared upstream archive, calculates SHA-256, extracts into a temporary directory, validates layout/path containment and companion libraries, then atomically promotes it into the ignored vendor path.
+3. Add `electron-builder.extraResources` rules that stage the same verified runtime beneath `resources/llama.cpp/<platform>-<arch>/` in a packaged build. Do not package every backend; ship the initial supported CPU runtime only.
+4. Make package assembly fail when the staged runtime digest, executable path, permissions, or required libraries differ from the manifest.
+5. Add tests for hash mismatch, path traversal, interrupted bootstrap cleanup, idempotent staging, packaged-layout validation, and receipt/provenance validation using local fixtures/fake downloads.
+6. Run lint and all tests.
+7. Commit and push:
+   `build(runtime): stage pinned llama-server artifacts`.
 
-**Acceptance:** The app can bootstrap the one supported runtime without a user-installed executable, and no unverified binary becomes executable.
+**Acceptance:** Development and packaged builds can find the same verified, manifest-declared runtime without a user-installed executable, and no unverified binary becomes executable.
 
 ### Task 4: Harden the runtime supervisor around a known-safe launch profile
 
@@ -247,7 +247,7 @@ Every failure must include a user-safe summary and an internal diagnostic code. 
 - Modify: CI configuration when it exists; do not force multi-gigabyte model downloads in standard CI
 
 **Steps:**
-1. Download/install the pinned Linux x64 Vulkan runtime on the active Linux machine.
+1. Bootstrap the pinned Linux x64 CPU runtime on the active Linux machine, then package it through the same resource layout.
 2. Download one exact manifest-approved small GGUF model through SupraCode’s model flow.
 3. Start it with the Sequence 1 8K profile.
 4. Verify the child PID, `ready` state, loopback `/health`, model path, backend, and bounded stderr diagnostics.
@@ -272,7 +272,7 @@ Every failure must include a user-safe summary and an internal diagnostic code. 
 
 ## Security and operational gates
 
-- No runtime URL without HTTPS, pinned release metadata, and SHA-256 verification.
+- No developer bootstrap URL without HTTPS, pinned release metadata, and SHA-256 verification. Packaged releases execute only the signed resource staged by CI.
 - No model ID or model path supplied as trusted renderer input.
 - No executable loaded from the Hugging Face cache or source tree.
 - Loopback-only server; no `0.0.0.0` binding.
