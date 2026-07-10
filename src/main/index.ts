@@ -7,6 +7,9 @@ import { homedir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { completeOnboarding, getOnboardingState } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
+import { resolveModelArtifact } from './modelResolver'
+import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManifest'
+import { FIRST_LOAD_CONTEXT_TOKENS } from '../shared/llama'
 import type { LocalCompletionEvent, LocalCompletionRequest, LocalCompletionStart } from './localCompletionClient'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
@@ -362,6 +365,13 @@ app.whenReady().then(() => {
     else targetWindow.once('ready-to-show', closeOnboardingWindow)
   }))
   ipcMain.handle('get-llama-status', () => llamaRuntime?.getStatus())
+  ipcMain.handle('start-local-model', async (_event, modelId: string) => {
+    const artifact = getModelArtifact(INITIAL_MODEL_ARTIFACTS, modelId)
+    if (!artifact) throw new Error('The selected model is not approved for local runtime use')
+    if (!llamaRuntime) throw new Error('llama-server is not available')
+    const resolved = await resolveModelArtifact(huggingFaceHubPath(), artifact)
+    return llamaRuntime.start(resolved.path, FIRST_LOAD_CONTEXT_TOKENS)
+  })
   ipcMain.handle('start-llama-server', (_event, modelPath: string, contextTokens: number) => {
     const mmprojPath = findProjector(modelPath)
     return llamaRuntime?.start(modelPath, contextTokens, mmprojPath)

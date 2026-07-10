@@ -30,6 +30,7 @@ const api = {
     return () => { ipcRenderer.removeListener('download-progress', handler) }
   },
   getLlamaStatus: (): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('get-llama-status'),
+  startLocalModel: (modelId: string): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('start-local-model', modelId),
   startLlamaServer: (modelPath: string, contextTokens: number): Promise<LlamaRuntimeStatus> =>
     ipcRenderer.invoke('start-llama-server', modelPath, contextTokens),
   stopLlamaServer: (): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('stop-llama-server'),
