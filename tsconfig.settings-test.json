@@ -11,7 +11,11 @@
   "include": [
     "src/shared/settings.ts",
     "src/shared/llama.ts",
+    "src/shared/modelManifest.ts",
+    "src/main/modelResolver.ts",
     "tests/llama.test.ts",
+    "tests/modelManifest.test.ts",
+    "tests/modelResolver.test.ts",
     "tests/runtimeManifest.test.ts",
     "tests/settings.test.ts"
   ]

@@ -13,7 +13,7 @@
     "preview": "electron-vite preview",
     "lint": "tsc --noEmit",
     "test:settings": "tsc -p tsconfig.settings-test.json && node --test .test-dist/tests/settings.test.js",
-    "test:runtime": "tsc -p tsconfig.settings-test.json && node --test .test-dist/tests/llama.test.js .test-dist/tests/runtimeManifest.test.js"
+    "test:runtime": "tsc -p tsconfig.settings-test.json && node --test .test-dist/tests/llama.test.js .test-dist/tests/modelManifest.test.js .test-dist/tests/modelResolver.test.js .test-dist/tests/runtimeManifest.test.js"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
