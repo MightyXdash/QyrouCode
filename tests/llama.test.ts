@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildLlamaServerArgs, type LlamaLaunchProfile } from '../src/shared/llama.js'
+import { FIRST_LOAD_CONTEXT_TOKENS, buildLlamaServerArgs, type LlamaLaunchProfile } from '../src/shared/llama.js'
 
 const baseProfile: LlamaLaunchProfile = {
   platform: 'darwin',
@@ -11,6 +11,10 @@ const baseProfile: LlamaLaunchProfile = {
   availableMemoryBytes: 32 * 1024 ** 3,
   modelSizeBytes: 8 * 1024 ** 3
 }
+
+test('keeps the first model-load profile conservative until onboarding settings are applied', () => {
+  assert.equal(FIRST_LOAD_CONTEXT_TOKENS, 8192)
+})
 
 test('configures accelerated inference with bounded batching and quantized KV cache', () => {
   const args = buildLlamaServerArgs(baseProfile)

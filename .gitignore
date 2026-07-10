@@ -3,6 +3,7 @@ node_modules/
 out/
 dist/
 .vite/
+vendor/
 *.local
 .DS_Store
 Thumbs.db

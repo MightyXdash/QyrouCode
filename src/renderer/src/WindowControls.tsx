@@ -2,6 +2,7 @@ import './WindowControls.css'
 import type { OnboardingPreferences, OnboardingState, ThemePreference } from '../../shared/settings'
 import type { LlamaRuntimeStatus } from '../../shared/llama'
 import type { WindowCommand } from '../../shared/windowCommands'
+import type { LocalCompletionEvent, LocalCompletionRequest, LocalCompletionStart } from '../../main/localCompletionClient'
 
 declare global {
   interface Window {
@@ -22,6 +23,10 @@ declare global {
       cancelDownload: (repoId: string) => Promise<void>
       onDownloadProgress: (callback: (data: { repoId: string; downloaded: number; total: number }) => void) => () => void
       getLlamaStatus: () => Promise<LlamaRuntimeStatus>
+      startLocalModel: (modelId: string) => Promise<LlamaRuntimeStatus>
+      startLocalCompletion: (request: LocalCompletionRequest) => Promise<LocalCompletionStart>
+      cancelLocalCompletion: (requestId: string) => Promise<boolean>
+      onLocalCompletionEvent: (callback: (event: LocalCompletionEvent) => void) => () => void
       startLlamaServer: (modelPath: string, contextTokens: number) => Promise<LlamaRuntimeStatus>
       stopLlamaServer: () => Promise<LlamaRuntimeStatus>
     }
