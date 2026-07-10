@@ -229,18 +229,19 @@ app.whenReady().then(() => {
   ipcMain.on('close-window', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close()
   })
-  ipcMain.on('open-main-window', (event) => {
+  ipcMain.handle('open-main-window', (event) => new Promise<void>((resolve) => {
     const onboardingWindow = BrowserWindow.fromWebContents(event.sender)
     const targetWindow = createMainAppWindow()
     const closeOnboardingWindow = () => {
       if (onboardingWindow && onboardingWindow !== targetWindow && !onboardingWindow.isDestroyed()) {
         onboardingWindow.close()
       }
+      resolve()
     }
 
     if (targetWindow.isVisible()) closeOnboardingWindow()
     else targetWindow.once('ready-to-show', closeOnboardingWindow)
-  })
+  }))
 
   if (getOnboardingState().completed) createMainAppWindow()
   else createWindow()

@@ -87,6 +87,54 @@ const INITIAL_ASSET_TIMEOUT_MS = 1200
 const INITIAL_MOTION_FRAME_COUNT = 2
 const COMPLETION_HANDOFF_EXIT_MS = 360
 const COMPLETION_ENTER_MS = 1180
+const COMPLETION_QUOTE_HOLD_MS = 2000
+const COMPLETION_QUOTES = [
+  'I will help you build your dream app.',
+  'Let’s bring your amazing idea to life.',
+  'Your next great build starts here.',
+  'Big ideas deserve a first commit.',
+  'Let’s make something people remember.',
+  'Your imagination is the starting point.',
+  'Turn the spark into something real.',
+  'The next version begins with you.',
+  'Make the tool you wish existed.',
+  'Local models. Limitless momentum.',
+  'Let’s shape the idea in your head.',
+  'Build boldly. Iterate brilliantly.',
+  'Your best work is waiting to happen.',
+  'A good idea can become a great product.',
+  'Let’s give your idea a running start.',
+  'Create something only you could make.',
+  'The blank page is full of possibility.',
+  'Your next project has real potential.',
+  'Start small. Make it remarkable.',
+  'Let’s turn curiosity into a creation.',
+  'Every ambitious build starts somewhere.',
+  'You bring the vision. I bring the help.',
+  'Make room for your wildest ideas.',
+  'Your local AI is ready to collaborate.',
+  'Let’s make the complicated feel simple.',
+  'Ship the thing you keep thinking about.',
+  'You are closer than your first draft.',
+  'Build the future you want to use.',
+  'The most interesting work starts now.',
+  'Let’s turn “what if” into working code.',
+  'Your idea has somewhere to go now.',
+  'Bring the concept. We will find the path.',
+  'The next great interface starts with you.',
+  'Make progress feel a little more magical.',
+  'Local models. Your ideas are free.',
+  'Let’s build something worth sharing.',
+  'A tiny experiment can change everything.',
+  'The hard part is starting. You did it.',
+  'Your creative edge has just arrived.',
+  'Let’s make the first version real.',
+  'The world needs more of your perspective.',
+  'Build with intent. Explore without limits.',
+  'You have the idea. Let’s make it move.',
+  'This is where ambitious ideas get built.',
+  'Let’s see what your idea can become.'
+] as const
 
 const isQuestionPage = (page: number) =>
   page >= QUESTION_START_PAGE && page < QUESTION_START_PAGE + ONBOARDING_QUESTIONS.length
@@ -149,6 +197,29 @@ const transitionStyle = (delayMs: number, durationMs?: number) => ({
   animationDelay: `${delayMs}ms`,
   ...(durationMs ? { animationDuration: `${durationMs}ms` } : {}),
 })
+
+const quoteCharacterDelay = (character: string, index: number, mode: 'erase' | 'reveal') => {
+  const characterCode = character.codePointAt(0) ?? 0
+  const baseDelay = mode === 'erase' ? 16 : 20
+  return baseDelay + ((characterCode + index * 11) % 19)
+}
+
+const openMainApp = () => {
+  if (typeof window.api.openMainWindow !== 'function') {
+    window.location.assign('?window=app')
+    return
+  }
+
+  const handoff = window.api.openMainWindow() as Promise<void> | undefined
+  if (!handoff || typeof handoff.then !== 'function') {
+    window.location.assign('?window=app')
+    return
+  }
+
+  void handoff.catch(() => {
+    window.location.assign('?window=app')
+  })
+}
 
 const waitForAnimationFrame = () =>
   new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
@@ -680,6 +751,48 @@ export default function WelcomeScreen(): JSX.Element {
 }
 
 function CompletionScene({ phase }: { phase: Phase }): JSX.Element {
+  const [visibleQuote, setVisibleQuote] = useState(COMPLETION_QUOTES[0])
+
+  useEffect(() => {
+    let cancelled = false
+    let currentIndex = 0
+    let timeout: ReturnType<typeof window.setTimeout> | undefined
+
+    const wait = (duration: number) => new Promise<void>(resolve => {
+      timeout = window.setTimeout(resolve, duration)
+    })
+
+    const cycleQuotes = async () => {
+      while (!cancelled) {
+        const currentQuote = COMPLETION_QUOTES[currentIndex]
+        await wait(COMPLETION_QUOTE_HOLD_MS)
+        if (cancelled) return
+
+        for (let length = currentQuote.length - 1; length >= 0; length -= 1) {
+          await wait(quoteCharacterDelay(currentQuote[length], length, 'erase'))
+          if (cancelled) return
+          setVisibleQuote(currentQuote.slice(0, length))
+        }
+
+        currentIndex = (currentIndex + 1) % COMPLETION_QUOTES.length
+        const nextQuote = COMPLETION_QUOTES[currentIndex]
+
+        for (let length = 1; length <= nextQuote.length; length += 1) {
+          await wait(quoteCharacterDelay(nextQuote[length - 1], length - 1, 'reveal'))
+          if (cancelled) return
+          setVisibleQuote(nextQuote.slice(0, length))
+        }
+      }
+    }
+
+    void cycleQuotes()
+
+    return () => {
+      cancelled = true
+      if (timeout) window.clearTimeout(timeout)
+    }
+  }, [])
+
   return (
     <div className={`page-inner completion-inner${phase === 'enter' ? ' completion-enter' : ''}`}>
       <div className="completion-layout">
@@ -689,15 +802,9 @@ function CompletionScene({ phase }: { phase: Phase }): JSX.Element {
           <p className="completion-description">Your models run locally, your work stays yours, and what you can create is limitless.</p>
           <div className="completion-status">
             <span className="completion-status-key">Local AI</span>
-            <span className="completion-status-value">Private by design / limitless by default</span>
+            <span className="completion-status-value">{visibleQuote}</span>
             <span className="completion-caret" aria-hidden="true" />
           </div>
-          <button className="next-btn completion-continue" type="button" onClick={() => window.api.openMainWindow()}>
-            <span>Continue to SupraCode</span>
-            <svg viewBox="0 0 14 14" aria-hidden="true">
-              <path d="M2.5 7h9M8 3.5 11.5 7 8 10.5" />
-            </svg>
-          </button>
         </div>
         <div className="completion-workbench" aria-hidden="true">
           <span className="completion-coordinate">SC / LOCAL / 01</span>
@@ -743,6 +850,12 @@ function CompletionScene({ phase }: { phase: Phase }): JSX.Element {
           <div className="completion-ruler"><span /><span /><span /><span /><span /><span /><span /></div>
         </div>
       </div>
+      <button className="next-btn completion-continue" type="button" onClick={openMainApp}>
+        <span>Continue to SupraCode</span>
+        <svg viewBox="0 0 14 14" aria-hidden="true">
+          <path d="M2.5 7h9M8 3.5 11.5 7 8 10.5" />
+        </svg>
+      </button>
       <p className="completion-footer-mark">SUPRACODE / ENVIRONMENT ASSEMBLY</p>
     </div>
   )

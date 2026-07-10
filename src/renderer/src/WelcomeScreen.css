@@ -62,6 +62,7 @@
   --completion-code-string: #8b6a34;
   --completion-layout-width: 980px;
   --completion-layout-gap: 92px;
+  --completion-layout-lift: 78px;
   --completion-copy-width: 370px;
   --completion-workbench-width: 500px;
   --completion-workbench-height: 380px;
@@ -73,6 +74,7 @@
   --completion-handoff-distance: 12px;
   --completion-button-gap: 22px;
   --completion-button-icon-size: 14px;
+  --completion-button-bottom: 50px;
   --motion-completion-handoff-duration: 360ms;
   --motion-completion-copy-duration: 560ms;
   --motion-completion-shell-duration: 620ms;
@@ -1108,6 +1110,7 @@ body {
   align-items: center;
   gap: var(--completion-layout-gap);
   width: min(100%, var(--completion-layout-width));
+  transform: translateY(calc(var(--completion-layout-lift) * -1));
 }
 
 .completion-copy {
@@ -1182,7 +1185,12 @@ body {
 }
 
 .completion-status-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-base);
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .completion-caret {
@@ -1194,11 +1202,14 @@ body {
 }
 
 .completion-continue {
+  position: absolute;
+  bottom: var(--completion-button-bottom);
+  left: 50%;
   display: flex;
   align-items: center;
   gap: var(--completion-button-gap);
-  margin-top: 24px;
   padding-inline: 20px;
+  transform: translateX(-50%);
 }
 
 .completion-continue svg {
@@ -1337,7 +1348,6 @@ body {
   height: 12px;
   margin-left: 5px;
   background: var(--completion-accent);
-  animation: completionCaret var(--motion-completion-caret-duration) steps(1) infinite;
 }
 
 .completion-shard {
@@ -1412,6 +1422,10 @@ body {
   animation: completionCopyIn var(--motion-completion-copy-duration) var(--motion-ease-out) 80ms both;
 }
 
+.completion-enter .completion-continue {
+  animation: completionButtonIn 480ms var(--motion-ease-out) 820ms both;
+}
+
 .completion-enter .completion-backplate {
   animation: completionBackplateIn var(--motion-completion-shell-duration) var(--motion-ease-out) 170ms both;
 }
@@ -1470,6 +1484,17 @@ body {
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes completionButtonIn {
+  from {
+    opacity: 0;
+    transform: translate3d(-50%, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(-50%, 0, 0);
   }
 }
 
@@ -1749,6 +1774,7 @@ body {
 
   .completion-handoff-exit,
   .completion-enter .completion-copy,
+  .completion-enter .completion-continue,
   .completion-enter .completion-backplate,
   .completion-enter .completion-shell,
   .completion-enter .completion-coordinate,
