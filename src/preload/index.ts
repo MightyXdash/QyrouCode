@@ -4,6 +4,7 @@ import type { OnboardingPreferences, OnboardingState } from '../shared/settings'
 const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
   close: () => ipcRenderer.send('close-window'),
+  openMainWindow: () => ipcRenderer.send('open-main-window'),
   rendererReady: () => ipcRenderer.send('renderer-ready'),
   onWindowShown: (callback: () => void) => {
     ipcRenderer.once('window-shown', callback)

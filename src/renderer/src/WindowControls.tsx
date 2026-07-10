@@ -6,6 +6,7 @@ declare global {
     api: {
       minimize: () => void
       close: () => void
+      openMainWindow: () => void
       rendererReady: () => void
       onWindowShown: (callback: () => void) => () => void
       getOnboardingState: () => Promise<OnboardingState>

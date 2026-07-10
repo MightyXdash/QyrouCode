@@ -140,3 +140,5 @@ Export CSS custom properties organized by category:
 7. **No commit without ask**: Never commit changes unless explicitly requested by the user.
 
 8. **No README/doc files**: Never create documentation files unless explicitly requested.
+
+9. **Agent inspiration**: When inspiration is needed for how agents should work, take inspiration from the open-source coding platform [anomalyco/opencode](https://github.com/anomalyco/opencode), whose agent logic may inform this app's agents.

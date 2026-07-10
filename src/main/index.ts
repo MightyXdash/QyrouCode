@@ -7,10 +7,72 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { completeOnboarding, getOnboardingState } from './settings'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
+const ICON_DIRECTORY = 'icons'
+const WINDOWS_ICON_FILENAME = 'icon.ico'
+const DEFAULT_ICON_FILENAME = 'icon.png'
+const MAIN_WINDOW_QUERY_KEY = 'window'
+const MAIN_WINDOW_QUERY_VALUE = 'app'
+const MAIN_APP_WINDOW_WIDTH = 1440
+const MAIN_APP_WINDOW_HEIGHT = 900
+
+let mainAppWindow: BrowserWindow | null = null
+
+function appIconPath(): string {
+  const filename = process.platform === 'win32' ? WINDOWS_ICON_FILENAME : DEFAULT_ICON_FILENAME
+  return app.isPackaged
+    ? join(process.resourcesPath, ICON_DIRECTORY, filename)
+    : join(__dirname, '../../build', filename)
+}
 
 function modelCachePath(modelId: string): string {
   const folder = 'models--' + modelId.replace(/[/.]/g, '--')
   return join(homedir(), '.cache', 'huggingface', 'hub', folder, 'snapshots', 'main')
+}
+
+function loadRenderer(targetWindow: BrowserWindow, query?: Record<string, string>): void {
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    const rendererUrl = new URL(process.env['ELECTRON_RENDERER_URL'])
+    for (const [key, value] of Object.entries(query ?? {})) {
+      rendererUrl.searchParams.set(key, value)
+    }
+    void targetWindow.loadURL(rendererUrl.toString())
+    return
+  }
+
+  void targetWindow.loadFile(join(__dirname, '../renderer/index.html'), { query })
+}
+
+function createMainAppWindow(): BrowserWindow {
+  if (mainAppWindow && !mainAppWindow.isDestroyed()) {
+    mainAppWindow.show()
+    mainAppWindow.focus()
+    return mainAppWindow
+  }
+
+  const targetWindow = new BrowserWindow({
+    width: MAIN_APP_WINDOW_WIDTH,
+    height: MAIN_APP_WINDOW_HEIGHT,
+    frame: false,
+    resizable: true,
+    maximizable: true,
+    minimizable: true,
+    title: 'SupraCode',
+    show: false,
+    icon: appIconPath(),
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false
+    }
+  })
+
+  mainAppWindow = targetWindow
+  targetWindow.once('ready-to-show', () => targetWindow.show())
+  targetWindow.once('closed', () => {
+    if (mainAppWindow === targetWindow) mainAppWindow = null
+  })
+
+  loadRenderer(targetWindow, { [MAIN_WINDOW_QUERY_KEY]: MAIN_WINDOW_QUERY_VALUE })
+  return targetWindow
 }
 
 function createWindow(): void {
@@ -25,14 +87,13 @@ function createWindow(): void {
     minimizable: true,
     title: '',
     show: false,
+    icon: appIconPath(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
     }
   })
 
-  ipcMain.on('minimize-window', () => mainWindow.minimize())
-  ipcMain.on('close-window', () => mainWindow.close())
   ipcMain.handle('get-onboarding-state', () => getOnboardingState())
   ipcMain.handle('complete-onboarding', (_event, preferences: unknown) => completeOnboarding(preferences))
 
@@ -58,6 +119,11 @@ function createWindow(): void {
   mainWindow.once('closed', () => {
     if (windowReadyTimeout) clearTimeout(windowReadyTimeout)
     ipcMain.removeListener('renderer-ready', handleRendererReady)
+    ipcMain.removeHandler('get-onboarding-state')
+    ipcMain.removeHandler('complete-onboarding')
+    ipcMain.removeHandler('check-model-cache')
+    ipcMain.removeHandler('download-model')
+    ipcMain.removeHandler('cancel-download')
   })
 
   ipcMain.handle('check-model-cache', (_event, modelId: string) => {
@@ -147,11 +213,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+  loadRenderer(mainWindow)
 }
 
 app.whenReady().then(() => {
@@ -161,11 +223,32 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  createWindow()
+  ipcMain.on('minimize-window', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize()
+  })
+  ipcMain.on('close-window', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close()
+  })
+  ipcMain.on('open-main-window', (event) => {
+    const onboardingWindow = BrowserWindow.fromWebContents(event.sender)
+    const targetWindow = createMainAppWindow()
+    const closeOnboardingWindow = () => {
+      if (onboardingWindow && onboardingWindow !== targetWindow && !onboardingWindow.isDestroyed()) {
+        onboardingWindow.close()
+      }
+    }
+
+    if (targetWindow.isVisible()) closeOnboardingWindow()
+    else targetWindow.once('ready-to-show', closeOnboardingWindow)
+  })
+
+  if (getOnboardingState().completed) createMainAppWindow()
+  else createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
+      if (getOnboardingState().completed) createMainAppWindow()
+      else createWindow()
     }
   })
 })

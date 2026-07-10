@@ -53,6 +53,7 @@ const WELCOME_EXIT_DURATION_MS = 320
 const DOWNLOAD_COMPLETION_HOLD_MS = 520
 const SETUP_INTRO_PAGE = 4
 const QUESTION_START_PAGE = SETUP_INTRO_PAGE + 1
+const COMPLETION_PAGE = QUESTION_START_PAGE + ONBOARDING_QUESTIONS.length
 const SETUP_INTRO_ENTER_MS = 280
 const QUESTION_HEADER_DURATION_MS = 180
 const QUESTION_CARD_DELAY_MS = 55
@@ -66,11 +67,11 @@ const ROLES_ENTER_CARD_DURATION_MS = 200
 const TRANSITION_CLEARANCE_MS = 80
 const DOWNLOAD_VISIBLE_ITEM_COUNT = 6
 const READY_TITLE_LINES = [
-  "You're all set! SupraCode will fetch these models",
-  'and the essentials from SupraLabs.',
+  'Let’s get your workspace ready',
+  'SupraCode will fetch these models and essentials.',
 ] as const
 const READY_SUBTITLE_LINES = [
-  'These models take a little while to download. Perfect time to',
+  'This may take a little while. Perfect time to',
   'stretch your legs or grab a drink.',
 ] as const
 const READY_TITLE_TEXT = READY_TITLE_LINES.join(' ')
@@ -84,6 +85,8 @@ const READY_CARD_POP_MS = 360
 const READY_MAX_DOWNLOAD_ITEM_COUNT = MODEL_LIST.length + ESSENTIAL_MODELS.length
 const INITIAL_ASSET_TIMEOUT_MS = 1200
 const INITIAL_MOTION_FRAME_COUNT = 2
+const COMPLETION_HANDOFF_EXIT_MS = 360
+const COMPLETION_ENTER_MS = 1180
 
 const isQuestionPage = (page: number) =>
   page >= QUESTION_START_PAGE && page < QUESTION_START_PAGE + ONBOARDING_QUESTIONS.length
@@ -137,6 +140,7 @@ const enterDuration = (nextPage: number) => {
   if (nextPage === 3) return readyEnterDuration()
   if (nextPage === SETUP_INTRO_PAGE) return SETUP_INTRO_ENTER_MS
   if (isQuestionPage(nextPage)) return questionEnterDuration(nextPage)
+  if (nextPage === COMPLETION_PAGE) return COMPLETION_ENTER_MS
   return ENTER_TITLE_MS
 }
 
@@ -243,6 +247,7 @@ export default function WelcomeScreen(): JSX.Element {
   const [settingsError, setSettingsError] = useState('')
   const [savingPreferences, setSavingPreferences] = useState(false)
   const [initialMotionReady, setInitialMotionReady] = useState(false)
+  const [completionHandoff, setCompletionHandoff] = useState(false)
   const transitioning = useRef(false)
   const downloadsStarted = useRef(false)
   const downloadsTransitionStarted = useRef(false)
@@ -345,6 +350,7 @@ export default function WelcomeScreen(): JSX.Element {
   const navigate = (nextPage: number, direction: TransitionDirection) => {
     if (transitioning.current) return
     transitioning.current = true
+    setCompletionHandoff(nextPage === COMPLETION_PAGE)
     setTransitionDirection(direction)
     setPrevPage(page)
     setPhase('exit')
@@ -355,7 +361,7 @@ export default function WelcomeScreen(): JSX.Element {
         setPhase('idle')
         transitioning.current = false
       }, enterDuration(nextPage) + TRANSITION_CLEARANCE_MS)
-    }, exitDuration(page))
+    }, nextPage === COMPLETION_PAGE ? COMPLETION_HANDOFF_EXIT_MS : exitDuration(page))
   }
 
   const goNext = () => {
@@ -459,7 +465,7 @@ export default function WelcomeScreen(): JSX.Element {
           [...new Set([...selectedModels, ...cachedSelectableModelIds])]
         )
       )
-      setOnboardingStatus('complete')
+      navigate(COMPLETION_PAGE, 'forward')
     } catch {
       setSettingsError('Unable to save your preferences. Please try again.')
     } finally {
@@ -656,6 +662,7 @@ export default function WelcomeScreen(): JSX.Element {
           direction={transitionDirection}
           saving={savingPreferences}
           error={settingsError}
+          completionHandoff={completionHandoff}
           onSelect={selectPreference}
           onCustomInstructionChange={value => {
             setSettingsError('')
@@ -665,6 +672,78 @@ export default function WelcomeScreen(): JSX.Element {
           onContinue={currentQuestionIndex === ONBOARDING_QUESTIONS.length - 1 ? savePreferences : goNext}
         />
       )}
+      {displayPage === COMPLETION_PAGE && (
+        <CompletionScene phase={phase} />
+      )}
+    </div>
+  )
+}
+
+function CompletionScene({ phase }: { phase: Phase }): JSX.Element {
+  return (
+    <div className={`page-inner completion-inner${phase === 'enter' ? ' completion-enter' : ''}`}>
+      <div className="completion-layout">
+        <div className="completion-copy">
+          <p className="completion-index">08 / 08 <span>Configuration</span></p>
+          <h2><span>You are</span><span>all set!</span></h2>
+          <p className="completion-description">Your models run locally, your work stays yours, and what you can create is limitless.</p>
+          <div className="completion-status">
+            <span className="completion-status-key">Local AI</span>
+            <span className="completion-status-value">Private by design / limitless by default</span>
+            <span className="completion-caret" aria-hidden="true" />
+          </div>
+          <button className="next-btn completion-continue" type="button" onClick={() => window.api.openMainWindow()}>
+            <span>Continue to SupraCode</span>
+            <svg viewBox="0 0 14 14" aria-hidden="true">
+              <path d="M2.5 7h9M8 3.5 11.5 7 8 10.5" />
+            </svg>
+          </button>
+        </div>
+        <div className="completion-workbench" aria-hidden="true">
+          <span className="completion-coordinate">SC / LOCAL / 01</span>
+          <div className="completion-backplate" />
+          <div className="completion-shell">
+            <div className="completion-shell-bar">
+              <span>workspace.ts</span>
+              <span>local models</span>
+            </div>
+            <div className="completion-editor">
+              <div className="completion-code-line">
+                <span className="completion-line-number">01</span>
+                <code><span className="syntax-keyword">const</span> ambition = <span className="syntax-string">'make it real'</span></code>
+              </div>
+              <div className="completion-code-line completion-code-active">
+                <span className="completion-line-number">02</span>
+                <code><span className="syntax-keyword">const</span> dream = <span className="syntax-keyword">await</span> localAI.<span className="syntax-function">create</span>(ambition)</code>
+              </div>
+              <div className="completion-code-line">
+                <span className="completion-line-number">03</span>
+                <code>dream.<span className="syntax-function">build</span>()</code>
+              </div>
+              <div className="completion-code-line">
+                <span className="completion-line-number">04</span>
+                <code><span className="syntax-comment">// everything starts here</span></code>
+              </div>
+            </div>
+            <div className="completion-terminal">
+              <span className="completion-terminal-prompt">›</span>
+              <code>supra --start local</code>
+              <span className="completion-terminal-cursor" />
+            </div>
+          </div>
+          <div className="completion-shard completion-shard-one">
+            ambition.<span className="syntax-function">define</span>()
+          </div>
+          <div className="completion-shard completion-shard-two">
+            dream.<span className="syntax-function">ship</span>()
+          </div>
+          <div className="completion-shard completion-shard-three">
+            <span className="syntax-comment">// build what matters</span>
+          </div>
+          <div className="completion-ruler"><span /><span /><span /><span /><span /><span /><span /></div>
+        </div>
+      </div>
+      <p className="completion-footer-mark">SUPRACODE / ENVIRONMENT ASSEMBLY</p>
     </div>
   )
 }
@@ -678,6 +757,7 @@ function PreferenceQuestion({
   direction,
   saving,
   error,
+  completionHandoff,
   onSelect,
   onCustomInstructionChange,
   onBack,
@@ -691,6 +771,7 @@ function PreferenceQuestion({
   direction: TransitionDirection
   saving: boolean
   error: string
+  completionHandoff: boolean
   onSelect: (key: PreferenceQuestionKey, value: string | number | boolean) => void
   onCustomInstructionChange: (value: string) => void
   onBack: () => void
@@ -700,7 +781,8 @@ function PreferenceQuestion({
   const isCustomResponseStyle = question.key === 'responseStyle' && selectedValue === 'custom'
   const isLastQuestion = step === totalSteps
   const complete = isQuestionComplete(question, draft)
-  const exitClass = direction === 'forward' ? ' exit-left' : ' exit-right'
+  const isCompletionHandoff = completionHandoff && phase === 'exit'
+  const exitClass = isCompletionHandoff ? '' : direction === 'forward' ? ' exit-left' : ' exit-right'
   const enterClass = direction === 'forward' ? ' preference-enter-right' : ' preference-enter-left'
   const headerClass = phase === 'exit'
     ? exitClass
@@ -716,7 +798,7 @@ function PreferenceQuestion({
       : ''
 
   return (
-    <div className="page-inner preference-inner">
+    <div className={`page-inner preference-inner${isCompletionHandoff ? ' completion-handoff-exit' : ''}`}>
       <div
         className={`preference-header${headerClass}`}
         style={phase === 'exit' ? animationDelay(0) : undefined}
