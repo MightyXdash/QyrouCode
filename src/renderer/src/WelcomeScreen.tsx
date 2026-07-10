@@ -14,10 +14,10 @@ import {
 import { MAX_CUSTOM_RESPONSE_STYLE_LENGTH } from '../../shared/settings'
 import './WelcomeScreen.css'
 
-const ESSENTIAL_MODELS: { id: string; hf_repo: string; label: string }[] = [
-  { id: 'supra-reasoning-summarizer', hf_repo: 'SupraLabs/reasoning-summarizer-800m-pre-gguf', label: 'Reasoning Summarizer' },
-  { id: 'supra-title', hf_repo: 'SupraLabs/supra-title-50M-pre-gguf', label: 'Title Generator' },
-  { id: 'supra-router', hf_repo: 'SupraLabs/Supra-Router-51M-gguf', label: 'Model Router' },
+const ESSENTIAL_MODELS: { id: string; hf_repo: string; label: string; gguf_file: string }[] = [
+  { id: 'supra-reasoning-summarizer', hf_repo: 'SupraLabs/reasoning-summarizer-800m-pre-gguf', label: 'Reasoning Summarizer', gguf_file: 'reasoning-summarizer-800m-pre-Q4_K_M.gguf' },
+  { id: 'supra-title', hf_repo: 'SupraLabs/supra-title-50M-pre-gguf', label: 'Title Generator', gguf_file: 'SupraTitle-50M-Q4_K_M.gguf' },
+  { id: 'supra-router', hf_repo: 'SupraLabs/Supra-Router-51M-gguf', label: 'Model Router', gguf_file: 'Supra-Router-51M-Q4_K_M.gguf' },
 ]
 
 const ROLES = [
@@ -45,7 +45,7 @@ const ROLE_TO_RATINGS: Record<string, (keyof Ratings)[]> = {
 type Phase = 'idle' | 'exit' | 'enter'
 type TransitionDirection = 'forward' | 'back'
 type OnboardingStatus = 'loading' | 'active' | 'complete'
-type DownloadEntry = { id: string; name: string; hf_repo: string }
+type DownloadEntry = { id: string; name: string; hf_repo: string; gguf_file: string }
 
 const EXIT_STAGGER_MS = 80
 const EXIT_DURATION_MS = 220
@@ -407,10 +407,10 @@ export default function WelcomeScreen(): JSX.Element {
   const pendingDownloadList = useMemo<DownloadEntry[]>(() => [
     ...MODEL_LIST
       .filter(model => selectedModels.has(model.id) && !cachedModels.has(model.id))
-      .map(model => ({ id: model.id, name: model.name, hf_repo: model.hf_repo })),
+      .map(model => ({ id: model.id, name: model.name, hf_repo: model.hf_repo, gguf_file: model.gguf_file })),
     ...ESSENTIAL_MODELS
       .filter(model => !cachedModels.has(model.id))
-      .map(model => ({ id: model.id, name: model.label, hf_repo: model.hf_repo }))
+      .map(model => ({ id: model.id, name: model.label, hf_repo: model.hf_repo, gguf_file: model.gguf_file }))
   ], [cachedModels, selectedModels])
 
   const cachedSelectableModelIds = useMemo(
@@ -474,7 +474,7 @@ export default function WelcomeScreen(): JSX.Element {
       })
 
       try {
-        await window.api.downloadModel(model.hf_repo)
+        await window.api.downloadModel(model.hf_repo, model.gguf_file)
         setCachedModels(prev => new Set(prev).add(model.id))
       } catch {
         setDownloadFailures(prev => ({

@@ -1,5 +1,6 @@
 import './WindowControls.css'
 import type { OnboardingPreferences, OnboardingState } from '../../shared/settings'
+import type { LlamaRuntimeStatus } from '../../shared/llama'
 
 declare global {
   interface Window {
@@ -12,9 +13,12 @@ declare global {
       getOnboardingState: () => Promise<OnboardingState>
       completeOnboarding: (preferences: OnboardingPreferences) => Promise<void>
       checkModelCache: (modelId: string) => Promise<boolean>
-      downloadModel: (repoId: string) => Promise<void>
+      downloadModel: (repoId: string, ggufFile: string) => Promise<void>
       cancelDownload: (repoId: string) => Promise<void>
       onDownloadProgress: (callback: (data: { repoId: string; downloaded: number; total: number }) => void) => () => void
+      getLlamaStatus: () => Promise<LlamaRuntimeStatus>
+      startLlamaServer: (modelPath: string, contextTokens: number) => Promise<LlamaRuntimeStatus>
+      stopLlamaServer: () => Promise<LlamaRuntimeStatus>
     }
   }
 }
