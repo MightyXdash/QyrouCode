@@ -27,6 +27,7 @@
   --border-width-hairline: 0.5px;
   --background-base: light-dark(#f7f7f7, #1f1f1f);
   --background-weak: light-dark(#f1f1f1, #1c1c1c);
+  --bg: var(--background-base);
   --surface-composer: light-dark(#f8f8f8, #252525);
   --surface-raised: light-dark(#fbfbfb, #282828);
   --surface-hover: light-dark(rgba(0, 0, 0, 0.045), rgba(255, 255, 255, 0.055));
@@ -43,6 +44,7 @@
   --text-on-color: #ffffff;
   --border-base: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.14));
   --border-weak: light-dark(rgba(0, 0, 0, 0.075), rgba(255, 255, 255, 0.08));
+  --border: var(--border-base);
   --filter-shadow-composer: drop-shadow(0 3px 10px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.24)));
   --shadow-menu: 0 14px 38px light-dark(rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.42)), 0 0 0 0.5px var(--border-base);
   --radius-sm: 0.25rem;
@@ -63,7 +65,6 @@
   overflow: hidden;
   background: var(--background-weak);
   color: var(--text-base);
-  color-scheme: light dark;
   transition: grid-template-columns 150ms var(--motion-ease-out);
 }
 
