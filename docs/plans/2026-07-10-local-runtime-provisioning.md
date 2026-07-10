@@ -274,7 +274,7 @@ Every failure must include a user-safe summary and an internal diagnostic code. 
 
 - No developer bootstrap URL without HTTPS, pinned release metadata, and SHA-256 verification. Packaged releases execute only the signed resource staged by CI.
 - No model ID or model path supplied as trusted renderer input.
-- No executable loaded from the Hugging Face cache or source tree.
+- No executable loaded from the Hugging Face cache. Packaged releases load only the signed resource; development may load only the verified, ignored `vendor/llama.cpp/...` bootstrap layout.
 - Loopback-only server; no `0.0.0.0` binding.
 - Keep server credential, diagnostics, and child process control in main only.
 - Do not log tokens, prompts, provider credentials, or full environment variables.
