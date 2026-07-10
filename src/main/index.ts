@@ -6,6 +6,7 @@ import { homedir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { completeOnboarding, getOnboardingState } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
+import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -348,6 +349,13 @@ app.whenReady().then(() => {
     if (!targetWindow) return
     if (targetWindow.isMaximized()) targetWindow.unmaximize()
     else targetWindow.maximize()
+  })
+  ipcMain.on('run-window-command', (event, command: WindowCommand) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender)
+    if (!targetWindow) return
+    if (command === WINDOW_COMMANDS.reload) targetWindow.webContents.reload()
+    if (command === WINDOW_COMMANDS.toggleDevTools) targetWindow.webContents.toggleDevTools()
+    if (command === WINDOW_COMMANDS.toggleFullscreen) targetWindow.setFullScreen(!targetWindow.isFullScreen())
   })
   ipcMain.on('close-window', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close()

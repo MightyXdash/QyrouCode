@@ -1,10 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { OnboardingPreferences, OnboardingState } from '../shared/settings'
 import type { LlamaRuntimeStatus } from '../shared/llama'
+import type { WindowCommand } from '../shared/windowCommands'
 
 const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
   toggleMaximize: () => ipcRenderer.send('toggle-maximize-window'),
+  runWindowCommand: (command: WindowCommand) => ipcRenderer.send('run-window-command', command),
   close: () => ipcRenderer.send('close-window'),
   openMainWindow: (): Promise<void> => ipcRenderer.invoke('open-main-window'),
   rendererReady: () => ipcRenderer.send('renderer-ready'),

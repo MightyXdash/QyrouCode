@@ -1,12 +1,52 @@
 import { useEffect, useRef, useState } from 'react'
 import { MODEL_LIST } from './modelCatalog'
 import type { LlamaRuntimeStatus } from '../../shared/llama'
+import { WINDOW_COMMANDS } from '../../shared/windowCommands'
 import WindowControls from './WindowControls'
 import './MainApp.css'
 
 const REASONING_EFFORTS = ['Low', 'Medium', 'High'] as const
+const COMPOSER_SHAPE_VIEW_BOX = '0 0 760 128'
+const COMPOSER_SHAPE_PATH = 'M24 0H736C750 0 756 2 759 9C760 13 760 18 760 24V104C760 110 760 115 759 119C756 126 750 128 736 128H24C10 128 4 126 1 119C0 115 0 110 0 104V24C0 18 0 13 1 9C4 2 10 0 24 0Z'
 
 type OpenMenu = 'advanced' | 'model' | 'reasoning' | null
+type TitlebarMenuId = 'file' | 'edit' | 'view' | 'help'
+type TitlebarAction = 'new-thread' | 'close-window' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'select-all' | 'reload' | 'toggle-dev-tools' | 'toggle-fullscreen'
+
+interface TitlebarMenuItem {
+  action?: TitlebarAction
+  disabled?: boolean
+  label?: string
+  separator?: boolean
+  shortcut?: string
+}
+
+const TITLEBAR_MENUS: Record<TitlebarMenuId, TitlebarMenuItem[]> = {
+  file: [
+    { label: 'New thread', shortcut: 'Ctrl N', action: 'new-thread' },
+    { separator: true },
+    { label: 'Close window', shortcut: 'Alt F4', action: 'close-window' }
+  ],
+  edit: [
+    { label: 'Undo', shortcut: 'Ctrl Z', action: 'undo' },
+    { label: 'Redo', shortcut: 'Ctrl Y', action: 'redo' },
+    { separator: true },
+    { label: 'Cut', shortcut: 'Ctrl X', action: 'cut' },
+    { label: 'Copy', shortcut: 'Ctrl C', action: 'copy' },
+    { label: 'Paste', shortcut: 'Ctrl V', action: 'paste' },
+    { label: 'Select all', shortcut: 'Ctrl A', action: 'select-all' }
+  ],
+  view: [
+    { label: 'Reload', shortcut: 'Ctrl R', action: 'reload' },
+    { label: 'Toggle developer tools', shortcut: 'Ctrl Shift I', action: 'toggle-dev-tools' },
+    { separator: true },
+    { label: 'Toggle full screen', shortcut: 'F11', action: 'toggle-fullscreen' }
+  ],
+  help: [
+    { label: 'SupraCode', disabled: true },
+    { label: 'Local coding model runner', disabled: true }
+  ]
+}
 
 function SearchIcon(): JSX.Element {
   return <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.25" /><path d="m12.5 12.5 4 4" /></svg>
@@ -32,15 +72,26 @@ function ArrowIcon({ direction }: { direction: 'back' | 'forward' }): JSX.Elemen
   return <svg className={direction === 'forward' ? 'forward-arrow' : undefined} viewBox="0 0 16 16" aria-hidden="true"><path d="m9.75 3.5-4.5 4.5 4.5 4.5M5.5 8h6" /></svg>
 }
 
+function ComposerShape(): JSX.Element {
+  return (
+    <svg className="composer-shape" viewBox={COMPOSER_SHAPE_VIEW_BOX} preserveAspectRatio="none" aria-hidden="true">
+      <path d={COMPOSER_SHAPE_PATH} vectorEffect="non-scaling-stroke" />
+    </svg>
+  )
+}
+
 export default function MainApp(): JSX.Element {
   const [prompt, setPrompt] = useState('')
   const [selectedModelId, setSelectedModelId] = useState('')
   const [downloadedModelIds, setDownloadedModelIds] = useState<Set<string> | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<(typeof REASONING_EFFORTS)[number]>('Medium')
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
+  const [openTitlebarMenu, setOpenTitlebarMenu] = useState<TitlebarMenuId | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [runtimeStatus, setRuntimeStatus] = useState<LlamaRuntimeStatus | null>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
+  const titlebarMenuRef = useRef<HTMLElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
   const downloadedModels = downloadedModelIds
     ? MODEL_LIST.filter((model) => downloadedModelIds.has(model.id))
     : []
@@ -62,10 +113,32 @@ export default function MainApp(): JSX.Element {
   useEffect(() => {
     const closeMenus = (event: MouseEvent): void => {
       if (!controlsRef.current?.contains(event.target as Node)) setOpenMenu(null)
+      if (!titlebarMenuRef.current?.contains(event.target as Node)) setOpenTitlebarMenu(null)
     }
     window.addEventListener('mousedown', closeMenus)
     return () => window.removeEventListener('mousedown', closeMenus)
   }, [])
+
+  const runTitlebarAction = (action: TitlebarAction): void => {
+    setOpenTitlebarMenu(null)
+    if (action === 'new-thread') setPrompt('')
+    if (action === 'close-window') window.api.close()
+    if (action === 'reload') window.api.runWindowCommand(WINDOW_COMMANDS.reload)
+    if (action === 'toggle-dev-tools') window.api.runWindowCommand(WINDOW_COMMANDS.toggleDevTools)
+    if (action === 'toggle-fullscreen') window.api.runWindowCommand(WINDOW_COMMANDS.toggleFullscreen)
+    const editCommands: Partial<Record<TitlebarAction, string>> = {
+      undo: 'undo',
+      redo: 'redo',
+      cut: 'cut',
+      copy: 'copy',
+      paste: 'paste',
+      'select-all': 'selectAll'
+    }
+    const editCommand = editCommands[action]
+    if (!editCommand) return
+    previousFocusRef.current?.focus()
+    document.execCommand(editCommand)
+  }
 
   return (
     <>
@@ -74,11 +147,41 @@ export default function MainApp(): JSX.Element {
           <button className="titlebar-icon-button" type="button" aria-label="Toggle sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((current) => !current)}><SidebarIcon /></button>
           <button className="titlebar-icon-button" type="button" aria-label="Go back" disabled><ArrowIcon direction="back" /></button>
           <button className="titlebar-icon-button" type="button" aria-label="Go forward" disabled><ArrowIcon direction="forward" /></button>
-          <nav className="titlebar-menu" aria-label="Application menu">
-            <button type="button">File</button>
-            <button type="button">Edit</button>
-            <button type="button">View</button>
-            <button type="button">Help</button>
+          <nav className="titlebar-menu" aria-label="Application menu" ref={titlebarMenuRef}>
+            {(Object.keys(TITLEBAR_MENUS) as TitlebarMenuId[]).map((menuId) => (
+              <div className="titlebar-menu-group" key={menuId}>
+                <button
+                  className={openTitlebarMenu === menuId ? 'titlebar-menu-trigger open' : 'titlebar-menu-trigger'}
+                  type="button"
+                  aria-expanded={openTitlebarMenu === menuId}
+                  aria-haspopup="menu"
+                  onMouseDown={() => { previousFocusRef.current = document.activeElement as HTMLElement }}
+                  onClick={() => setOpenTitlebarMenu((current) => current === menuId ? null : menuId)}
+                >
+                  {menuId[0].toUpperCase() + menuId.slice(1)}
+                </button>
+                {openTitlebarMenu === menuId && (
+                  <div className="titlebar-dropdown" role="menu">
+                    {TITLEBAR_MENUS[menuId].map((item, index) => item.separator ? (
+                      <div className="titlebar-dropdown-separator" key={`separator-${index}`} />
+                    ) : (
+                      <button
+                        className="titlebar-dropdown-item"
+                        disabled={item.disabled}
+                        key={item.label}
+                        role="menuitem"
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => item.action && runTitlebarAction(item.action)}
+                      >
+                        <span>{item.label}</span>
+                        {item.shortcut && <kbd>{item.shortcut}</kbd>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
           </nav>
         </div>
         <div className="titlebar-drag-region" aria-hidden="true" />
@@ -111,6 +214,7 @@ export default function MainApp(): JSX.Element {
         </div>
 
         <form className="prompt-composer" onSubmit={(event) => event.preventDefault()}>
+          <ComposerShape />
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}

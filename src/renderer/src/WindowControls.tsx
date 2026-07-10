@@ -1,12 +1,14 @@
 import './WindowControls.css'
 import type { OnboardingPreferences, OnboardingState } from '../../shared/settings'
 import type { LlamaRuntimeStatus } from '../../shared/llama'
+import type { WindowCommand } from '../../shared/windowCommands'
 
 declare global {
   interface Window {
     api: {
       minimize: () => void
       toggleMaximize: () => void
+      runWindowCommand: (command: WindowCommand) => void
       close: () => void
       openMainWindow: () => Promise<void>
       rendererReady: () => void
