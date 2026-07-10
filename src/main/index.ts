@@ -52,7 +52,6 @@ function createMainAppWindow(): BrowserWindow {
   const targetWindow = new BrowserWindow({
     width: MAIN_APP_WINDOW_WIDTH,
     height: MAIN_APP_WINDOW_HEIGHT,
-    frame: false,
     resizable: true,
     maximizable: true,
     minimizable: true,
@@ -66,7 +65,10 @@ function createMainAppWindow(): BrowserWindow {
   })
 
   mainAppWindow = targetWindow
-  targetWindow.once('ready-to-show', () => targetWindow.show())
+  targetWindow.once('ready-to-show', () => {
+    targetWindow.maximize()
+    targetWindow.show()
+  })
   targetWindow.once('closed', () => {
     if (mainAppWindow === targetWindow) mainAppWindow = null
   })
