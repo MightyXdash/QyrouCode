@@ -16,9 +16,22 @@ export interface LocalCompletion {
   text: string
 }
 
+export interface LocalCompletionStart {
+  requestId: string
+}
+
+export type LocalCompletionEvent =
+  | { requestId: string; type: 'delta'; delta: string }
+  | { requestId: string; type: 'complete' }
+  | { requestId: string; type: 'cancelled' }
+  | { requestId: string; type: 'error'; message: string }
+
 interface CompletionResponse {
   choices?: Array<{
     message?: {
+      content?: unknown
+    }
+    delta?: {
       content?: unknown
     }
   }>
@@ -108,6 +121,63 @@ export class LocalCompletionClient {
       const text = parsed.choices?.[0]?.message?.content
       if (typeof text !== 'string' || text.length === 0) throw new Error('Local completion response did not contain assistant text')
       return { text }
+    } catch (error) {
+      if (controller.signal.aborted) {
+        const reason = controller.signal.reason
+        if (reason instanceof Error) throw reason
+        throw new Error('Local completion was cancelled')
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout)
+      request.signal?.removeEventListener('abort', abort)
+    }
+  }
+
+  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<void> {
+    const { maxTokens, temperature } = validateRequest(request)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(new Error('Local completion timed out')), this.timeoutMs)
+    const abort = () => controller.abort(request.signal?.reason)
+    request.signal?.addEventListener('abort', abort, { once: true })
+
+    try {
+      const response = await fetch(this.endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: request.messages, stream: true, max_tokens: maxTokens, temperature }),
+        signal: controller.signal
+      })
+      if (!response.ok) {
+        const detail = describeResponseBody(await response.text())
+        throw new Error(`Local completion request failed with ${response.status}${detail ? `: ${detail}` : ''}`)
+      }
+      if (!response.body) throw new Error('Local completion did not return a response stream')
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        buffer += decoder.decode(value, { stream: !done })
+        let boundary = buffer.indexOf('\n\n')
+        while (boundary !== -1) {
+          const event = buffer.slice(0, boundary)
+          buffer = buffer.slice(boundary + 2)
+          boundary = buffer.indexOf('\n\n')
+          const data = event.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n')
+          if (!data) continue
+          if (data === '[DONE]') return
+          let parsed: CompletionResponse
+          try {
+            parsed = JSON.parse(data) as CompletionResponse
+          } catch {
+            throw new Error('Local completion returned malformed stream data')
+          }
+          const delta = parsed.choices?.[0]?.delta?.content
+          if (typeof delta === 'string' && delta.length > 0) onDelta(delta)
+        }
+        if (done) return
+      }
     } catch (error) {
       if (controller.signal.aborted) {
         const reason = controller.signal.reason

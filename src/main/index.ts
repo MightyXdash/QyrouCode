@@ -1,4 +1,5 @@
 import { app, shell, BrowserWindow, Menu, ipcMain, net } from 'electron'
+import { randomUUID } from 'crypto'
 import { dirname, join } from 'path'
 import { existsSync, readdirSync, createWriteStream, mkdirSync, unlinkSync, renameSync, statSync } from 'fs'
 import { homedir } from 'os'
@@ -6,6 +7,7 @@ import { homedir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { completeOnboarding, getOnboardingState } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
+import type { LocalCompletionEvent, LocalCompletionRequest, LocalCompletionStart } from './localCompletionClient'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -20,6 +22,7 @@ const MODEL_PROJECTOR_MARKERS = ['mmproj', 'projector']
 
 let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
+const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController }>()
 
 function appIconPath(): string {
   const filename = process.platform === 'win32' ? WINDOWS_ICON_FILENAME : DEFAULT_ICON_FILENAME
@@ -364,6 +367,24 @@ app.whenReady().then(() => {
     return llamaRuntime?.start(modelPath, contextTokens, mmprojPath)
   })
   ipcMain.handle('stop-llama-server', () => llamaRuntime?.stop())
+  ipcMain.handle('start-local-completion', (event, request: LocalCompletionRequest): LocalCompletionStart => {
+    const requestId = randomUUID()
+    const controller = new AbortController()
+    activeCompletionRequests.set(requestId, { senderId: event.sender.id, controller })
+    const send = (completionEvent: LocalCompletionEvent): void => event.sender.send('local-completion-event', completionEvent)
+    if (!llamaRuntime) throw new Error('llama-server is not available')
+    void llamaRuntime.streamCompletion({ ...request, signal: controller.signal }, (delta) => send({ requestId, type: 'delta', delta }))
+      .then(() => send({ requestId, type: controller.signal.aborted ? 'cancelled' : 'complete' }))
+      .catch((error) => { if (!controller.signal.aborted) send({ requestId, type: 'error', message: error instanceof Error ? error.message : 'Local completion failed' }) })
+      .finally(() => activeCompletionRequests.delete(requestId))
+    return { requestId }
+  })
+  ipcMain.handle('cancel-local-completion', (event, requestId: string): boolean => {
+    const request = activeCompletionRequests.get(requestId)
+    if (!request || request.senderId !== event.sender.id) return false
+    request.controller.abort()
+    return true
+  })
   ipcMain.handle('check-model-cache', (_event, modelId: string) => {
     return containsGguf(modelCachePath(modelId))
   })
