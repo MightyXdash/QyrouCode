@@ -87,6 +87,11 @@ export default function MainApp(): JSX.Element {
           <p>Start a new thread with a local model.</p>
         </div>
 
+        {/*
+          Sequence 3 deliberately leaves this composer, its styling, and its position unchanged.
+          Sequence 4 should connect this existing submit path to startLocalCompletion and render streamed
+          events without altering the current visual structure unless a separate UI decision authorizes it.
+        */}
         <form className="prompt-composer" onSubmit={(event) => event.preventDefault()}>
           <textarea
             value={prompt}
