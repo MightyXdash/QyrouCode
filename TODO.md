@@ -88,4 +88,4 @@ Audit-derived backlog for turning the current onboarding/model-download shell in
 - Do not treat a downloaded GGUF as a usable model until the exact artifact is verified and a runtime confirms compatibility.
 - Keep renderer APIs narrow; do not expose generic filesystem, process, or shell primitives through preload.
 - Optimize measured time-to-first-use, time-to-first-token, tool latency, and task completion—not onboarding animation alone.
-- Do not claim local-model, routing, approval, or agent capabilities until they are connected to executable behavior.
+- Do not claim local-model, routing, approval, or agent capabilities until they are connected to executable behavior..
