@@ -40,7 +40,9 @@ test('sends a bounded non-streaming OpenAI-compatible chat completion request', 
       messages: [{ role: 'user', content: 'Reply with a short greeting.' }],
       stream: false,
       max_tokens: 32,
-      temperature: 0
+      temperature: 0,
+      chat_template_kwargs: { enable_thinking: false },
+      reasoning_format: 'deepseek'
     })
   } finally {
     await server.close()
@@ -80,6 +82,57 @@ test('emits deltas from a fragmented server-sent event response', async () => {
       (delta) => deltas.push(delta)
     )
     assert.deepEqual(deltas, ['Supra', 'Code'])
+  } finally {
+    await server.close()
+  }
+})
+
+test('accepts up to 8192 output tokens', async () => {
+  const server = await startServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ choices: [{ message: { content: 'Complete' } }] }))
+  })
+
+  try {
+    const client = new LocalCompletionClient(server.url)
+    const completion = await client.complete({ messages: [{ role: 'user', content: 'Write a longer response.' }], maxTokens: 8192 })
+    assert.equal(completion.text, 'Complete')
+  } finally {
+    await server.close()
+  }
+})
+
+test('uses the raw completion endpoint for chat titles', async () => {
+  let receivedBody = ''
+  const server = await startServer((request, response) => {
+    request.on('data', (chunk: Buffer) => { receivedBody += chunk.toString() })
+    request.on('end', () => {
+      assert.equal(request.url, '/completion')
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ content: 'Streaming Local Responses' }))
+    })
+  })
+
+  try {
+    const client = new LocalCompletionClient(server.url)
+    const completion = await client.completePrompt({
+      prompt: 'User: Make local streaming work\nTitle: ',
+      maxTokens: 10,
+      temperature: 0.55,
+      topK: 15,
+      topP: 0.85,
+      repetitionPenalty: 1.35
+    })
+    assert.equal(completion.text, 'Streaming Local Responses')
+    assert.deepEqual(JSON.parse(receivedBody), {
+      prompt: 'User: Make local streaming work\nTitle: ',
+      n_predict: 10,
+      temperature: 0.55,
+      top_k: 15,
+      top_p: 0.85,
+      repeat_penalty: 1.35,
+      stream: false
+    })
   } finally {
     await server.close()
   }

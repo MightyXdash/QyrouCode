@@ -21,8 +21,13 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "electron-store": "^10.0.0",
+    "katex": "^0.17.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.0",
@@ -59,6 +64,12 @@
     ],
     "win": {
       "icon": "build/icon.ico",
+      "extraResources": [
+        {
+          "from": "vendor/llama.cpp/win32-x64",
+          "to": "llama.cpp/win32-x64"
+        }
+      ],
       "target": "nsis"
     },
     "linux": {

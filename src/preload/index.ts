@@ -1,8 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { OnboardingPreferences, OnboardingState, ThemePreference } from '../shared/settings'
+import type { OnboardingPreferences, OnboardingState, ResponseStylePreference, ThemePreference } from '../shared/settings'
 import type { LlamaRuntimeStatus } from '../shared/llama'
 import type { WindowCommand } from '../shared/windowCommands'
 import type { LocalCompletionEvent, LocalCompletionRequest, LocalCompletionStart } from '../main/localCompletionClient'
+import type { Project } from '../shared/projects'
+import type { ChatThread } from '../shared/chat'
 
 const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
@@ -20,7 +22,17 @@ const api = {
   completeOnboarding: (preferences: OnboardingPreferences): Promise<void> =>
     ipcRenderer.invoke('complete-onboarding', preferences),
   getTheme: (): Promise<ThemePreference> => ipcRenderer.invoke('get-theme'),
+  getResponseStylePreference: (): Promise<ResponseStylePreference> => ipcRenderer.invoke('get-response-style-preference'),
   setTheme: (theme: ThemePreference): Promise<ThemePreference> => ipcRenderer.invoke('set-theme', theme),
+  getProjects: (): Promise<Project[]> => ipcRenderer.invoke('get-projects'),
+  getExpandedProjectPaths: (): Promise<string[]> => ipcRenderer.invoke('get-expanded-project-paths'),
+  setExpandedProjectPaths: (paths: string[]): Promise<string[]> => ipcRenderer.invoke('set-expanded-project-paths', paths),
+  createProject: (name: string): Promise<Project> => ipcRenderer.invoke('create-project', name),
+  chooseProjectFolder: (): Promise<Project | null> => ipcRenderer.invoke('choose-project-folder'),
+  getChatThreads: (): Promise<ChatThread[]> => ipcRenderer.invoke('get-chat-threads'),
+  saveChatThread: (thread: ChatThread): Promise<ChatThread[]> => ipcRenderer.invoke('save-chat-thread', thread),
+  startDownloadedModel: (repoId: string, filename: string): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('start-downloaded-model', repoId, filename),
+  generateChatTitle: (userMessage: string): Promise<string> => ipcRenderer.invoke('generate-chat-title', userMessage),
   checkModelCache: (modelId: string): Promise<boolean> =>
     ipcRenderer.invoke('check-model-cache', modelId),
   getDownloadedModels: (repos: string[]): Promise<string[]> =>

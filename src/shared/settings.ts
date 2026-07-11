@@ -7,6 +7,7 @@ export const MODEL_TIERS = ['large', 'medium', 'small'] as const
 export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'extra-high'] as const
 export const EXECUTION_APPROVAL_POLICIES = ['always', 'high-risk', 'full'] as const
 export const RESPONSE_STYLES = ['warm', 'gen-z', 'sarcastic', 'pragmatic', 'custom'] as const
+export const DEFAULT_RESPONSE_STYLE: ResponseStyle = 'pragmatic'
 
 export type ThemePreference = typeof THEMES[number]
 export type ContextWindowTokens = typeof CONTEXT_WINDOW_TOKENS[number]
@@ -33,10 +34,18 @@ export interface SettingsStoreData {
   settingsVersion: number
   onboardingCompleted: boolean
   onboardingPreferences?: OnboardingPreferences
+  projects?: import('./projects').Project[]
+  expandedProjectPaths?: string[]
+  chatThreads?: import('./chat').ChatThread[]
 }
 
 export interface OnboardingState {
   completed: boolean
+}
+
+export interface ResponseStylePreference {
+  style: ResponseStyle
+  customInstruction: string
 }
 
 export const validateThemePreference = (value: unknown): ThemePreference => {

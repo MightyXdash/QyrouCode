@@ -1,17 +1,18 @@
-import { app, shell, BrowserWindow, Menu, ipcMain, net } from 'electron'
+import { app, shell, BrowserWindow, Menu, dialog, ipcMain, net } from 'electron'
 import { randomUUID } from 'crypto'
-import { dirname, join } from 'path'
+import { basename, dirname, join } from 'path'
 import { existsSync, readdirSync, createWriteStream, mkdirSync, unlinkSync, renameSync, statSync } from 'fs'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { completeOnboarding, getOnboardingState, getTheme, setTheme } from './settings'
+import { addProject, completeOnboarding, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, saveChatThread, setExpandedProjectPaths, setTheme } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
 import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManifest'
-import { FIRST_LOAD_CONTEXT_TOKENS } from '../shared/llama'
+import { LLAMA_TITLE_SERVER_PORT } from '../shared/llama'
 import type { LocalCompletionEvent, LocalCompletionRequest, LocalCompletionStart } from './localCompletionClient'
+import type { ChatThread } from '../shared/chat'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -23,9 +24,17 @@ const MAIN_APP_WINDOW_WIDTH = 1440
 const MAIN_APP_WINDOW_HEIGHT = 900
 const GGUF_FILE_EXTENSION = '.gguf'
 const MODEL_PROJECTOR_MARKERS = ['mmproj', 'projector']
+const TITLE_MODEL_REPOSITORY = 'SupraLabs/supra-title-50M-pre-gguf'
+const TITLE_MODEL_FILENAME = 'SupraTitle-50M-Q4_K_M.gguf'
+const TITLE_MODEL_CONTEXT_TOKENS = 4096
+const TITLE_MODEL_MAX_INPUT_CHARACTERS = 12000
+const MODEL_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+const INVALID_PROJECT_NAME_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/
+const WINDOWS_RESERVED_PROJECT_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
 
 let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
+let titleRuntime: LlamaRuntime | null = null
 const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController }>()
 
 function appIconPath(): string {
@@ -46,6 +55,16 @@ function modelCachePath(modelId: string): string {
   return join(huggingFaceHubPath(), folder, 'snapshots')
 }
 
+function validateProjectName(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('Enter a project name')
+  const name = value.trim()
+  if (!name) throw new Error('Enter a project name')
+  if (name === '.' || name === '..' || name.endsWith('.') || name.endsWith(' ') || INVALID_PROJECT_NAME_CHARACTERS.test(name) || WINDOWS_RESERVED_PROJECT_NAMES.test(name)) {
+    throw new Error('Choose a name without reserved characters')
+  }
+  return name
+}
+
 function containsGguf(directory: string): boolean {
   if (!existsSync(directory)) return false
   try {
@@ -59,6 +78,35 @@ function containsGguf(directory: string): boolean {
   } catch {
     return false
   }
+}
+
+function findCachedFile(directory: string, filename: string): string | undefined {
+  if (!existsSync(directory)) return undefined
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = join(directory, entry.name)
+    if (entry.isFile() && entry.name === filename) return entryPath
+    if (entry.isDirectory()) {
+      const match = findCachedFile(entryPath, filename)
+      if (match) return match
+    }
+  }
+  return undefined
+}
+
+function resolveDownloadedModel(repoId: unknown, filename: unknown): string {
+  if (typeof repoId !== 'string' || !MODEL_REPOSITORY_PATTERN.test(repoId)) throw new Error('Invalid model repository')
+  if (typeof filename !== 'string' || filename !== basename(filename) || !filename.toLowerCase().endsWith(GGUF_FILE_EXTENSION)) throw new Error('Invalid model filename')
+  const modelPath = findCachedFile(modelCachePath(repoId), filename)
+  if (!modelPath) throw new Error('The selected model is not downloaded')
+  return modelPath
+}
+
+function validateChatThread(value: unknown): ChatThread {
+  if (!value || typeof value !== 'object') throw new Error('Invalid chat thread')
+  const thread = value as Partial<ChatThread>
+  if (typeof thread.id !== 'string' || typeof thread.projectPath !== 'string' || typeof thread.title !== 'string' || typeof thread.updatedAt !== 'number' || !Array.isArray(thread.messages)) throw new Error('Invalid chat thread')
+  if (!thread.messages.every((message) => message && typeof message.id === 'string' && (message.role === 'user' || message.role === 'assistant') && typeof message.content === 'string')) throw new Error('Invalid chat messages')
+  return thread as ChatThread
 }
 
 function findProjector(modelPath: string): string | undefined {
@@ -342,6 +390,7 @@ function createWindow(): void {
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.suprarcode')
   llamaRuntime = new LlamaRuntime()
+  titleRuntime = new LlamaRuntime(LLAMA_TITLE_SERVER_PORT)
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -381,13 +430,55 @@ app.whenReady().then(() => {
   }))
   ipcMain.handle('get-llama-status', () => llamaRuntime?.getStatus())
   ipcMain.handle('get-theme', () => getTheme())
+  ipcMain.handle('get-response-style-preference', () => getResponseStylePreference())
   ipcMain.handle('set-theme', (_event, theme: unknown) => setTheme(theme))
+  ipcMain.handle('get-projects', () => getProjects())
+  ipcMain.handle('get-expanded-project-paths', () => getExpandedProjectPaths())
+  ipcMain.handle('set-expanded-project-paths', (_event, paths: unknown) => setExpandedProjectPaths(paths))
+  ipcMain.handle('get-chat-threads', () => getChatThreads())
+  ipcMain.handle('save-chat-thread', (_event, value: unknown) => saveChatThread(validateChatThread(value)))
+  ipcMain.handle('create-project', (_event, value: unknown) => {
+    const name = validateProjectName(value)
+    const projectPath = join(app.getPath('documents'), name)
+    if (existsSync(projectPath)) throw new Error('A folder with this name already exists in Documents')
+    mkdirSync(projectPath)
+    const project = { name, path: projectPath }
+    addProject(project)
+    return project
+  })
+  ipcMain.handle('choose-project-folder', async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(owner ?? undefined, {
+      title: 'Choose a project folder',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    const projectPath = result.filePaths[0]
+    if (result.canceled || !projectPath) return null
+    const project = { name: projectPath.split(/[\\/]/).at(-1) ?? projectPath, path: projectPath }
+    addProject(project)
+    return project
+  })
   ipcMain.handle('start-local-model', async (_event, modelId: string) => {
     const artifact = getModelArtifact(INITIAL_MODEL_ARTIFACTS, modelId)
     if (!artifact) throw new Error('The selected model is not approved for local runtime use')
     if (!llamaRuntime) throw new Error('llama-server is not available')
     const resolved = await resolveModelArtifact(huggingFaceHubPath(), artifact)
-    return llamaRuntime.start(resolved.path, FIRST_LOAD_CONTEXT_TOKENS)
+    return llamaRuntime.start(resolved.path, getSelectedContextWindowTokens())
+  })
+  ipcMain.handle('start-downloaded-model', (_event, repoId: unknown, filename: unknown) => {
+    if (!llamaRuntime) throw new Error('llama-server is not available')
+    const modelPath = resolveDownloadedModel(repoId, filename)
+    return llamaRuntime.start(modelPath, getSelectedContextWindowTokens(), findProjector(modelPath))
+  })
+  ipcMain.handle('generate-chat-title', async (_event, userMessage: unknown) => {
+    if (typeof userMessage !== 'string' || !userMessage.trim()) throw new Error('A user message is required for title generation')
+    if (!titleRuntime) throw new Error('Title model runtime is unavailable')
+    const modelPath = resolveDownloadedModel(TITLE_MODEL_REPOSITORY, TITLE_MODEL_FILENAME)
+    const status = await titleRuntime.start(modelPath, TITLE_MODEL_CONTEXT_TOKENS)
+    if (status.state !== 'ready') throw new Error(status.message ?? 'Title model could not start')
+    const titleInput = userMessage.trim().slice(0, TITLE_MODEL_MAX_INPUT_CHARACTERS)
+    const title = await titleRuntime.completePrompt(`User: ${titleInput}\nTitle: `)
+    return title.replace(/[\r\n]+/g, ' ').replace(/^Title:\s*/i, '').trim()
   })
   ipcMain.handle('start-llama-server', (_event, modelPath: string, contextTokens: number) => {
     const mmprojPath = findProjector(modelPath)

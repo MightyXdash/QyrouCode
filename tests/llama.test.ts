@@ -25,6 +25,11 @@ test('configures accelerated inference with bounded batching and quantized KV ca
   assert.equal(args[args.indexOf('--threads') + 1], '6')
 })
 
+test('allows an isolated port for auxiliary model runtimes', () => {
+  const args = buildLlamaServerArgs({ ...baseProfile, port: 39282 })
+  assert.equal(args[args.indexOf('--port') + 1], '39282')
+})
+
 test('uses CPU and NUMA configuration for Linux CPU inference', () => {
   const args = buildLlamaServerArgs({ ...baseProfile, platform: 'linux', backend: 'cpu' })
   assert.equal(args[args.indexOf('--n-gpu-layers') + 1], '0')

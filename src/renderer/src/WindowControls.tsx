@@ -1,8 +1,10 @@
 import './WindowControls.css'
-import type { OnboardingPreferences, OnboardingState, ThemePreference } from '../../shared/settings'
+import type { OnboardingPreferences, OnboardingState, ResponseStylePreference, ThemePreference } from '../../shared/settings'
 import type { LlamaRuntimeStatus } from '../../shared/llama'
 import type { WindowCommand } from '../../shared/windowCommands'
 import type { LocalCompletionEvent, LocalCompletionRequest, LocalCompletionStart } from '../../main/localCompletionClient'
+import type { Project } from '../../shared/projects'
+import type { ChatThread } from '../../shared/chat'
 
 declare global {
   interface Window {
@@ -17,7 +19,17 @@ declare global {
       getOnboardingState: () => Promise<OnboardingState>
       completeOnboarding: (preferences: OnboardingPreferences) => Promise<void>
       getTheme: () => Promise<ThemePreference>
+      getResponseStylePreference: () => Promise<ResponseStylePreference>
       setTheme: (theme: ThemePreference) => Promise<ThemePreference>
+      getProjects: () => Promise<Project[]>
+      getExpandedProjectPaths: () => Promise<string[]>
+      setExpandedProjectPaths: (paths: string[]) => Promise<string[]>
+      createProject: (name: string) => Promise<Project>
+      chooseProjectFolder: () => Promise<Project | null>
+      getChatThreads: () => Promise<ChatThread[]>
+      saveChatThread: (thread: ChatThread) => Promise<ChatThread[]>
+      startDownloadedModel: (repoId: string, filename: string) => Promise<LlamaRuntimeStatus>
+      generateChatTitle: (userMessage: string) => Promise<string>
       checkModelCache: (modelId: string) => Promise<boolean>
       downloadModel: (repoId: string, ggufFile: string) => Promise<void>
       cancelDownload: (repoId: string) => Promise<void>

@@ -1,4 +1,5 @@
 export const LLAMA_SERVER_PORT = 39281
+export const LLAMA_TITLE_SERVER_PORT = 39282
 export const LLAMA_SERVER_HOST = '127.0.0.1'
 export const FIRST_LOAD_CONTEXT_TOKENS = 8192
 
@@ -23,6 +24,7 @@ export interface LlamaLaunchProfile {
   availableMemoryBytes: number
   modelSizeBytes?: number
   mmprojPath?: string
+  port?: number
 }
 
 const MINIMUM_THREAD_COUNT = 1
@@ -47,7 +49,7 @@ export const buildLlamaServerArgs = (profile: LlamaLaunchProfile): string[] => {
   const args = [
     '--model', profile.modelPath,
     '--host', LLAMA_SERVER_HOST,
-    '--port', String(LLAMA_SERVER_PORT),
+    '--port', String(profile.port ?? LLAMA_SERVER_PORT),
     '--ctx-size', String(profile.contextTokens),
     '--threads', String(generationThreads),
     '--threads-batch', String(batchThreads),

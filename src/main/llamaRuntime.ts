@@ -53,7 +53,7 @@ export class LlamaRuntime {
   private process: ChildProcessWithoutNullStreams | null = null
   private status: LlamaRuntimeStatus
 
-  constructor() {
+  constructor(private readonly port = LLAMA_SERVER_PORT) {
     const targetPlatform = currentPlatform()
     const executablePath = findExecutable()
     this.status = {
@@ -70,11 +70,27 @@ export class LlamaRuntime {
 
   async streamCompletion(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<void> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
-    await new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${LLAMA_SERVER_PORT}`).stream(request, onDelta)
+    await new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).stream(request, onDelta)
+  }
+
+  async completePrompt(prompt: string): Promise<string> {
+    if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
+    const completion = await new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).completePrompt({
+      prompt,
+      maxTokens: 10,
+      temperature: 0.55,
+      topK: 15,
+      topP: 0.85,
+      repetitionPenalty: 1.35
+    })
+    return completion.text
   }
 
   async start(modelPath: string, contextTokens: number, mmprojPath?: string): Promise<LlamaRuntimeStatus> {
-    if (this.process && (this.status.state === 'starting' || this.status.state === 'ready')) return this.getStatus()
+    if (this.process && (this.status.state === 'starting' || this.status.state === 'ready')) {
+      if (this.status.modelPath === modelPath) return this.getStatus()
+      await this.stop()
+    }
     const executablePath = this.status.executablePath ?? findExecutable()
     if (!executablePath) return this.getStatus()
     if (!existsSync(modelPath)) throw new Error('The selected GGUF model does not exist')
@@ -89,7 +105,8 @@ export class LlamaRuntime {
       logicalCpuCount: cpus().length,
       availableMemoryBytes: freemem(),
       modelSizeBytes: statSync(modelPath).size,
-      mmprojPath
+      mmprojPath,
+      port: this.port
     })
 
     this.status = { state: 'starting', backend, executablePath, modelPath }
@@ -143,7 +160,7 @@ export class LlamaRuntime {
     while (Date.now() < deadline) {
       if (!this.process) throw new Error(this.status.message ?? 'llama-server stopped during startup')
       try {
-        const response = await fetch(`http://${LLAMA_SERVER_HOST}:${LLAMA_SERVER_PORT}${HEALTH_PATH}`)
+        const response = await fetch(`http://${LLAMA_SERVER_HOST}:${this.port}${HEALTH_PATH}`)
         if (response.ok) return
       } catch { /* server is still loading */ }
       await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_INTERVAL_MS))
