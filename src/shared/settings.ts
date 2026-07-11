@@ -1,4 +1,4 @@
-export const SETTINGS_VERSION = 1
+export const SETTINGS_VERSION = 2
 export const MAX_CUSTOM_RESPONSE_STYLE_LENGTH = 600
 
 export const CONTEXT_WINDOW_TOKENS = [32000, 72000, 145000, 256000] as const
@@ -37,6 +37,8 @@ export interface SettingsStoreData {
   projects?: import('./projects').Project[]
   expandedProjectPaths?: string[]
   chatThreads?: import('./chat').ChatThread[]
+  agentSessions?: Record<string, import('./agent').PersistedAgentSession>
+  workspaceViewState?: import('./agent').WorkspaceViewState
 }
 
 export interface OnboardingState {

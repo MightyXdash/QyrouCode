@@ -12,6 +12,7 @@ import {
 } from '../shared/settings'
 import type { Project } from '../shared/projects'
 import type { ChatThread } from '../shared/chat'
+import { DEFAULT_WORKSPACE_VIEW_STATE, VIEW_REASONING_EFFORTS, type PersistedAgentMessage, type PersistedAgentSession, type WorkspaceViewState } from '../shared/agent'
 import { FIRST_LOAD_CONTEXT_TOKENS } from '../shared/llama'
 
 const settingsStore = new Store<SettingsStoreData>({
@@ -21,6 +22,10 @@ const settingsStore = new Store<SettingsStoreData>({
     onboardingCompleted: false
   }
 })
+
+if (settingsStore.get('settingsVersion') < SETTINGS_VERSION) {
+  settingsStore.set('settingsVersion', SETTINGS_VERSION)
+}
 
 export const getOnboardingState = (): OnboardingState => ({
   completed: settingsStore.get('onboardingCompleted')
@@ -82,4 +87,56 @@ export const saveChatThread = (thread: ChatThread): ChatThread[] => {
   const nextThreads = [thread, ...threads]
   settingsStore.set('chatThreads', nextThreads)
   return nextThreads
+}
+
+export const deleteChatThread = (threadId: string): ChatThread[] => {
+  const threads = getChatThreads().filter((item) => item.id !== threadId)
+  settingsStore.set('chatThreads', threads)
+  const sessions = settingsStore.get('agentSessions')
+  if (sessions && threadId in sessions) {
+    const nextSessions = { ...sessions }
+    delete nextSessions[threadId]
+    settingsStore.set('agentSessions', nextSessions)
+  }
+  return threads
+}
+
+const validAgentMessage = (value: unknown): value is PersistedAgentMessage => {
+  if (!value || typeof value !== 'object') return false
+  const message = value as Partial<PersistedAgentMessage>
+  const validContent = message.content === null || typeof message.content === 'string' || (Array.isArray(message.content) && message.content.every((part) => {
+    if (!part || typeof part !== 'object' || !('type' in part)) return false
+    if (part.type === 'text') return typeof part.text === 'string'
+    return part.type === 'image_url' && typeof part.image_url?.url === 'string' && part.image_url.url.startsWith('data:image/')
+  }))
+  if (!['user', 'assistant', 'tool'].includes(message.role ?? '') || !validContent) return false
+  if (message.role === 'tool' && (typeof message.toolCallId !== 'string' || typeof message.name !== 'string')) return false
+  if (message.toolCalls !== undefined && (!Array.isArray(message.toolCalls) || !message.toolCalls.every((call) => call && typeof call.id === 'string' && typeof call.name === 'string' && call.arguments && typeof call.arguments === 'object' && !Array.isArray(call.arguments)))) return false
+  return true
+}
+
+export const getAgentSession = (threadId: string, projectPath: string): PersistedAgentSession | undefined => {
+  const session = settingsStore.get('agentSessions')?.[threadId]
+  if (!session || session.threadId !== threadId || session.projectPath !== projectPath || !Array.isArray(session.messages) || !session.messages.every(validAgentMessage)) return undefined
+  return session
+}
+
+export const saveAgentSession = (session: PersistedAgentSession): PersistedAgentSession => {
+  if (!session.threadId || !session.projectPath || !session.messages.every(validAgentMessage)) throw new Error('Invalid agent session')
+  settingsStore.set('agentSessions', { ...settingsStore.get('agentSessions'), [session.threadId]: session })
+  return session
+}
+
+export const getWorkspaceViewState = (): WorkspaceViewState => ({
+  ...DEFAULT_WORKSPACE_VIEW_STATE,
+  ...settingsStore.get('workspaceViewState')
+})
+
+export const saveWorkspaceViewState = (value: unknown): WorkspaceViewState => {
+  if (!value || typeof value !== 'object') throw new Error('Invalid workspace view state')
+  const state = value as Partial<WorkspaceViewState>
+  if (typeof state.selectedProjectPath !== 'string' || typeof state.activeThreadId !== 'string' || typeof state.selectedModelId !== 'string' || !VIEW_REASONING_EFFORTS.includes(state.reasoningEffort as typeof VIEW_REASONING_EFFORTS[number]) || typeof state.sidebarOpen !== 'boolean' || typeof state.promptDraft !== 'string' || !Array.isArray(state.expandedWorkIds) || !state.expandedWorkIds.every((id) => typeof id === 'string')) throw new Error('Invalid workspace view state')
+  const next = state as WorkspaceViewState
+  settingsStore.set('workspaceViewState', next)
+  return next
 }

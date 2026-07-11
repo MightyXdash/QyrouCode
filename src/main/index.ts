@@ -1,18 +1,19 @@
 import { app, shell, BrowserWindow, Menu, dialog, ipcMain, net } from 'electron'
 import { randomUUID } from 'crypto'
-import { basename, dirname, join } from 'path'
-import { existsSync, readdirSync, createWriteStream, mkdirSync, unlinkSync, renameSync, statSync } from 'fs'
+import { basename, dirname, extname, join } from 'path'
+import { existsSync, readdirSync, createWriteStream, mkdirSync, readFileSync, unlinkSync, renameSync, statSync } from 'fs'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { addProject, completeOnboarding, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, saveChatThread, setExpandedProjectPaths, setTheme } from './settings'
+import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setTheme } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
 import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManifest'
 import { LLAMA_TITLE_SERVER_PORT } from '../shared/llama'
-import type { LocalCompletionEvent, LocalCompletionRequest, LocalCompletionStart } from './localCompletionClient'
-import type { ChatThread } from '../shared/chat'
+import type { LocalCompletionEvent, LocalCompletionStart } from './localCompletionClient'
+import type { AgentRunRequest, AgentToolEvent } from './agentRuntime'
+import { CHAT_ATTACHMENT_MIME_TYPES, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatAttachmentMimeType, type ChatThread } from '../shared/chat'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -28,13 +29,24 @@ const TITLE_MODEL_REPOSITORY = 'SupraLabs/supra-title-50M-pre-gguf'
 const TITLE_MODEL_FILENAME = 'SupraTitle-50M-Q4_K_M.gguf'
 const TITLE_MODEL_CONTEXT_TOKENS = 4096
 const TITLE_MODEL_MAX_INPUT_CHARACTERS = 12000
+const SUMMARIZER_MODEL_REPOSITORY = 'SupraLabs/reasoning-summarizer-800m-pre-gguf'
+const SUMMARIZER_MODEL_FILENAME = 'reasoning-summarizer-800m-pre-Q4_K_M.gguf'
+const SUMMARIZER_MODEL_CONTEXT_TOKENS = 4096
+const SUMMARIZER_SERVER_PORT = 39283
 const MODEL_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const INVALID_PROJECT_NAME_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/
 const WINDOWS_RESERVED_PROJECT_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
+const CHAT_ATTACHMENT_MIME_BY_EXTENSION: Readonly<Record<string, ChatAttachmentMimeType>> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp'
+}
 
 let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
 let titleRuntime: LlamaRuntime | null = null
+let summarizerRuntime: LlamaRuntime | null = null
 const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController }>()
 
 function appIconPath(): string {
@@ -105,19 +117,43 @@ function validateChatThread(value: unknown): ChatThread {
   if (!value || typeof value !== 'object') throw new Error('Invalid chat thread')
   const thread = value as Partial<ChatThread>
   if (typeof thread.id !== 'string' || typeof thread.projectPath !== 'string' || typeof thread.title !== 'string' || typeof thread.updatedAt !== 'number' || !Array.isArray(thread.messages)) throw new Error('Invalid chat thread')
-  if (!thread.messages.every((message) => message && typeof message.id === 'string' && (message.role === 'user' || message.role === 'assistant') && typeof message.content === 'string')) throw new Error('Invalid chat messages')
+  if (!thread.messages.every((message) => {
+    if (!message || typeof message.id !== 'string' || !['user', 'assistant', 'tool'].includes(message.role) || typeof message.content !== 'string') return false
+    if (message.attachments !== undefined && (!Array.isArray(message.attachments) || message.attachments.length > MAX_CHAT_ATTACHMENTS || !message.attachments.every((attachment) => {
+      if (!attachment || typeof attachment.id !== 'string' || typeof attachment.name !== 'string' || typeof attachment.size !== 'number' || attachment.size > MAX_CHAT_ATTACHMENT_BYTES) return false
+      return CHAT_ATTACHMENT_MIME_TYPES.includes(attachment.mimeType) && typeof attachment.dataUrl === 'string' && attachment.dataUrl.startsWith(`data:${attachment.mimeType};base64,`)
+    }))) return false
+    if (message.status !== undefined && !['pending', 'completed', 'cancelled', 'error'].includes(message.status)) return false
+    return true
+  })) throw new Error('Invalid chat messages')
   return thread as ChatThread
+}
+
+function readChatAttachment(filePath: string): ChatAttachment {
+  const mimeType = CHAT_ATTACHMENT_MIME_BY_EXTENSION[extname(filePath).toLowerCase()]
+  if (!mimeType) throw new Error('Choose a PNG, JPEG, or WebP image')
+  const size = statSync(filePath).size
+  if (size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('Each image must be 10 MB or smaller')
+  const data = readFileSync(filePath).toString('base64')
+  return {
+    id: randomUUID(),
+    name: basename(filePath),
+    mimeType,
+    dataUrl: `data:${mimeType};base64,${data}`,
+    size
+  }
 }
 
 function findProjector(modelPath: string): string | undefined {
   const modelDir = dirname(modelPath)
   if (!existsSync(modelDir)) return undefined
   try {
-    return readdirSync(modelDir).find((name) => {
+    const match = readdirSync(modelDir).find((name) => {
       const normalizedName = name.toLowerCase()
       return normalizedName.endsWith(GGUF_FILE_EXTENSION) &&
         MODEL_PROJECTOR_MARKERS.some((marker) => normalizedName.includes(marker))
     })
+    return match ? join(modelDir, match) : undefined
   } catch {
     return undefined
   }
@@ -391,6 +427,7 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.suprarcode')
   llamaRuntime = new LlamaRuntime()
   titleRuntime = new LlamaRuntime(LLAMA_TITLE_SERVER_PORT)
+  summarizerRuntime = new LlamaRuntime(SUMMARIZER_SERVER_PORT)
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -437,6 +474,25 @@ app.whenReady().then(() => {
   ipcMain.handle('set-expanded-project-paths', (_event, paths: unknown) => setExpandedProjectPaths(paths))
   ipcMain.handle('get-chat-threads', () => getChatThreads())
   ipcMain.handle('save-chat-thread', (_event, value: unknown) => saveChatThread(validateChatThread(value)))
+  ipcMain.handle('choose-chat-images', async (event): Promise<ChatAttachment[]> => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(parent ?? undefined, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+    })
+    if (result.canceled) return []
+    return result.filePaths.slice(0, MAX_CHAT_ATTACHMENTS).map(readChatAttachment)
+  })
+  ipcMain.handle('delete-chat-thread', (_event, threadId: unknown) => {
+    if (typeof threadId !== 'string' || !threadId) throw new Error('A valid thread ID is required')
+    return deleteChatThread(threadId)
+  })
+  ipcMain.handle('get-agent-session', (_event, threadId: unknown, projectPath: unknown) => {
+    if (typeof threadId !== 'string' || typeof projectPath !== 'string') return null
+    return getAgentSession(threadId, projectPath) ?? null
+  })
+  ipcMain.handle('get-workspace-view-state', () => getWorkspaceViewState())
+  ipcMain.handle('save-workspace-view-state', (_event, value: unknown) => saveWorkspaceViewState(value))
   ipcMain.handle('create-project', (_event, value: unknown) => {
     const name = validateProjectName(value)
     const projectPath = join(app.getPath('documents'), name)
@@ -485,15 +541,84 @@ app.whenReady().then(() => {
     return llamaRuntime?.start(modelPath, contextTokens, mmprojPath)
   })
   ipcMain.handle('stop-llama-server', () => llamaRuntime?.stop())
-  ipcMain.handle('start-local-completion', (event, request: LocalCompletionRequest): LocalCompletionStart => {
+
+  const summarizeReasoning = async (rawReasoning: string): Promise<string> => {
+    if (!summarizerRuntime) return 'Processing...'
+    try {
+      const modelPath = resolveDownloadedModel(SUMMARIZER_MODEL_REPOSITORY, SUMMARIZER_MODEL_FILENAME)
+      const status = await summarizerRuntime.start(modelPath, SUMMARIZER_MODEL_CONTEXT_TOKENS)
+      if (status.state !== 'ready') return 'Processing...'
+      const input = rawReasoning.slice(0, 6000)
+      const response = await summarizerRuntime.completePrompt(`Summarize this reasoning as JSON with a "summary" key:\n\n${input}\n\n{"summary":`)
+      const parsed = JSON.parse(`{"summary":${response}`)
+      return (typeof parsed.summary === 'string' && parsed.summary.trim()) || 'Processing...'
+    } catch {
+      try {
+        const input = rawReasoning.slice(0, 6000)
+        const fallback = await summarizerRuntime.completePrompt(`Summarize this reasoning in one short line:\n\n${input}\n\nSummary:`)
+        return fallback.replace(/[\r\n]+/g, ' ').replace(/^Summary:\s*/i, '').trim() || 'Processing...'
+      } catch {
+        return 'Processing...'
+      }
+    }
+  }
+
+  const sendToolEvent = (send: (event: LocalCompletionEvent) => void, requestId: string, event: AgentToolEvent): void => {
+    switch (event.type) {
+      case 'tool-call':
+        send({ requestId, type: 'tool-call', toolCallId: event.toolCallId, name: event.name, arguments: event.arguments, summary: event.summary })
+        break
+      case 'tool-result':
+        send({ requestId, type: 'tool-result', toolCallId: event.toolCallId, result: event.result, filePath: event.filePath })
+        break
+      case 'tool-error':
+        send({ requestId, type: 'tool-error', toolCallId: event.toolCallId, error: event.error })
+        break
+      case 'files-changed':
+        send({ requestId, type: 'files-changed', files: event.files })
+        break
+      case 'reasoning-summary':
+        void summarizeReasoning(event.summary).then((summary) => {
+          send({ requestId, type: 'reasoning-summary', summary })
+        }).catch(() => {
+          send({ requestId, type: 'reasoning-summary', summary: 'Processing...' })
+        })
+        break
+    }
+  }
+  ipcMain.handle('start-local-completion', (event, request: AgentRunRequest): LocalCompletionStart => {
+    if (!request || typeof request.threadId !== 'string' || !request.threadId) throw new Error('A chat thread is required for the agent')
+    if (!llamaRuntime) throw new Error('llama-server is not available')
+    const project = getProjects().find((item) => item.path === request.projectPath)
+    if (!project || !existsSync(project.path) || !statSync(project.path).isDirectory()) throw new Error('Select a valid project before running an agent')
     const requestId = randomUUID()
     const controller = new AbortController()
     activeCompletionRequests.set(requestId, { senderId: event.sender.id, controller })
     const send = (completionEvent: LocalCompletionEvent): void => event.sender.send('local-completion-event', completionEvent)
-    if (!llamaRuntime) throw new Error('llama-server is not available')
-    void llamaRuntime.streamCompletion({ ...request, signal: controller.signal }, (delta) => send({ requestId, type: 'delta', delta }))
+    const persisted = getAgentSession(request.threadId, project.path)
+    const systemMessages = request.messages.filter((message) => message.role === 'system')
+    const latestUserMessage = [...request.messages].reverse().find((message) => message.role === 'user')
+    const persistedLastUser = persisted ? [...persisted.messages].reverse().find((message) => message.role === 'user') : undefined
+    const persistedFinished = persisted?.messages.at(-1)?.role === 'assistant'
+    const resumedMessages = persisted
+      ? [...systemMessages, ...persisted.messages, ...(latestUserMessage && (persistedFinished || latestUserMessage.content !== persistedLastUser?.content) ? [latestUserMessage] : [])]
+      : request.messages
+    const agentRequest = { ...request, messages: resumedMessages, projectPath: project.path, signal: controller.signal }
+    void llamaRuntime.runAgent(
+      agentRequest,
+      (delta) => send({ requestId, type: 'delta', delta }),
+      (messages) => saveAgentSession({
+        threadId: request.threadId,
+        projectPath: project.path,
+        messages: messages.filter((message) => message.role !== 'system'),
+        updatedAt: Date.now()
+      }),
+      (event) => sendToolEvent(send, requestId, event)
+    )
       .then(() => send({ requestId, type: controller.signal.aborted ? 'cancelled' : 'complete' }))
-      .catch((error) => { if (!controller.signal.aborted) send({ requestId, type: 'error', message: error instanceof Error ? error.message : 'Local completion failed' }) })
+      .catch((error) => send(controller.signal.aborted
+        ? { requestId, type: 'cancelled' }
+        : { requestId, type: 'error', message: error instanceof Error ? error.message : 'Local completion failed' }))
       .finally(() => activeCompletionRequests.delete(requestId))
     return { requestId }
   })

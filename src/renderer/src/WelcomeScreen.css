@@ -1792,3 +1792,6 @@ body {
     animation: none;
   }
 }
+
+.check-icon-white { color: #fff; }
+.cached-check-icon { color: #12c905; }

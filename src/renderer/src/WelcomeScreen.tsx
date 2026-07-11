@@ -1,4 +1,5 @@
 import { memo, useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { Check, ArrowRight } from 'lucide-react'
 import WindowControls from './WindowControls'
 import { MODEL_LIST, type CatalogModel, type Ratings } from './modelCatalog'
 import {
@@ -610,11 +611,7 @@ export default function WelcomeScreen(): JSX.Element {
                 onClick={() => toggleRole(role)}
               >
                 <div className={`role-checkbox${selectedRoles.includes(role) ? ' checked' : ''}`}>
-                  {selectedRoles.includes(role) && (
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                      <path d="M2 5l2.5 2.5L8 3" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
+                  {selectedRoles.includes(role) && <Check size={10} strokeWidth={3} className="check-icon-white" />}
                 </div>
                 <span className="role-label">{role}</span>
               </div>
@@ -852,9 +849,7 @@ function CompletionScene({ phase }: { phase: Phase }): JSX.Element {
       </div>
       <button className="next-btn completion-continue" type="button" onClick={openMainApp}>
         <span>Continue to SupraCode</span>
-        <svg viewBox="0 0 14 14" aria-hidden="true">
-          <path d="M2.5 7h9M8 3.5 11.5 7 8 10.5" />
-        </svg>
+        <ArrowRight size={14} />
       </button>
       <p className="completion-footer-mark">SUPRACODE / ENVIRONMENT ASSEMBLY</p>
     </div>
@@ -946,11 +941,7 @@ function PreferenceQuestion({
               onClick={() => onSelect(question.key, choice.value)}
             >
               <span className={`preference-radio${selected ? ' checked' : ''}`} aria-hidden="true">
-                {selected && (
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                    <path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                )}
+                {selected && <Check size={10} strokeWidth={3} />}
               </span>
               <span className="preference-choice-copy">
                 <span className="preference-choice-title">{choice.label}</span>
@@ -1025,10 +1016,7 @@ function ModelCard({ model, selected, cached, downloading, progress, onToggle, p
       <div className="model-card-top">
         {cached ? (
           <span className="cached-badge" title="Already cached">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <circle cx="7" cy="7" r="6.5" fill="#12c905" />
-              <path d="M4 7l2 2 4-4" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <Check size={14} strokeWidth={2.5} className="cached-check-icon" />
           </span>
         ) : (
           <div className={`model-checkbox${selected ? ' checked' : ''}`}>
@@ -1096,10 +1084,7 @@ function DownloadItem({ name, done, active, failure, progress, phase, index, onR
     >
       <div className="download-item-icon">
         {done ? (
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="7" r="6.5" fill="#12c905" />
-            <path d="M4 7l2 2 4-4" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <Check size={14} strokeWidth={2.5} className="cached-check-icon" />
         ) : active ? (
           <span className="download-spinner" />
         ) : failure ? (

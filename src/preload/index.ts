@@ -2,9 +2,12 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { OnboardingPreferences, OnboardingState, ResponseStylePreference, ThemePreference } from '../shared/settings'
 import type { LlamaRuntimeStatus } from '../shared/llama'
 import type { WindowCommand } from '../shared/windowCommands'
-import type { LocalCompletionEvent, LocalCompletionRequest, LocalCompletionStart } from '../main/localCompletionClient'
+import type { LocalCompletionEvent, LocalCompletionStart } from '../main/localCompletionClient'
+import type { AgentRunRequest } from '../main/agentRuntime'
 import type { Project } from '../shared/projects'
-import type { ChatThread } from '../shared/chat'
+import type { ChatAttachment, ChatThread } from '../shared/chat'
+import type { WorkspaceViewState } from '../shared/agent'
+import type { PersistedAgentSession } from '../shared/agent'
 
 const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
@@ -31,6 +34,11 @@ const api = {
   chooseProjectFolder: (): Promise<Project | null> => ipcRenderer.invoke('choose-project-folder'),
   getChatThreads: (): Promise<ChatThread[]> => ipcRenderer.invoke('get-chat-threads'),
   saveChatThread: (thread: ChatThread): Promise<ChatThread[]> => ipcRenderer.invoke('save-chat-thread', thread),
+  deleteChatThread: (threadId: string): Promise<ChatThread[]> => ipcRenderer.invoke('delete-chat-thread', threadId),
+  chooseChatImages: (): Promise<ChatAttachment[]> => ipcRenderer.invoke('choose-chat-images'),
+  getAgentSession: (threadId: string, projectPath: string): Promise<PersistedAgentSession | null> => ipcRenderer.invoke('get-agent-session', threadId, projectPath),
+  getWorkspaceViewState: (): Promise<WorkspaceViewState> => ipcRenderer.invoke('get-workspace-view-state'),
+  saveWorkspaceViewState: (state: WorkspaceViewState): Promise<WorkspaceViewState> => ipcRenderer.invoke('save-workspace-view-state', state),
   startDownloadedModel: (repoId: string, filename: string): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('start-downloaded-model', repoId, filename),
   generateChatTitle: (userMessage: string): Promise<string> => ipcRenderer.invoke('generate-chat-title', userMessage),
   checkModelCache: (modelId: string): Promise<boolean> =>
@@ -56,7 +64,7 @@ const api = {
    * controls, or interaction behavior. Sequence 4 may consume these methods from the existing composer
    * and render deltas in a conversation surface without moving or restyling the current UI elements.
    */
-  startLocalCompletion: (request: LocalCompletionRequest): Promise<LocalCompletionStart> => ipcRenderer.invoke('start-local-completion', request),
+  startLocalCompletion: (request: AgentRunRequest): Promise<LocalCompletionStart> => ipcRenderer.invoke('start-local-completion', request),
   cancelLocalCompletion: (requestId: string): Promise<boolean> => ipcRenderer.invoke('cancel-local-completion', requestId),
   onLocalCompletionEvent: (callback: (event: LocalCompletionEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, completionEvent: LocalCompletionEvent) => callback(completionEvent)

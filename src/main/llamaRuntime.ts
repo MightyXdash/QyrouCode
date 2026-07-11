@@ -12,6 +12,7 @@ import {
   type LlamaRuntimeStatus
 } from '../shared/llama'
 import { LocalCompletionClient, type LocalCompletionRequest } from './localCompletionClient'
+import { AgentRuntime, type AgentRunRequest, type AgentStateListener, type AgentToolEvent } from './agentRuntime'
 
 const SERVER_BINARY_NAME = platform() === 'win32' ? 'llama-server.exe' : 'llama-server'
 const HEALTH_PATH = '/health'
@@ -71,6 +72,12 @@ export class LlamaRuntime {
   async streamCompletion(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<void> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
     await new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).stream(request, onDelta)
+  }
+
+  async runAgent(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void): Promise<void> {
+    if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
+    const client = new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`)
+    await new AgentRuntime(client).run(request, onDelta, onState, onToolEvent)
   }
 
   async completePrompt(prompt: string): Promise<string> {

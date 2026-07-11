@@ -1,21 +1,40 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { MODEL_LIST } from './modelCatalog'
 import { DEFAULT_RESPONSE_STYLE, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
 import { WINDOW_COMMANDS } from '../../shared/windowCommands'
 import type { Project } from '../../shared/projects'
-import type { ChatMessage, ChatThread } from '../../shared/chat'
+import { MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatMessage, type ChatThread, type ToolCallDisplay } from '../../shared/chat'
 import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, Check, X, Clock, CheckCircle, XCircle, Loader2, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, Trash2 } from 'lucide-react'
 import './MainApp.css'
 
 const COMPOSER_SHAPE_WIDTH = 760
 const COMPOSER_CORNER_RADIUS = 32
 const COMPOSER_CURVE_UNIT_DIVISOR = 16
 const AUTO_SCROLL_THRESHOLD = 72
+const MAX_ACTIVITY_COMMAND_CHARACTERS = 40
+const WEB_ACTIVITY_HOLD_MS = 2_500
+const WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND = 150
+const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 
-type OpenMenu = 'advanced' | 'model' | 'reasoning' | null
+const toolIconMap: Record<string, typeof Terminal> = {
+  bash: Terminal,
+  write: FilePlus,
+  edit: FileEdit,
+  apply_patch: Code,
+  read: Eye,
+  grep: Search,
+  glob: List,
+  web_search: Search,
+  web_fetch: Globe,
+  list: Folder,
+  default: Braces,
+}
+
+type OpenMenu = 'advanced' | 'model' | null
 type TitlebarMenuId = 'file' | 'edit' | 'view' | 'theme' | 'help'
 type TitlebarAction = 'new-thread' | 'close-window' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'select-all' | 'reload' | 'toggle-dev-tools' | 'toggle-fullscreen'
 
@@ -60,64 +79,100 @@ const TITLEBAR_MENUS: Record<TitlebarMenuId, TitlebarMenuItem[]> = {
   ]
 }
 
-function SearchIcon(): JSX.Element {
-  return <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.25" /><path d="m12.5 12.5 4 4" /></svg>
-}
-
-function PlusIcon(): JSX.Element {
-  return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.5v13M3.5 10h13" /></svg>
-}
-
-function ChevronIcon(): JSX.Element {
-  return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
-}
-
-function SendIcon(): JSX.Element {
-  return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5m0 0L6.5 8.5M10 5l3.5 3.5" /></svg>
-}
-
-function SidebarIcon(): JSX.Element {
-  return <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.25" y="2.5" width="11.5" height="11" rx="2" /><path d="M6 2.75v10.5" /></svg>
-}
-
-function ArrowIcon({ direction }: { direction: 'back' | 'forward' }): JSX.Element {
-  return <svg className={direction === 'forward' ? 'forward-arrow' : undefined} viewBox="0 0 16 16" aria-hidden="true"><path d="m9.75 3.5-4.5 4.5 4.5 4.5M5.5 8h6" /></svg>
-}
-
-function composerShapePath(height: number): string {
+function ComposerShape({ height }: { height: number }): JSX.Element {
   const radius = Math.min(COMPOSER_CORNER_RADIUS, height / 2)
   const unit = radius / COMPOSER_CURVE_UNIT_DIVISOR
   const right = COMPOSER_SHAPE_WIDTH
   const bottom = height
-  return `M${radius} 0H${right - radius}C${right - (unit * 7)} 0 ${right - (unit * 3)} ${unit * 2} ${right - unit} ${unit * 7}C${right} ${unit * 9} ${right} ${unit * 12} ${right} ${radius}V${bottom - radius}C${right} ${bottom - (unit * 12)} ${right} ${bottom - (unit * 9)} ${right - unit} ${bottom - (unit * 7)}C${right - (unit * 3)} ${bottom - (unit * 2)} ${right - (unit * 7)} ${bottom} ${right - radius} ${bottom}H${radius}C${unit * 7} ${bottom} ${unit * 3} ${bottom - (unit * 2)} ${unit} ${bottom - (unit * 7)}C0 ${bottom - (unit * 9)} 0 ${bottom - (unit * 12)} 0 ${bottom - radius}V${radius}C0 ${unit * 12} 0 ${unit * 9} ${unit} ${unit * 7}C${unit * 3} ${unit * 2} ${unit * 7} 0 ${radius} 0Z`
-}
-
-function ComposerShape({ height }: { height: number }): JSX.Element {
+  const d = `M${radius} 0H${right - radius}C${right - (unit * 7)} 0 ${right - (unit * 3)} ${unit * 2} ${right - unit} ${unit * 7}C${right} ${unit * 9} ${right} ${unit * 12} ${right} ${radius}V${bottom - radius}C${right} ${bottom - (unit * 12)} ${right} ${bottom - (unit * 9)} ${right - unit} ${bottom - (unit * 7)}C${right - (unit * 3)} ${bottom - (unit * 2)} ${right - (unit * 7)} ${bottom} ${right - radius} ${bottom}H${radius}C${unit * 7} ${bottom} ${unit * 3} ${bottom - (unit * 2)} ${unit} ${bottom - (unit * 7)}C0 ${bottom - (unit * 9)} 0 ${bottom - (unit * 12)} 0 ${bottom - radius}V${radius}C0 ${unit * 12} 0 ${unit * 9} ${unit} ${unit * 7}C${unit * 3} ${unit * 2} ${unit * 7} 0 ${radius} 0Z`
   return (
     <svg className="composer-shape" viewBox={`0 0 ${COMPOSER_SHAPE_WIDTH} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-      <path d={composerShapePath(height)} vectorEffect="non-scaling-stroke" />
+      <path d={d} vectorEffect="non-scaling-stroke" />
     </svg>
   )
 }
 
-function StopIcon(): JSX.Element {
-  return <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="6" height="6" rx="1" /></svg>
-}
-
-function ArrowDownIcon(): JSX.Element {
-  return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v10m0 0 4-4m-4 4-4-4" /></svg>
-}
-
-function FolderPlusIcon(): JSX.Element {
-  return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.75 5.75h5l1.5 1.75h8v8.25H2.75z" /><path d="M12.75 10v4m-2-2h4" /></svg>
-}
-
-function FolderIcon(): JSX.Element {
-  return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 4.25h4l1.25 1.5h7.25v7.5H1.75z" /></svg>
-}
-
 function modelDisplayName(modelName: string): string {
   return modelName.split('/').at(-1) ?? modelName
+}
+
+function truncateCommand(command: string): string {
+  const normalized = command.replace(/\s+/g, ' ').trim()
+  return normalized.length <= MAX_ACTIVITY_COMMAND_CHARACTERS
+    ? normalized
+    : `${normalized.slice(0, MAX_ACTIVITY_COMMAND_CHARACTERS - 1)}…`
+}
+
+function runningToolLabel(toolCall: ToolCallDisplay): string {
+  if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searching the web'
+  if (toolCall.name === 'bash') {
+    const command = typeof toolCall.arguments.command === 'string' ? truncateCommand(toolCall.arguments.command) : 'command'
+    return `Running ${command}`
+  }
+  if (['write', 'edit', 'apply_patch'].includes(toolCall.name)) {
+    const filePath = typeof toolCall.arguments.filePath === 'string' ? toolCall.arguments.filePath : ''
+    return filePath ? `Editing ${filePath}` : 'Editing'
+  }
+  return 'Thinking'
+}
+
+function webSearchDetail(toolCall: ToolCallDisplay): string | undefined {
+  if (toolCall.name !== 'web_search') return undefined
+  return typeof toolCall.arguments.query === 'string' ? toolCall.arguments.query.trim() || undefined : undefined
+}
+
+function messageText(content: import('../../main/localCompletionClient').LocalMessageContent): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n')
+}
+
+function normalizeRestoredThread(thread: ChatThread): ChatThread {
+  const normalized: ChatMessage[] = []
+  for (let index = 0; index < thread.messages.length;) {
+    const message = thread.messages[index]
+    if (message.role !== 'user') {
+      index += 1
+      continue
+    }
+    normalized.push(message)
+    index += 1
+    const turnMessages: ChatMessage[] = []
+    while (index < thread.messages.length && thread.messages[index].role !== 'user') {
+      turnMessages.push(thread.messages[index])
+      index += 1
+    }
+    const placeholder = [...turnMessages].reverse().find((candidate) => candidate.role === 'assistant')
+    const finalAssistant = placeholder?.content ? placeholder : undefined
+    const assistantId = finalAssistant?.id ?? placeholder?.id ?? crypto.randomUUID()
+    for (const turnMessage of turnMessages) {
+      if (turnMessage.role === 'tool') {
+        normalized.push({ ...turnMessage, parentAssistantId: assistantId })
+        continue
+      }
+      if (turnMessage.role === 'assistant' && turnMessage.content && turnMessage.id !== finalAssistant?.id) {
+        normalized.push({
+          id: turnMessage.id,
+          role: 'tool',
+          content: '__reasoning__',
+          reasoningSummary: turnMessage.content,
+          parentAssistantId: assistantId,
+          timestamp: turnMessage.timestamp
+        })
+      }
+    }
+    if (finalAssistant) {
+      normalized.push({ ...finalAssistant, id: assistantId, status: 'completed' })
+    } else {
+      normalized.push({
+        ...(placeholder ?? { id: assistantId, role: 'assistant' as const, content: '' }),
+        id: assistantId,
+        content: '',
+        status: 'cancelled'
+      })
+    }
+  }
+  return { ...thread, messages: normalized }
 }
 
 export default function MainApp(): JSX.Element {
@@ -145,6 +200,11 @@ export default function MainApp(): JSX.Element {
   const [completionState, setCompletionState] = useState<'idle' | 'starting' | 'streaming'>('idle')
   const [completionError, setCompletionError] = useState('')
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true)
+  const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set())
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([])
+  const [attachmentError, setAttachmentError] = useState('')
+  const [heldActivity, setHeldActivity] = useState<{ assistantId: string; label: string; until: number } | null>(null)
+  const [webSearchActivity, setWebSearchActivity] = useState<{ assistantId: string; text: string; revealedCharacters: number } | null>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
   const titlebarMenuRef = useRef<HTMLElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
@@ -157,22 +217,148 @@ export default function MainApp(): JSX.Element {
   const conversationEndRef = useRef<HTMLDivElement>(null)
   const conversationRef = useRef<HTMLDivElement>(null)
   const projectExpansionLoadedRef = useRef(false)
+  const viewStateLoadedRef = useRef(false)
+  const modelMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const startTimeRef = useRef(0)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const activityHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const webSearchRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const [contextMenu, setContextMenu] = useState<{ thread: ChatThread; x: number; y: number } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+  const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [deleteConfirmThread, setDeleteConfirmThread] = useState<ChatThread | null>(null)
+  const [regeneratingThreadId, setRegeneratingThreadId] = useState<string | null>(null)
   const downloadedModels = downloadedModelIds
     ? MODEL_LIST.filter((model) => downloadedModelIds.has(model.id))
     : []
   const selectedModel = downloadedModels.find((model) => model.id === selectedModelId)
 
+  const contextTokens = useMemo(() => {
+    if (!activeThread || !selectedModel) return null
+    const totalChars = activeThread.messages.reduce((sum, msg) => sum + msg.content.length, 0)
+    const used = Math.max(Math.round(totalChars / 4), 0)
+    const total = selectedModel.context_length
+    return { used, total, percent: Math.min(Math.round((used / total) * 100), 100) }
+  }, [activeThread, selectedModel])
+
+  const clearHeldActivity = (): void => {
+    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
+    activityHoldTimerRef.current = null
+    if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
+    webSearchRevealTimerRef.current = null
+    setHeldActivity(null)
+    setWebSearchActivity(null)
+  }
+
+  const revealWebSearchDetail = (assistantId: string, text: string): void => {
+    if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
+    const startedAt = Date.now()
+    const update = (): void => {
+      const revealedCharacters = Math.min(text.length, Math.floor(((Date.now() - startedAt) * WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND) / 1_000))
+      setWebSearchActivity({ assistantId, text, revealedCharacters })
+      if (revealedCharacters >= text.length && webSearchRevealTimerRef.current) {
+        clearInterval(webSearchRevealTimerRef.current)
+        webSearchRevealTimerRef.current = null
+      }
+    }
+    update()
+    webSearchRevealTimerRef.current = setInterval(update, 16)
+  }
+
+  const holdWebActivity = (assistantId: string, running: boolean): void => {
+    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
+    activityHoldTimerRef.current = null
+    const until = running ? Number.POSITIVE_INFINITY : Date.now() + WEB_ACTIVITY_HOLD_MS
+    setHeldActivity({ assistantId, label: 'Searching the web', until })
+    if (!running) {
+      activityHoldTimerRef.current = setTimeout(() => {
+        activityHoldTimerRef.current = null
+        setHeldActivity((current) => current?.assistantId === assistantId && current.until <= Date.now() ? null : current)
+        setWebSearchActivity((current) => current?.assistantId === assistantId ? null : current)
+      }, WEB_ACTIVITY_HOLD_MS)
+    }
+  }
+
   useEffect(() => {
     void window.api.getTheme().then(setTheme)
     void window.api.getResponseStylePreference().then(setResponseStylePreference)
-    void Promise.all([window.api.getProjects(), window.api.getExpandedProjectPaths()]).then(([storedProjects, storedExpandedPaths]) => {
+    void Promise.all([window.api.getProjects(), window.api.getExpandedProjectPaths(), window.api.getChatThreads(), window.api.getWorkspaceViewState()]).then(async ([storedProjects, storedExpandedPaths, storedThreads, storedViewState]) => {
       const projectPaths = new Set(storedProjects.map((project) => project.path))
+      const reconciledThreads = await Promise.all(storedThreads.map(async (thread) => {
+        const lastMsg = thread.messages.at(-1)
+        if (!lastMsg || lastMsg.role !== 'assistant' || lastMsg.content || lastMsg.status === 'cancelled' || lastMsg.status === 'error') return normalizeRestoredThread(thread)
+        try {
+          const session = await window.api.getAgentSession(thread.id, thread.projectPath)
+          if (!session) return normalizeRestoredThread(thread)
+          const sessionMsgs: ChatMessage[] = []
+          const storedUsers = thread.messages.filter((message) => message.role === 'user')
+          let userIndex = 0
+          for (const m of session.messages) {
+            if (m.role === 'user') {
+              const content = messageText(m.content)
+              if (content.includes('<previous-context-summary>')) continue
+              const storedUser = storedUsers[userIndex]
+              userIndex += 1
+              sessionMsgs.push(storedUser ?? { id: crypto.randomUUID(), role: 'user', content })
+            } else if (m.role === 'assistant') {
+              const assistantId = crypto.randomUUID()
+              const pendingToolCalls = m.toolCalls?.map((tc) => ({
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+                result: undefined,
+                filePath: undefined
+              }))
+              if (pendingToolCalls && pendingToolCalls.length > 0) {
+                for (const tc of pendingToolCalls) {
+                  sessionMsgs.push({ id: crypto.randomUUID(), role: 'tool', content: '', parentAssistantId: assistantId, toolCalls: [tc] })
+                }
+              }
+              const content = messageText(m.content)
+              sessionMsgs.push({
+                id: assistantId,
+                role: 'assistant',
+                content,
+                status: content ? 'completed' : 'cancelled',
+                startedAt: thread.messages.find((message) => message.role === 'assistant')?.startedAt
+              })
+            } else if (m.role === 'tool' && m.name && m.toolCallId) {
+              for (let i = sessionMsgs.length - 1; i >= 0; i--) {
+                const tm = sessionMsgs[i]
+                if (tm.role === 'tool' && tm.toolCalls) {
+                  const tc = tm.toolCalls.find((t) => t.id === m.toolCallId)
+                  if (tc) {
+                    tc.result = m.content ?? undefined
+                    tc.filePath = (m as any).filePath
+                    break
+                  }
+                }
+              }
+            }
+          }
+          if (sessionMsgs.length === 0) return thread
+          return normalizeRestoredThread({ ...thread, messages: sessionMsgs })
+        } catch {
+          return normalizeRestoredThread(thread)
+        }
+      }))
+      const restoredThread = reconciledThreads.find((t) => t.id === storedViewState.activeThreadId) ?? null
       setProjects(storedProjects)
-      setSelectedProjectPath(storedProjects[0]?.path ?? '')
+      setThreads(reconciledThreads)
+      setSelectedProjectPath(projectPaths.has(storedViewState.selectedProjectPath) ? storedViewState.selectedProjectPath : restoredThread?.projectPath ?? storedProjects[0]?.path ?? '')
       setExpandedProjects(new Set(storedExpandedPaths.filter((path) => projectPaths.has(path))))
+      setActiveThread(restoredThread)
+      activeThreadRef.current = restoredThread
+      setSelectedModelId(storedViewState.selectedModelId)
+      setReasoningEffort(storedViewState.reasoningEffort)
+      setSidebarOpen(storedViewState.sidebarOpen)
+      setPrompt(storedViewState.promptDraft)
+      setExpandedWorkIds(new Set(storedViewState.expandedWorkIds))
       projectExpansionLoadedRef.current = true
+      viewStateLoadedRef.current = true
     })
-    void window.api.getChatThreads().then(setThreads)
     void window.api.getDownloadedModels(MODEL_LIST.map((model) => model.hf_repo)).then((downloadedRepos) => {
       const repoSet = new Set(downloadedRepos)
       setDownloadedModelIds(new Set(MODEL_LIST.filter((model) => repoSet.has(model.hf_repo)).map((model) => model.id)))
@@ -186,18 +372,48 @@ export default function MainApp(): JSX.Element {
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent): void => {
-      if (!controlsRef.current?.contains(event.target as Node)) setOpenMenu(null)
+      if (!controlsRef.current?.contains(event.target as Node)) {
+        if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current)
+        setOpenMenu(null)
+      }
       if (!titlebarMenuRef.current?.contains(event.target as Node)) setOpenTitlebarMenu(null)
       if (!projectMenuRef.current?.contains(event.target as Node)) setProjectMenuOpen(false)
+      if (contextMenu && !contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
+    }
+    const closeOnKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setContextMenu(null)
+        setDeleteConfirmThread(null)
+      }
     }
     window.addEventListener('mousedown', closeMenus)
-    return () => window.removeEventListener('mousedown', closeMenus)
-  }, [])
+    window.addEventListener('keydown', closeOnKey)
+    return () => {
+      window.removeEventListener('mousedown', closeMenus)
+      window.removeEventListener('keydown', closeOnKey)
+    }
+  }, [contextMenu])
 
   useEffect(() => {
     if (!projectExpansionLoadedRef.current) return
     void window.api.setExpandedProjectPaths([...expandedProjects])
   }, [expandedProjects])
+
+  useEffect(() => {
+    if (!viewStateLoadedRef.current) return
+    const timeout = window.setTimeout(() => {
+      void window.api.saveWorkspaceViewState({
+        selectedProjectPath,
+        activeThreadId: activeThread?.id ?? '',
+        selectedModelId,
+        reasoningEffort,
+        sidebarOpen,
+        promptDraft: prompt,
+        expandedWorkIds: [...expandedWorkIds]
+      })
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [activeThread?.id, expandedWorkIds, prompt, reasoningEffort, selectedModelId, selectedProjectPath, sidebarOpen])
 
   useEffect(() => window.api.onLocalCompletionEvent((event) => {
     if (event.requestId !== activeRequestIdRef.current) return
@@ -210,13 +426,140 @@ export default function MainApp(): JSX.Element {
       const updated = { ...current, messages, updatedAt: Date.now() }
       activeThreadRef.current = updated
       setActiveThread(updated)
+      saveThreadDebounced()
+      return
+    }
+    if (event.type === 'tool-call') {
+      const current = activeThreadRef.current
+      if (!current) return
+      const assistantId = current.messages.at(-1)?.role === 'assistant' ? current.messages.at(-1)?.id : undefined
+      if (assistantId) {
+        if (WEB_TOOL_NAMES.has(event.name)) {
+          holdWebActivity(assistantId, true)
+          const detail = webSearchDetail({ id: event.toolCallId, name: event.name, arguments: event.arguments })
+          if (detail) revealWebSearchDetail(assistantId, detail)
+        }
+        else clearHeldActivity()
+      }
+      const toolMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'tool',
+        content: '',
+        timestamp: Date.now(),
+        parentAssistantId: assistantId,
+        toolCalls: [{ id: event.toolCallId, name: event.name, arguments: event.arguments }]
+      }
+      const lastIdx = current.messages.length - 1
+      const messages = [
+        ...current.messages.slice(0, lastIdx),
+        toolMessage,
+        current.messages[lastIdx]
+      ]
+      const updated = { ...current, messages, updatedAt: Date.now() }
+      activeThreadRef.current = updated
+      setActiveThread(updated)
+      saveThreadImmediate()
+      return
+    }
+    if (event.type === 'tool-result') {
+      const current = activeThreadRef.current
+      if (!current) return
+      const completedToolMessage = current.messages.find((message) => message.role === 'tool' && message.toolCalls?.some((toolCall) => toolCall.id === event.toolCallId))
+      const completedToolCall = completedToolMessage?.toolCalls?.find((toolCall) => toolCall.id === event.toolCallId)
+      if (completedToolCall && WEB_TOOL_NAMES.has(completedToolCall.name) && completedToolMessage?.parentAssistantId) {
+        holdWebActivity(completedToolMessage.parentAssistantId, false)
+      }
+      const messages = current.messages.map((message) =>
+        message.role === 'tool' && message.toolCalls?.some((tc) => tc.id === event.toolCallId)
+          ? {
+              ...message,
+              content: event.result,
+              toolCalls: message.toolCalls.map((tc) =>
+                tc.id === event.toolCallId ? { ...tc, result: event.result, filePath: event.filePath } : tc
+              )
+            }
+          : message
+      )
+      const updated = { ...current, messages, updatedAt: Date.now() }
+      activeThreadRef.current = updated
+      setActiveThread(updated)
+      saveThreadDebounced()
+      return
+    }
+    if (event.type === 'tool-error') {
+      const current = activeThreadRef.current
+      if (!current) return
+      const failedToolMessage = current.messages.find((message) => message.role === 'tool' && message.toolCalls?.some((toolCall) => toolCall.id === event.toolCallId))
+      const failedToolCall = failedToolMessage?.toolCalls?.find((toolCall) => toolCall.id === event.toolCallId)
+      if (failedToolCall && WEB_TOOL_NAMES.has(failedToolCall.name) && failedToolMessage?.parentAssistantId) {
+        holdWebActivity(failedToolMessage.parentAssistantId, false)
+      }
+      const messages = current.messages.map((message) =>
+        message.role === 'tool' && message.toolCalls?.some((tc) => tc.id === event.toolCallId)
+          ? {
+              ...message,
+              content: '',
+              toolCalls: message.toolCalls.map((tc) =>
+                tc.id === event.toolCallId ? { ...tc, error: event.error } : tc
+              )
+            }
+          : message
+      )
+      const updated = { ...current, messages, updatedAt: Date.now() }
+      activeThreadRef.current = updated
+      setActiveThread(updated)
+      saveThreadImmediate()
+      return
+    }
+    if (event.type === 'reasoning-summary') {
+      const current = activeThreadRef.current
+      if (!current) return
+      const pendingAssistant = [...current.messages].reverse().find((message) => message.role === 'assistant' && message.status === 'pending')
+      const existingSummary = current.messages.find((m) => m.role === 'tool' && m.content === '__reasoning__' && m.parentAssistantId === pendingAssistant?.id)
+      if (existingSummary) {
+        const messages = current.messages.map((m) =>
+          m.id === existingSummary.id ? { ...m, content: '__reasoning__', reasoningSummary: event.summary } : m
+        )
+        const updated = { ...current, messages, updatedAt: Date.now() }
+        activeThreadRef.current = updated
+        setActiveThread(updated)
+        saveThreadImmediate()
+        return
+      }
+      const firstToolIdx = current.messages.findIndex((m) => m.role === 'tool')
+      const reasoningMsg: ChatMessage = { id: crypto.randomUUID(), role: 'tool', content: '__reasoning__', timestamp: Date.now(), parentAssistantId: pendingAssistant?.id, reasoningSummary: event.summary }
+      let messages: ChatMessage[]
+      if (firstToolIdx >= 0) {
+        messages = [...current.messages.slice(0, firstToolIdx), reasoningMsg, ...current.messages.slice(firstToolIdx)]
+      } else {
+        const lastIdx = current.messages.length - 1
+        messages = [...current.messages.slice(0, lastIdx), reasoningMsg, current.messages[lastIdx]]
+      }
+      const updated = { ...current, messages, updatedAt: Date.now() }
+      activeThreadRef.current = updated
+      setActiveThread(updated)
+      saveThreadDebounced()
+      return
+    }
+    if (event.type === 'files-changed') {
+      const current = activeThreadRef.current
+      if (!current) return
+      const messages = current.messages.map((message, index) =>
+        index === current.messages.length - 1 && message.role === 'assistant'
+          ? { ...message, filesChanged: event.files }
+          : message
+      )
+      const updated = { ...current, messages, updatedAt: Date.now() }
+      activeThreadRef.current = updated
+      setActiveThread(updated)
+      saveThreadImmediate()
       return
     }
     if (event.type === 'error') {
       const current = activeThreadRef.current
       if (current) {
         const messages = current.messages.map((message, index) => index === current.messages.length - 1 && !message.content
-          ? { ...message, content: 'The local model could not respond.' }
+          ? { ...message, status: 'error' as const }
           : message)
         const updated = { ...current, messages, updatedAt: Date.now() }
         activeThreadRef.current = updated
@@ -226,12 +569,30 @@ export default function MainApp(): JSX.Element {
     }
     const completed = activeThreadRef.current
     if (completed) {
-      setThreads((current) => [completed, ...current.filter((thread) => thread.id !== completed.id)])
-      void window.api.saveChatThread(completed)
+      const completedAt = Date.now()
+      const status = event.type === 'cancelled' ? 'cancelled' as const : event.type === 'error' ? 'error' as const : 'completed' as const
+      const messages = completed.messages.map((message, index) => index === completed.messages.length - 1 && message.role === 'assistant'
+        ? {
+            ...message,
+            status,
+            completedAt,
+            durationMs: Math.max(0, completedAt - (message.startedAt ?? startTimeRef.current ?? completedAt))
+          }
+        : message)
+      const finalThread = { ...completed, messages, updatedAt: completedAt }
+      activeThreadRef.current = finalThread
+      setActiveThread(finalThread)
+      setThreads((current) => [finalThread, ...current.filter((thread) => thread.id !== finalThread.id)])
+      void window.api.saveChatThread(finalThread)
     }
     activeRequestIdRef.current = null
     setCompletionState('idle')
   }), [])
+
+  useEffect(() => () => {
+    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
+    if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
+  }, [])
 
   useEffect(() => {
     if (autoScrollEnabled) conversationEndRef.current?.scrollIntoView({ behavior: completionState === 'streaming' ? 'auto' : 'smooth' })
@@ -248,9 +609,35 @@ export default function MainApp(): JSX.Element {
   }, [projectDialogOpen, projectSaving])
 
   useEffect(() => {
+    if (!renamingThreadId) return
+    renameInputRef.current?.focus()
+    renameInputRef.current?.select()
+  }, [renamingThreadId])
+
+  useEffect(() => {
     if (theme === 'system') delete document.documentElement.dataset.theme
     else document.documentElement.dataset.theme = theme
   }, [theme])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey)) return
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      const target = event.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+      event.preventDefault()
+      const currentIndex = REASONING_EFFORTS.indexOf(reasoningEffort)
+      if (event.key === 'ArrowRight') {
+        const next = (currentIndex + 1) % REASONING_EFFORTS.length
+        setReasoningEffort(REASONING_EFFORTS[next])
+      } else {
+        const prev = (currentIndex - 1 + REASONING_EFFORTS.length) % REASONING_EFFORTS.length
+        setReasoningEffort(REASONING_EFFORTS[prev])
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [reasoningEffort])
 
   useLayoutEffect(() => {
     const textarea = promptTextareaRef.current
@@ -333,9 +720,74 @@ export default function MainApp(): JSX.Element {
     setActiveThread(null)
     setCompletionState('idle')
     setCompletionError('')
+    setPendingAttachments([])
+    setAttachmentError('')
+    clearHeldActivity()
     setPrompt('')
     setAutoScrollEnabled(true)
     promptTextareaRef.current?.focus()
+  }
+
+  const renameThread = (thread: ChatThread): void => {
+    setContextMenu(null)
+    setRenamingThreadId(thread.id)
+    setRenameValue(thread.title)
+  }
+
+  const commitRename = (thread: ChatThread): void => {
+    const title = renameValue.trim()
+    if (!title) {
+      setRenamingThreadId(null)
+      return
+    }
+    const updated = { ...thread, title, updatedAt: Date.now() }
+    if (activeThreadRef.current?.id === thread.id) {
+      activeThreadRef.current = updated
+      setActiveThread(updated)
+    }
+    setThreads((items) => [updated, ...items.filter((item) => item.id !== updated.id)])
+    setRenamingThreadId(null)
+    void window.api.saveChatThread(updated)
+  }
+
+  const regenerateThreadTitle = async (thread: ChatThread): Promise<void> => {
+    setContextMenu(null)
+    const firstUserMsg = thread.messages.find((m) => m.role === 'user')
+    if (!firstUserMsg) return
+    setRegeneratingThreadId(thread.id)
+    try {
+      const title = await window.api.generateChatTitle(firstUserMsg.content)
+      if (!title) return
+      const updated = { ...thread, title, updatedAt: Date.now() }
+      if (activeThreadRef.current?.id === thread.id) {
+        activeThreadRef.current = updated
+        setActiveThread(updated)
+      }
+      setThreads((items) => [updated, ...items.filter((item) => item.id !== updated.id)])
+      void window.api.saveChatThread(updated)
+    } finally {
+      setRegeneratingThreadId(null)
+    }
+  }
+
+  const confirmDeleteThread = async (): Promise<void> => {
+    const thread = deleteConfirmThread
+    if (!thread) return
+    setDeleteConfirmThread(null)
+    setContextMenu(null)
+    if (activeThreadRef.current?.id === thread.id) {
+      activeThreadRef.current = null
+      setActiveThread(null)
+      setCompletionError('')
+    }
+    setThreads((items) => items.filter((item) => item.id !== thread.id))
+    void window.api.deleteChatThread(thread.id)
+  }
+
+  const startProjectThread = (project: Project): void => {
+    setSelectedProjectPath(project.path)
+    setExpandedProjects((current) => new Set(current).add(project.path))
+    startNewThread()
   }
 
   const toggleProject = (project: Project): void => {
@@ -372,19 +824,78 @@ export default function MainApp(): JSX.Element {
     }
   }
 
+  const formatToolResultBrief = (name: string, result: string, filePath?: string): string => {
+    if (name === 'write' || name === 'edit') {
+      return filePath ? `→ ${filePath}` : result.split('\n')[0].slice(0, 80)
+    }
+    if (name === 'apply_patch') return result.split('\n')[0].slice(0, 80)
+    if (name === 'read') {
+      const match = result.match(/^(\d+):/)
+      return match ? `Read ${filePath || 'file'} (${result.trim().split('\n').length} lines)` : `Read ${filePath || 'file'}`
+    }
+    if (name === 'bash') {
+      const exitMatch = result.match(/Exit code: (.+)$/m)
+      return exitMatch ? `Exited ${exitMatch[1]}` : 'Ran command'
+    }
+    if (name === 'grep') return `${result.trim().split('\n').length} matches`
+    if (name === 'glob') return `${result.trim().split('\n').length} files`
+    if (name === 'web_search') return `Searched web`
+    if (name === 'web_fetch') return `Fetched page`
+    if (name === 'list') return `Listed directory`
+    return result.slice(0, 80)
+  }
+
+  const formatDurationShort = (durationMs: number): string => {
+    const seconds = Math.max(1, Math.round(durationMs / 1000))
+    if (seconds < 60) return `${seconds}s`
+    const minutes = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return secs > 0 ? `${minutes}m ${secs}s` : `${minutes}m`
+  }
+
+  const chooseChatImages = async (): Promise<void> => {
+    setAttachmentError('')
+    try {
+      const selected = await window.api.chooseChatImages()
+      if (selected.length === 0) return
+      setPendingAttachments((current) => [...current, ...selected].slice(0, MAX_CHAT_ATTACHMENTS))
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not attach the image')
+    }
+  }
+
+  const saveThreadDebounced = (): void => {
+    if (saveTimerRef.current) return
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null
+      const current = activeThreadRef.current
+      if (current) void window.api.saveChatThread(current)
+    }, 400)
+  }
+
+  const saveThreadImmediate = (): void => {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    const current = activeThreadRef.current
+    if (current) void window.api.saveChatThread(current)
+  }
+
   const submitPrompt = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
     const content = prompt.trim()
-    if (!content || completionState !== 'idle' || !selectedModel) return
+    if ((!content && pendingAttachments.length === 0) || completionState !== 'idle' || !selectedModel) return
     const isNewThread = !activeThreadRef.current
     const threadId = activeThreadRef.current?.id ?? crypto.randomUUID()
     const projectPath = activeThreadRef.current?.projectPath ?? selectedProjectPath ?? projects[0]?.path ?? ''
-    const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content }
-    const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '' }
+    const now = Date.now()
+    const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content, attachments: pendingAttachments, timestamp: now }
+    const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '', timestamp: now, startedAt: now, status: 'pending' }
     const thread: ChatThread = {
       id: threadId,
       projectPath,
-      title: activeThreadRef.current?.title ?? content.slice(0, 44),
+      title: activeThreadRef.current?.title ?? (content.slice(0, 44) || 'Image request'),
       messages: [...(activeThreadRef.current?.messages ?? []), userMessage, assistantMessage],
       updatedAt: Date.now()
     }
@@ -393,18 +904,35 @@ export default function MainApp(): JSX.Element {
     setThreads((current) => [thread, ...current.filter((item) => item.id !== thread.id)])
     if (projectPath) setExpandedProjects((current) => new Set(current).add(projectPath))
     setPrompt('')
+    setPendingAttachments([])
+    setAttachmentError('')
     setCompletionError('')
     setCompletionState('starting')
     setAutoScrollEnabled(true)
     void window.api.saveChatThread(thread)
-    if (isNewThread) void updateThreadTitle(threadId, content)
+    if (isNewThread && content) void updateThreadTitle(threadId, content)
+    startTimeRef.current = Date.now()
     try {
       const status = await window.api.startDownloadedModel(selectedModel.hf_repo, selectedModel.gguf_file)
       if (status.state !== 'ready') throw new Error(status.message ?? 'The local model could not start')
-      const messages = thread.messages.filter((message) => message.content).map(({ role, content: messageContent }) => ({ role, content: messageContent }))
+      const messages = thread.messages.flatMap((message) => {
+        if (message.role === 'tool' || (message.role === 'assistant' && !message.content)) return []
+        if (message.role === 'user' && message.attachments?.length) {
+          return [{
+            role: 'user' as const,
+            content: [
+              ...(message.content ? [{ type: 'text' as const, text: message.content }] : []),
+              ...message.attachments.map((attachment) => ({ type: 'image_url' as const, image_url: { url: attachment.dataUrl } }))
+            ]
+          }]
+        }
+        return message.content ? [{ role: message.role as 'user' | 'assistant', content: message.content }] : []
+      })
       const profile = reasoningProfile(selectedModel, reasoningEffort)
       const systemPrompt = `${profile.systemPrompt}\n\n${responseStylePrompt(responseStylePreference)}`
       const start = await window.api.startLocalCompletion({
+        threadId,
+        projectPath,
         messages: [
           { role: 'system', content: systemPrompt },
           ...messages
@@ -422,6 +950,18 @@ export default function MainApp(): JSX.Element {
       setCompletionState('streaming')
     } catch (error) {
       setCompletionError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'The local model could not start')
+      const current = activeThreadRef.current
+      if (current) {
+        const completedAt = Date.now()
+        const messages = current.messages.map((message) => message.id === assistantMessage.id
+          ? { ...message, status: 'error' as const, completedAt, durationMs: completedAt - now }
+          : message)
+        const failedThread = { ...current, messages, updatedAt: completedAt }
+        activeThreadRef.current = failedThread
+        setActiveThread(failedThread)
+        setThreads((items) => [failedThread, ...items.filter((item) => item.id !== failedThread.id)])
+        void window.api.saveChatThread(failedThread)
+      }
       setCompletionState('idle')
     }
   }
@@ -430,9 +970,9 @@ export default function MainApp(): JSX.Element {
     <>
       <header className="app-titlebar">
         <div className="titlebar-actions">
-          <button className="titlebar-icon-button" type="button" aria-label="Toggle sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((current) => !current)}><SidebarIcon /></button>
-          <button className="titlebar-icon-button" type="button" aria-label="Go back" disabled><ArrowIcon direction="back" /></button>
-          <button className="titlebar-icon-button" type="button" aria-label="Go forward" disabled><ArrowIcon direction="forward" /></button>
+          <button className="titlebar-icon-button" type="button" aria-label="Toggle sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((current) => !current)}><PanelLeft size={16} /></button>
+          <button className="titlebar-icon-button" type="button" aria-label="Go back" disabled><ChevronLeft size={16} /></button>
+          <button className="titlebar-icon-button" type="button" aria-label="Go forward" disabled><ChevronRight size={16} /></button>
           <nav className="titlebar-menu" aria-label="Application menu" ref={titlebarMenuRef}>
             {(Object.keys(TITLEBAR_MENUS) as TitlebarMenuId[]).map((menuId) => (
               <div className="titlebar-menu-group" key={menuId}>
@@ -478,12 +1018,12 @@ export default function MainApp(): JSX.Element {
         <aside className="app-sidebar">
         <nav className="sidebar-nav" aria-label="Primary navigation">
           <button className="sidebar-action" type="button" onClick={startNewThread}>
-            <PlusIcon />
+            <Plus size={16} />
             <span>New thread</span>
             <kbd>Ctrl N</kbd>
           </button>
           <button className="sidebar-action" type="button">
-            <SearchIcon />
+            <Search size={14} />
             <span>Search</span>
             <kbd>Ctrl K</kbd>
           </button>
@@ -492,7 +1032,7 @@ export default function MainApp(): JSX.Element {
           <div className="sidebar-section-heading">
             <div className="sidebar-section-label">Projects</div>
             <div className="project-add-wrap" ref={projectMenuRef}>
-              <button className="project-add-button" type="button" aria-label="Add project" aria-haspopup="menu" aria-expanded={projectMenuOpen} onClick={() => setProjectMenuOpen((current) => !current)}><FolderPlusIcon /></button>
+              <button className="project-add-button" type="button" aria-label="Add project" aria-haspopup="menu" aria-expanded={projectMenuOpen} onClick={() => setProjectMenuOpen((current) => !current)}><FolderPlus size={14} /></button>
               {projectMenuOpen && (
                 <div className="project-add-menu" role="menu">
                   <button type="button" role="menuitem" onClick={openCreateProjectDialog}>Start from scratch</button>
@@ -508,10 +1048,41 @@ export default function MainApp(): JSX.Element {
               const expanded = expandedProjects.has(project.path)
               return (
                 <div className={expanded ? 'project-group expanded' : 'project-group'} key={project.path}>
-                  <button className="project-row" type="button" title={project.path} aria-expanded={expanded} onClick={() => toggleProject(project)}><FolderIcon /><span>{project.name}</span></button>
+                  <div className={selectedProjectPath === project.path && !activeThread ? 'project-row selected' : 'project-row'}>
+                    <button className="project-row-main" type="button" title={project.path} aria-expanded={expanded} onClick={() => toggleProject(project)}><Folder size={14} /><span>{project.name}</span></button>
+                    <button className="project-new-thread" type="button" aria-label={`New thread in ${project.name}`} title={`New thread in ${project.name}`} onClick={() => startProjectThread(project)}><Plus size={14} /></button>
+                  </div>
                   {expanded && (
                     <div className="project-threads">
-                      {projectThreads.slice(0, fullyExpandedProjects.has(project.path) ? projectThreads.length : 5).map((thread) => <button className={activeThread?.id === thread.id ? 'project-thread active' : 'project-thread'} type="button" key={thread.id} onClick={() => openThread(thread)}>{thread.title}</button>)}
+                      {projectThreads.slice(0, fullyExpandedProjects.has(project.path) ? projectThreads.length : 5).map((thread) =>
+                        renamingThreadId === thread.id ? (
+                          <input
+                            ref={renameInputRef}
+                            className="project-thread-rename-input"
+                            key={thread.id}
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onBlur={() => commitRename(thread)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitRename(thread)
+                              if (e.key === 'Escape') setRenamingThreadId(null)
+                            }}
+                          />
+                        ) : (
+                          <button
+                            className={activeThread?.id === thread.id ? 'project-thread active' : 'project-thread'}
+                            type="button"
+                            key={thread.id}
+                            onClick={() => openThread(thread)}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              setContextMenu({ thread, x: e.clientX, y: e.clientY })
+                            }}
+                          >
+                            {regeneratingThreadId === thread.id ? 'Generating...' : thread.title}
+                          </button>
+                        )
+                      )}
                       {projectThreads.length > 5 && !fullyExpandedProjects.has(project.path) && <button className="project-show-more" type="button" onClick={() => setFullyExpandedProjects((current) => new Set(current).add(project.path))}>Show more</button>}
                     </div>
                   )}
@@ -535,9 +1106,118 @@ export default function MainApp(): JSX.Element {
             }}
           >
             <div className="conversation-inner">
-              {activeThread.messages.map((message) => message.role === 'user'
-                ? <div className="chat-message user-message" key={message.id}><MarkdownMessage content={message.content} /></div>
-                : <div className={message.content ? 'chat-message assistant-message' : 'chat-message assistant-message pending'} key={message.id}>{message.content ? <MarkdownMessage content={message.content} /> : <span className="thinking-label">Thinking</span>}</div>)}
+              {activeThread.messages.map((message, messageIndex) => {
+                if (message.role === 'user') {
+                  return (
+                    <div className="chat-message user-message" key={message.id}>
+                      {message.attachments && message.attachments.length > 0 && (
+                        <div className="message-attachments">
+                          {message.attachments.map((attachment) => <img src={attachment.dataUrl} alt={attachment.name} title={attachment.name} key={attachment.id} />)}
+                        </div>
+                      )}
+                      {message.content && <MarkdownMessage content={message.content} />}
+                    </div>
+                  )
+                }
+                if (message.role === 'tool') {
+                  const messageToolCalls = message.toolCalls ?? []
+                  if (messageToolCalls.length > 0 && messageToolCalls.every((toolCall) => WEB_TOOL_NAMES.has(toolCall.name))) return null
+                  const parent = message.parentAssistantId
+                    ? activeThread.messages.find((candidate) => candidate.id === message.parentAssistantId)
+                    : activeThread.messages.slice(messageIndex + 1).find((candidate) => candidate.role === 'assistant')
+                  const parentToolCalls = parent
+                    ? activeThread.messages.filter((candidate) => candidate.role === 'tool' && candidate.parentAssistantId === parent.id).flatMap((candidate) => candidate.toolCalls ?? [])
+                    : []
+                  if (parentToolCalls.length > 0 && parentToolCalls.every((toolCall) => WEB_TOOL_NAMES.has(toolCall.name))) return null
+                  const isFinishedWork = parent?.role === 'assistant' && parent.status !== 'pending'
+                  if (isFinishedWork && parent && !expandedWorkIds.has(parent.id)) return null
+                  if (message.content === '__reasoning__' && message.reasoningSummary) {
+                    return (
+                      <div className="chat-message reasoning-message" key={message.id}>
+                        <div className="reasoning-summary">
+                          <span className="reasoning-summary-text">{message.reasoningSummary}</span>
+                        </div>
+                      </div>
+                    )
+                  }
+                  if (message.toolCalls?.every((toolCall) => toolCall.result === undefined && !toolCall.error)) return null
+                  return (
+                    <div className="chat-message tool-message" key={message.id}>
+                      {message.toolCalls?.map((tc) => {
+                        const hasResult = tc.result !== undefined && !tc.error
+                        const hasError = !!tc.error
+                        const running = !hasResult && !hasError
+                        return (
+                          <div className={hasResult ? 'tool-call completed' : hasError ? 'tool-call error' : 'tool-call running'} key={tc.id}>
+                            {!running && <span className="tool-call-icon">{(() => {
+                              const Icon = toolIconMap[tc.name] ?? toolIconMap.default
+                              return <Icon size={12} className={hasError ? 'tool-call-icon-error' : 'tool-call-icon-check'} />
+                            })()}</span>}
+                            {running
+                              ? <span className="activity-label" data-text={runningToolLabel(tc)}>{runningToolLabel(tc)}</span>
+                              : <span className="tool-call-name">{tc.name}</span>}
+                            {hasResult && tc.result && <span className="tool-call-result">{formatToolResultBrief(tc.name, tc.result, tc.filePath)}</span>}
+                            {hasError && tc.error && <span className="tool-call-error">{tc.error}</span>}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                }
+                return (() => {
+                  const turnToolCalls = activeThread.messages
+                    .filter((candidate) => candidate.role === 'tool' && candidate.parentAssistantId === message.id)
+                    .flatMap((candidate) => candidate.toolCalls ?? [])
+                  const isWebOnlyTurn = turnToolCalls.length > 0 && turnToolCalls.every((toolCall) => WEB_TOOL_NAMES.has(toolCall.name))
+                  const showDuration = !isWebOnlyTurn && message.status !== 'pending' && message.durationMs !== undefined
+                  const runningTool = [...activeThread.messages.slice(0, messageIndex)].reverse().find((candidate) =>
+                    candidate.role === 'tool' && candidate.parentAssistantId === message.id && candidate.toolCalls?.some((toolCall) => toolCall.result === undefined && !toolCall.error)
+                  )
+                  const runningToolCall = runningTool?.toolCalls?.find((toolCall) => toolCall.result === undefined && !toolCall.error)
+                  const heldActivityLabel = heldActivity?.assistantId === message.id && heldActivity.until > Date.now() ? heldActivity.label : undefined
+                  const activeLabel = runningToolCall ? runningToolLabel(runningToolCall) : heldActivityLabel ?? 'Thinking'
+                  const mostRecentSearch = [...turnToolCalls].reverse().find((toolCall) => toolCall.name === 'web_search')
+                  const streamedSearchDetail = webSearchActivity?.assistantId === message.id
+                    ? webSearchActivity.text.slice(0, webSearchActivity.revealedCharacters)
+                    : undefined
+                  const visibleSearchDetail = activeLabel === 'Searching the web'
+                    ? streamedSearchDetail ?? webSearchDetail(runningToolCall ?? mostRecentSearch ?? { id: '', name: '', arguments: {} }) ?? ''
+                    : ''
+                  const expanded = expandedWorkIds.has(message.id)
+                  return (
+                    <div key={message.id}>
+                      {showDuration && (
+                        <button className="work-duration" type="button" aria-expanded={expanded} onClick={() => setExpandedWorkIds((current) => {
+                          const next = new Set(current)
+                          if (next.has(message.id)) next.delete(message.id)
+                          else next.add(message.id)
+                          return next
+                        })}>
+                          <span className="work-duration-text">Worked for {formatDurationShort(message.durationMs ?? 0)}</span>
+                          <ChevronRight size={12} className={expanded ? 'work-duration-chevron expanded' : 'work-duration-chevron'} />
+                        </button>
+                      )}
+                      <div className={message.content ? 'chat-message assistant-message' : 'chat-message assistant-message pending'}>
+                        {message.content
+                          ? <MarkdownMessage content={message.content} />
+                          : message.status === 'cancelled'
+                            ? <span className="terminal-activity-label">Stopped</span>
+                            : message.status === 'error'
+                              ? <span className="terminal-activity-label error">Failed</span>
+                              : <span className="assistant-activity"><span className="activity-label" data-text={activeLabel}>{activeLabel}</span>{visibleSearchDetail && <span className="web-search-detail">{visibleSearchDetail}</span>}</span>}
+                        {message.filesChanged && message.filesChanged.length > 0 && (
+                          <div className="files-changed">
+                            <span className="files-changed-label">Files changed</span>
+                            {message.filesChanged.map((file) => (
+                              <span className="files-changed-file" key={file}>{file}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()
+              })}
               {completionError && <div className="completion-error" role="alert">{completionError}</div>}
               <div ref={conversationEndRef} />
             </div>
@@ -559,12 +1239,22 @@ export default function MainApp(): JSX.Element {
               conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' })
             }}
           >
-            <ArrowDownIcon />
+            <ArrowDown size={16} />
           </button>
         )}
 
         <form className="prompt-composer" ref={promptComposerRef} onSubmit={(event) => void submitPrompt(event)}>
           <ComposerShape height={composerHeight || COMPOSER_CORNER_RADIUS * 2} />
+          {pendingAttachments.length > 0 && (
+            <div className="composer-attachments" aria-label="Attached images">
+              {pendingAttachments.map((attachment) => (
+                <div className="composer-attachment" key={attachment.id}>
+                  <img src={attachment.dataUrl} alt={attachment.name} />
+                  <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setPendingAttachments((current) => current.filter((item) => item.id !== attachment.id))}><X size={11} /></button>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             ref={promptTextareaRef}
             value={prompt}
@@ -579,26 +1269,52 @@ export default function MainApp(): JSX.Element {
             aria-label="Prompt"
             rows={2}
           />
+          {attachmentError && <div className="attachment-error" role="alert">{attachmentError}</div>}
           <div className="composer-toolbar" ref={controlsRef}>
-            <button className="composer-icon-button" type="button" aria-label="Add context"><PlusIcon /></button>
+            <button className="composer-icon-button" type="button" aria-label="Attach images" title="Attach images" disabled={completionState !== 'idle' || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => void chooseChatImages()}><Plus size={14} /></button>
             <div className="composer-controls">
               <div className="composer-menu-wrap">
                 {openMenu !== null && (
                   <div className="composer-menu advanced-menu" role="menu">
-                    <button className="advanced-option" type="button" onMouseEnter={() => setOpenMenu('model')} onFocus={() => setOpenMenu('model')} onClick={() => setOpenMenu('model')}>
+                    <div className="menu-heading-compact">Effort</div>
+                    {REASONING_EFFORTS.map((effort) => (
+                      <button
+                        className={effort === reasoningEffort ? 'menu-option menu-option-compact selected' : 'menu-option menu-option-compact'}
+                        key={effort}
+                        type="button"
+                        onClick={() => { setReasoningEffort(effort); setOpenMenu(null) }}
+                      >
+                        <span className="menu-option-copy"><strong>{effort}</strong></span>
+                      </button>
+                    ))}
+                    <div className="menu-divider" />
+                    <button className="advanced-option" type="button"
+                      onMouseEnter={() => {
+                        if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current)
+                        modelMenuTimerRef.current = setTimeout(() => setOpenMenu('model'), 350)
+                      }}
+                      onMouseLeave={() => {
+                        if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current)
+                        if (openMenu === 'model') modelMenuTimerRef.current = setTimeout(() => setOpenMenu('advanced'), 200)
+                      }}
+                      onFocus={() => { if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current); setOpenMenu('model') }}
+                      onClick={() => { if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current); setOpenMenu('model') }}
+                    >
                       <span>Model</span>
                       <span className="advanced-value">{selectedModel ? modelDisplayName(selectedModel.base_model) : 'None'}</span>
-                      <ChevronIcon />
-                    </button>
-                    <button className="advanced-option" type="button" onMouseEnter={() => setOpenMenu('reasoning')} onFocus={() => setOpenMenu('reasoning')} onClick={() => setOpenMenu('reasoning')}>
-                      <span>Effort</span>
-                      <span className="advanced-value">{reasoningEffort}</span>
-                      <ChevronIcon />
+                      <ChevronDown size={12} />
                     </button>
                   </div>
                 )}
                 {openMenu === 'model' && (
-                  <div className="composer-menu submenu-menu model-menu" role="menu">
+                  <div className="composer-menu submenu-menu model-menu" role="menu"
+                    onMouseEnter={() => {
+                      if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current)
+                    }}
+                    onMouseLeave={() => {
+                      modelMenuTimerRef.current = setTimeout(() => setOpenMenu('advanced'), 200)
+                    }}
+                  >
                     <div className="menu-heading">Model</div>
                     {downloadedModelIds === null && <div className="menu-message">Checking downloaded models…</div>}
                     {downloadedModelIds !== null && downloadedModels.length === 0 && (
@@ -615,36 +1331,38 @@ export default function MainApp(): JSX.Element {
                         onClick={() => { setSelectedModelId(model.id); setOpenMenu(null) }}
                       >
                         <span className="menu-option-copy"><strong>{modelDisplayName(model.base_model)}</strong></span>
-                        {model.id === selectedModelId && <span className="checkmark">✓</span>}
                       </button>
                     ))}
                   </div>
                 )}
-                {openMenu === 'reasoning' && (
-                  <div className="composer-menu submenu-menu reasoning-menu" role="menu">
-                    <div className="menu-heading">Effort</div>
-                    {REASONING_EFFORTS.map((effort) => (
-                      <button
-                        className={effort === reasoningEffort ? 'menu-option selected' : 'menu-option'}
-                        key={effort}
-                        type="button"
-                        onClick={() => { setReasoningEffort(effort); setOpenMenu(null) }}
-                      >
-                        <span className="menu-option-copy"><strong>{effort}</strong></span>
-                        {effort === reasoningEffort && <span className="checkmark">✓</span>}
-                      </button>
-                    ))}
+                {contextTokens && selectedModel && (
+                  <div className="context-meter-wrap">
+                    <svg className="context-meter-ring" viewBox="0 0 22 22">
+                      <circle className="context-meter-track" cx="11" cy="11" r="8.5" />
+                      <circle className="context-meter-fill" cx="11" cy="11" r="8.5"
+                        style={{
+                          strokeDasharray: `${2 * Math.PI * 8.5}`,
+                          strokeDashoffset: `${2 * Math.PI * 8.5 * (1 - contextTokens.percent / 100)}`
+                        }} />
+                    </svg>
+                    <div className="context-meter-tooltip" role="tooltip">
+                      <span className="context-meter-used">{contextTokens.used.toLocaleString()}</span>
+                      <span className="context-meter-separator"> / </span>
+                      <span className="context-meter-total">{contextTokens.total.toLocaleString()}</span>
+                      <span className="context-meter-token-label"> tokens</span>
+                      <span className="context-meter-percent"> ({contextTokens.percent}%)</span>
+                    </div>
                   </div>
                 )}
                 <button className="composer-select model-select" type="button" disabled={completionState !== 'idle'} onClick={() => setOpenMenu(openMenu === null ? 'advanced' : null)}>
                   <span>{selectedModel ? modelDisplayName(selectedModel.base_model) : (downloadedModelIds === null ? 'Checking models…' : 'No models')}</span>
                   <span className="combined-effort">{reasoningEffort}</span>
-                  <ChevronIcon />
+                  <ChevronDown size={12} />
                 </button>
               </div>
               {completionState === 'idle'
-                ? <button className="send-button" type="submit" disabled={!prompt.trim() || !selectedModel} aria-label="Send prompt"><SendIcon /></button>
-                : <button className="send-button stop-button" type="button" aria-label="Stop response" onClick={() => { if (activeRequestIdRef.current) void window.api.cancelLocalCompletion(activeRequestIdRef.current) }}><StopIcon /></button>}
+                ? <button className="send-button" type="submit" disabled={(!prompt.trim() && pendingAttachments.length === 0) || !selectedModel} aria-label="Send prompt"><ArrowUp size={16} /></button>
+                : <button className="send-button stop-button" type="button" aria-label="Stop response" onClick={() => { if (activeRequestIdRef.current) void window.api.cancelLocalCompletion(activeRequestIdRef.current) }}><Square size={14} /></button>}
             </div>
           </div>
         </form>
@@ -663,6 +1381,51 @@ export default function MainApp(): JSX.Element {
                 <button className="primary" type="submit" disabled={!projectName.trim() || projectSaving}>{projectSaving ? 'Saving…' : 'Save'}</button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+      {contextMenu && (
+        <div
+          className="thread-context-menu"
+          ref={contextMenuRef}
+          role="menu"
+          style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y }}
+          onClick={() => setContextMenu(null)}
+        >
+          <button type="button" role="menuitem"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => { e.stopPropagation(); renameThread(contextMenu.thread) }}
+          >
+            <PenLine size={14} />
+            <span>Rename</span>
+          </button>
+          <button type="button" role="menuitem"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => { e.stopPropagation(); void regenerateThreadTitle(contextMenu.thread) }}
+            disabled={regeneratingThreadId === contextMenu.thread.id}
+          >
+            <RefreshCw size={14} className={regeneratingThreadId === contextMenu.thread.id ? 'refresh-icon-spin' : ''} />
+            <span>Regenerate title</span>
+          </button>
+          <div className="thread-context-menu-separator" />
+          <button type="button" role="menuitem"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => { e.stopPropagation(); setDeleteConfirmThread(contextMenu.thread); setContextMenu(null) }}
+          >
+            <Trash2 size={14} />
+            <span>Delete</span>
+          </button>
+        </div>
+      )}
+      {deleteConfirmThread && (
+        <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteConfirmThread(null) }}>
+          <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
+            <h2 id="delete-dialog-title">Delete thread</h2>
+            <p>Are you sure you want to delete "<strong>{deleteConfirmThread.title}</strong>"? This action cannot be undone.</p>
+            <div className="project-dialog-actions">
+              <button type="button" onClick={() => setDeleteConfirmThread(null)}>Cancel</button>
+              <button className="primary delete-confirm" type="button" onClick={() => void confirmDeleteThread()}>Delete</button>
+            </div>
           </section>
         </div>
       )}

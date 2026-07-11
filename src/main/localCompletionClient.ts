@@ -1,8 +1,37 @@
-export type LocalChatRole = 'system' | 'user' | 'assistant'
+export type LocalChatRole = 'system' | 'user' | 'assistant' | 'tool'
+
+export interface LocalToolCall {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+}
+
+export interface LocalToolDefinition {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+export interface LocalTextContentPart {
+  type: 'text'
+  text: string
+}
+
+export interface LocalImageContentPart {
+  type: 'image_url'
+  image_url: { url: string }
+}
+
+export type LocalMessageContent = string | readonly (LocalTextContentPart | LocalImageContentPart)[] | null
 
 export interface LocalChatMessage {
   role: LocalChatRole
-  content: string
+  content: LocalMessageContent
+  name?: string
+  toolCallId?: string
+  toolCalls?: readonly LocalToolCall[]
+  reasoningText?: string
+  filePath?: string
 }
 
 export interface LocalCompletionRequest {
@@ -15,6 +44,8 @@ export interface LocalCompletionRequest {
   minP?: number
   presencePenalty?: number
   repetitionPenalty?: number
+  tools?: readonly LocalToolDefinition[]
+  toolChoice?: 'auto' | 'none'
   signal?: AbortSignal
 }
 
@@ -29,6 +60,9 @@ export interface LocalPromptRequest {
 
 export interface LocalCompletion {
   text: string
+  toolCalls: LocalToolCall[]
+  reasoningText?: string
+  finishReason?: string
 }
 
 export interface LocalCompletionStart {
@@ -37,6 +71,11 @@ export interface LocalCompletionStart {
 
 export type LocalCompletionEvent =
   | { requestId: string; type: 'delta'; delta: string }
+  | { requestId: string; type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: string }
+  | { requestId: string; type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
+  | { requestId: string; type: 'tool-error'; toolCallId: string; error: string }
+  | { requestId: string; type: 'files-changed'; files: string[] }
+  | { requestId: string; type: 'reasoning-summary'; summary: string }
   | { requestId: string; type: 'complete' }
   | { requestId: string; type: 'cancelled' }
   | { requestId: string; type: 'error'; message: string }
@@ -45,10 +84,14 @@ interface CompletionResponse {
   choices?: Array<{
     message?: {
       content?: unknown
+      reasoning_content?: unknown
+      reasoning?: unknown
+      tool_calls?: unknown
     }
     delta?: {
       content?: unknown
     }
+    finish_reason?: unknown
   }>
 }
 
@@ -56,11 +99,11 @@ interface PromptCompletionResponse {
   content?: unknown
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000
+const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_MAX_TOKENS = 8192
 const DEFAULT_TEMPERATURE = 0.2
-const MAX_REQUEST_MESSAGES = 64
-const MAX_MESSAGE_CHARACTERS = 32_000
+const MAX_REQUEST_MESSAGES = 256
+const MAX_MESSAGE_CHARACTERS = 128_000
 const MAX_COMPLETION_TOKENS = 8_192
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
 
@@ -101,10 +144,20 @@ const optionalNumber = (value: number | undefined, minimum: number, maximum: num
 
 const validateRequest = (request: LocalCompletionRequest): CompletionSettings => {
   if (request.messages.length === 0 || request.messages.length > MAX_REQUEST_MESSAGES) {
-    throw new Error('Completion requests must include between 1 and 64 messages')
+    throw new Error(`Completion requests must include between 1 and ${MAX_REQUEST_MESSAGES} messages`)
   }
   for (const message of request.messages) {
-    if (!['system', 'user', 'assistant'].includes(message.role) || message.content.length === 0 || message.content.length > MAX_MESSAGE_CHARACTERS) {
+    const validContent = message.content === null ||
+      (typeof message.content === 'string' && message.content.length <= MAX_MESSAGE_CHARACTERS) ||
+      (Array.isArray(message.content) && message.content.length > 0 && message.content.every((part) => {
+        if (!part || typeof part !== 'object' || !('type' in part)) return false
+        if (part.type === 'text') return typeof part.text === 'string' && part.text.length <= MAX_MESSAGE_CHARACTERS
+        return part.type === 'image_url' && typeof part.image_url?.url === 'string' && part.image_url.url.startsWith('data:image/')
+      }))
+    const hasAssistantTools = message.role === 'assistant' && Array.isArray(message.toolCalls) && message.toolCalls.length > 0
+    const hasToolResult = message.role === 'tool' && typeof message.toolCallId === 'string' && typeof message.content === 'string'
+    const hasContent = typeof message.content === 'string' ? message.content.length > 0 : Array.isArray(message.content) && message.content.length > 0
+    if (!['system', 'user', 'assistant', 'tool'].includes(message.role) || !validContent || (!hasContent && !hasAssistantTools && !hasToolResult)) {
       throw new Error('Completion requests contain an invalid message')
     }
   }
@@ -131,8 +184,20 @@ const validateRequest = (request: LocalCompletionRequest): CompletionSettings =>
   }
 }
 
-const completionBody = (messages: readonly LocalChatMessage[], settings: CompletionSettings, stream: boolean): Record<string, unknown> => ({
-  messages,
+const serializeMessage = (message: LocalChatMessage): Record<string, unknown> => ({
+  role: message.role,
+  content: message.content,
+  name: message.name,
+  tool_call_id: message.toolCallId,
+  tool_calls: message.toolCalls?.map((call) => ({
+    id: call.id,
+    type: 'function',
+    function: { name: call.name, arguments: JSON.stringify(call.arguments) }
+  }))
+})
+
+const completionBody = (request: LocalCompletionRequest, settings: CompletionSettings, stream: boolean): Record<string, unknown> => ({
+  messages: request.messages.map(serializeMessage),
   stream,
   max_tokens: settings.maxTokens,
   temperature: settings.temperature,
@@ -142,8 +207,32 @@ const completionBody = (messages: readonly LocalChatMessage[], settings: Complet
   presence_penalty: settings.presencePenalty,
   repeat_penalty: settings.repetitionPenalty,
   chat_template_kwargs: { enable_thinking: settings.enableThinking },
-  reasoning_format: 'deepseek'
+  reasoning_format: 'deepseek',
+  tools: request.tools?.map((definition) => ({
+    type: 'function',
+    function: definition
+  })),
+  tool_choice: request.tools?.length ? request.toolChoice ?? 'auto' : undefined
 })
+
+const parseToolCalls = (value: unknown): LocalToolCall[] => {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item, index) => {
+    if (!item || typeof item !== 'object') return []
+    const candidate = item as { id?: unknown; function?: { name?: unknown; arguments?: unknown } }
+    if (!candidate.function || typeof candidate.function.name !== 'string') return []
+    let args: unknown = candidate.function.arguments
+    if (typeof args === 'string') {
+      try { args = JSON.parse(args) } catch { return [] }
+    }
+    if (!args || typeof args !== 'object' || Array.isArray(args)) args = {}
+    return [{
+      id: typeof candidate.id === 'string' && candidate.id ? candidate.id : `call_${index + 1}`,
+      name: candidate.function.name,
+      arguments: args as Record<string, unknown>
+    }]
+  })
+}
 
 export class LocalCompletionClient {
   private readonly endpoint: URL
@@ -166,7 +255,7 @@ export class LocalCompletionClient {
       const response = await fetch(this.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(completionBody(request.messages, settings, false)),
+        body: JSON.stringify(completionBody(request, settings, false)),
         signal: controller.signal
       })
       const body = await response.text()
@@ -180,9 +269,19 @@ export class LocalCompletionClient {
       } catch {
         throw new Error('Local completion returned malformed JSON')
       }
-      const text = parsed.choices?.[0]?.message?.content
-      if (typeof text !== 'string' || text.length === 0) throw new Error('Local completion response did not contain assistant text')
-      return { text }
+      const choice = parsed.choices?.[0]
+      const text = typeof choice?.message?.content === 'string' ? choice.message.content : ''
+      const reasoningText = typeof choice?.message?.reasoning_content === 'string'
+        ? choice.message.reasoning_content
+        : typeof choice?.message?.reasoning === 'string' ? choice.message.reasoning : ''
+      const toolCalls = parseToolCalls(choice?.message?.tool_calls)
+      if (!text && !reasoningText && toolCalls.length === 0) throw new Error('Local completion response did not contain assistant text, reasoning, or tool calls')
+      return {
+        text,
+        toolCalls,
+        reasoningText: reasoningText || undefined,
+        finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : undefined
+      }
     } catch (error) {
       if (controller.signal.aborted) {
         const reason = controller.signal.reason
@@ -215,7 +314,7 @@ export class LocalCompletionClient {
     if (!response.ok) throw new Error(`Local title request failed with ${response.status}${body ? `: ${describeResponseBody(body)}` : ''}`)
     const parsed = JSON.parse(body) as PromptCompletionResponse
     if (typeof parsed.content !== 'string' || !parsed.content.trim()) throw new Error('Local title model returned an empty title')
-    return { text: parsed.content.trim() }
+    return { text: parsed.content.trim(), toolCalls: [] }
   }
 
   async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<void> {
@@ -229,7 +328,7 @@ export class LocalCompletionClient {
       const response = await fetch(this.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(completionBody(request.messages, settings, true)),
+        body: JSON.stringify(completionBody(request, settings, true)),
         signal: controller.signal
       })
       if (!response.ok) {

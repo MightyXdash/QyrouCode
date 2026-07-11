@@ -1,0 +1,270 @@
+import { randomUUID } from 'crypto'
+import { relative, resolve } from 'path'
+import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall } from './localCompletionClient'
+import { COMPACTION_SYSTEM_PROMPT, buildAgentSystemPrompt } from './agentPrompt'
+import { AgentToolbox, type AgentTaskRequest } from './agentTools'
+import { parseHealedToolCalls, stripToolCallMarkup } from './toolCallParser'
+
+export interface AgentCompletionProvider {
+  complete(request: LocalCompletionRequest): Promise<LocalCompletion>
+  stream?(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<string>
+}
+
+export interface AgentRunRequest extends Omit<LocalCompletionRequest, 'signal' | 'tools' | 'toolChoice'> {
+  threadId: string
+  projectPath: string
+  signal?: AbortSignal
+}
+
+export type AgentStateListener = (messages: readonly LocalChatMessage[]) => void
+
+export type AgentToolEvent =
+  | { type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: string }
+  | { type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
+  | { type: 'tool-error'; toolCallId: string; error: string }
+  | { type: 'files-changed'; files: string[] }
+  | { type: 'reasoning-summary'; summary: string }
+
+const MAX_AGENT_STEPS = 50
+const MAX_SUBAGENT_DEPTH = 2
+const COMPACTION_CHARACTER_THRESHOLD = 90_000
+const COMPACTION_RECENT_MESSAGES = 12
+const COMPACTION_MAX_TOKENS = 2_048
+const FINAL_MAX_TOKENS = 8_192
+const MAX_INTENT_REPROMPTS = 3
+const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
+
+function contentCharacters(messages: readonly LocalChatMessage[]): number {
+  return messages.reduce((total, message) => total + (typeof message.content === 'string' ? message.content.length : JSON.stringify(message.content ?? '').length) + (message.toolCalls ? JSON.stringify(message.toolCalls).length : 0), 0)
+}
+
+function callKey(call: LocalToolCall): string {
+  return `${call.name}:${JSON.stringify(call.arguments, Object.keys(call.arguments).sort())}`
+}
+
+function additionalSystemInstructions(messages: readonly LocalChatMessage[]): string[] {
+  return messages.flatMap((message) => message.role === 'system' && typeof message.content === 'string' && message.content ? [message.content] : [])
+}
+
+function conversationMessages(messages: readonly LocalChatMessage[]): LocalChatMessage[] {
+  return messages.filter((message) => message.role !== 'system').map((message) => ({ ...message }))
+}
+
+function isIntentWithoutAction(value: string): boolean {
+  const normalized = value.trim()
+  return normalized.length > 0 && normalized.length < 2_000 && INTENT_PATTERN.test(normalized)
+}
+
+function modelSettings(request: AgentRunRequest, enableThinking = request.enableThinking): Omit<LocalCompletionRequest, 'messages'> {
+  return {
+    enableThinking,
+    maxTokens: request.maxTokens,
+    temperature: request.temperature,
+    topP: request.topP,
+    topK: request.topK,
+    minP: request.minP,
+    presencePenalty: request.presencePenalty,
+    repetitionPenalty: request.repetitionPenalty,
+    signal: request.signal
+  }
+}
+
+export class AgentRuntime {
+  constructor(private readonly provider: AgentCompletionProvider) {}
+
+  async run(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void): Promise<void> {
+    const modifiedFiles = new Set<string>()
+    await this.runInternal(request, 0, false, onDelta, onState, onToolEvent, modifiedFiles)
+  }
+
+  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>): Promise<string> {
+    request.signal?.throwIfAborted()
+    const systemPrompt = buildAgentSystemPrompt({
+      projectPath: request.projectPath,
+      additionalInstructions: additionalSystemInstructions(request.messages),
+      readOnly
+    })
+    let messages = conversationMessages(request.messages)
+    const duplicateCalls = new Map<string, number>()
+    let intentReprompts = 0
+    let emptyCompletionRetries = 0
+    let enableThinking = request.enableThinking ?? false
+    const toolbox = new AgentToolbox({
+      projectPath: request.projectPath,
+      signal: request.signal,
+      readOnly,
+      runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, onToolEvent) : undefined
+    })
+    const allowedNames = new Set(toolbox.definitions.map((tool) => tool.name))
+
+    for (let step = 0; step < MAX_AGENT_STEPS; step += 1) {
+      request.signal?.throwIfAborted()
+      if (contentCharacters(messages) > COMPACTION_CHARACTER_THRESHOLD) {
+        messages = await this.compact(request, messages)
+        onState?.(messages)
+      }
+      const completion = await this.provider.complete({
+        ...modelSettings(request, enableThinking),
+        messages: [{ role: 'system', content: systemPrompt }, ...messages],
+        tools: toolbox.definitions,
+        toolChoice: 'auto',
+        signal: request.signal
+      })
+      const contentCalls = parseHealedToolCalls(completion.text, allowedNames)
+      const reasoningCalls = parseHealedToolCalls(completion.reasoningText ?? '', allowedNames)
+      const healedCalls = completion.toolCalls.length ? completion.toolCalls : contentCalls.length ? contentCalls : reasoningCalls
+      if (!healedCalls.length) {
+        const finalText = stripToolCallMarkup(completion.text)
+        if (!finalText && completion.reasoningText && emptyCompletionRetries < MAX_INTENT_REPROMPTS) {
+          emptyCompletionRetries += 1
+          enableThinking = false
+          messages.push({ role: 'user', content: 'Your previous turn contained only private reasoning and no visible answer or action. Continue with thinking disabled: use the available tools if needed, otherwise provide the completed final answer now.' })
+          continue
+        }
+        if (!finalText) throw new Error('The local model completed a turn without a visible answer or usable tool call')
+        if (isIntentWithoutAction(finalText) && intentReprompts < MAX_INTENT_REPROMPTS) {
+          intentReprompts += 1
+          messages.push({ role: 'assistant', content: finalText })
+          messages.push({ role: 'user', content: 'Continue now using the available tools. If no tool is needed, provide the completed final answer instead of describing future actions.' })
+          continue
+        }
+        if (completion.reasoningText && onToolEvent) {
+          onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
+        }
+        if (modifiedFiles && modifiedFiles.size > 0 && onToolEvent) {
+          onToolEvent({ type: 'files-changed', files: [...modifiedFiles] })
+        }
+        messages.push({ role: 'assistant', content: finalText, reasoningText: completion.reasoningText })
+        onState?.(messages)
+        await this.emitStreamedText(finalText, onDelta)
+        return finalText
+      }
+
+      intentReprompts = 0
+      emptyCompletionRetries = 0
+      if (completion.reasoningText && onToolEvent) {
+        onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
+      }
+      messages.push({
+        role: 'assistant',
+        content: stripToolCallMarkup(completion.text) || null,
+        toolCalls: healedCalls,
+        reasoningText: completion.reasoningText
+      })
+      for (const call of healedCalls) {
+        const key = callKey(call)
+        const repeats = (duplicateCalls.get(key) ?? 0) + 1
+        duplicateCalls.set(key, repeats)
+        let result: string
+        let error: string | undefined
+        if (repeats >= 3) {
+          result = 'Error: This exact tool call has already been attempted twice. Do not repeat it. Change approach or provide the best final answer now.'
+          error = result
+        } else {
+          try {
+            onToolEvent?.({ type: 'tool-call', toolCallId: call.id || randomUUID(), name: call.name, arguments: call.arguments })
+            result = await toolbox.execute(call.name, call.arguments)
+          } catch (err) {
+            const message = `Error: ${err instanceof Error ? err.message : 'Tool execution failed'}. Inspect this result and try a different approach.`
+            result = message
+            error = message
+          }
+        }
+        let filePath: string | undefined
+        if (!error && (call.name === 'write' || call.name === 'edit')) {
+          const raw = typeof call.arguments.filePath === 'string' ? call.arguments.filePath : undefined
+          filePath = raw ? relative(request.projectPath, resolve(request.projectPath, raw)).replace(/\\/g, '/') : undefined
+        }
+        if (!error && call.name === 'apply_patch' && typeof call.arguments.patch === 'string') {
+          const patchPaths = extractPatchPaths(call.arguments.patch, request.projectPath)
+          for (const patchPath of patchPaths) {
+            modifiedFiles?.add(patchPath)
+            if (!filePath) filePath = patchPath
+          }
+        }
+        if (filePath) modifiedFiles?.add(filePath)
+        if (error) {
+          onToolEvent?.({ type: 'tool-error', toolCallId: call.id || randomUUID(), error })
+        } else {
+          onToolEvent?.({ type: 'tool-result', toolCallId: call.id || randomUUID(), result, filePath })
+        }
+        messages.push({ role: 'tool', name: call.name, toolCallId: call.id || randomUUID(), content: result, filePath })
+      }
+      onState?.(messages)
+    }
+
+    const completion = await this.provider.complete({
+      ...modelSettings(request, false),
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...messages,
+        { role: 'user', content: 'You have reached the tool-step limit. Do not call more tools. Provide the best accurate final response from the work completed, including any unresolved blocker.' }
+      ],
+      tools: toolbox.definitions,
+      toolChoice: 'none',
+      maxTokens: Math.min(request.maxTokens ?? FINAL_MAX_TOKENS, FINAL_MAX_TOKENS),
+      signal: request.signal
+    })
+    const finalText = stripToolCallMarkup(completion.text)
+    if (completion.reasoningText && onToolEvent) {
+      onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
+    }
+    if (modifiedFiles && modifiedFiles.size > 0 && onToolEvent) {
+      onToolEvent({ type: 'files-changed', files: [...modifiedFiles] })
+    }
+    messages.push({ role: 'assistant', content: finalText, reasoningText: completion.reasoningText })
+    onState?.(messages)
+    await this.emitStreamedText(finalText, onDelta)
+    return finalText
+  }
+
+  private async compact(request: AgentRunRequest, messages: LocalChatMessage[]): Promise<LocalChatMessage[]> {
+    const boundary = Math.max(1, messages.length - COMPACTION_RECENT_MESSAGES)
+    const older = messages.slice(0, boundary)
+    const recent = messages.slice(boundary)
+    const completion = await this.provider.complete({
+      messages: [
+        { role: 'system', content: COMPACTION_SYSTEM_PROMPT },
+        { role: 'user', content: older.map((message) => `${message.role.toUpperCase()}: ${typeof message.content === 'string' ? message.content : JSON.stringify(message.content ?? message.toolCalls ?? [])}`).join('\n\n') }
+      ],
+      enableThinking: false,
+      maxTokens: COMPACTION_MAX_TOKENS,
+      temperature: 0,
+      signal: request.signal
+    })
+    return [
+      { role: 'user', content: `<previous-context-summary>\n${completion.text}\n</previous-context-summary>` },
+      ...recent
+    ]
+  }
+
+  private runSubagent(parent: AgentRunRequest, task: AgentTaskRequest, depth: number, modifiedFiles?: Set<string>, onToolEvent?: (event: AgentToolEvent) => void): Promise<string> {
+    return this.runInternal({
+      ...parent,
+      messages: [
+        { role: 'system', content: `Subagent task: ${task.description}. Return a single concise result to the parent agent. Include exact paths and evidence. Complete the requested work autonomously.` },
+        { role: 'user', content: task.prompt }
+      ]
+    }, depth, task.subagentType === 'explore', () => undefined, undefined, onToolEvent, modifiedFiles)
+  }
+
+  private async emitStreamedText(text: string, onDelta: (delta: string) => void): Promise<void> {
+    if (!text) return
+    for (let i = 0; i < text.length; i += 3) {
+      onDelta(text.slice(i, i + 3))
+      await new Promise((resolve) => setTimeout(resolve, 8))
+    }
+  }
+}
+
+function extractPatchPaths(patch: string, projectPath: string): string[] {
+  const paths = new Set<string>()
+  for (const line of patch.split('\n')) {
+    const header = line.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/)
+    if (header) {
+      const patchPath = header[1].trim()
+      paths.add(relative(projectPath, resolve(projectPath, patchPath)).replace(/\\/g, '/'))
+    }
+  }
+  return [...paths]
+}

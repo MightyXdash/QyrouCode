@@ -49,6 +49,36 @@ test('sends a bounded non-streaming OpenAI-compatible chat completion request', 
   }
 })
 
+test('sends multimodal image content to the local OpenAI-compatible endpoint', async () => {
+  let receivedBody = ''
+  const server = await startServer((request, response) => {
+    request.on('data', (chunk: Buffer) => { receivedBody += chunk.toString() })
+    request.on('end', () => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ choices: [{ message: { content: 'I can see the image.' } }] }))
+    })
+  })
+
+  try {
+    const imageUrl = 'data:image/png;base64,iVBORw0KGgo='
+    const completion = await new LocalCompletionClient(server.url).complete({
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'What is shown here?' },
+          { type: 'image_url', image_url: { url: imageUrl } }
+        ]
+      }]
+    })
+    const body = JSON.parse(receivedBody)
+    assert.equal(body.messages[0].content[0].text, 'What is shown here?')
+    assert.equal(body.messages[0].content[1].image_url.url, imageUrl)
+    assert.equal(completion.text, 'I can see the image.')
+  } finally {
+    await server.close()
+  }
+})
+
 test('returns a diagnostic error when the local runtime rejects a completion request', async () => {
   const server = await startServer((_request, response) => {
     response.writeHead(503, { 'content-type': 'application/json' })
@@ -82,6 +112,65 @@ test('emits deltas from a fragmented server-sent event response', async () => {
       (delta) => deltas.push(delta)
     )
     assert.deepEqual(deltas, ['Supra', 'Code'])
+  } finally {
+    await server.close()
+  }
+})
+
+test('sends tool schemas and parses native local-model tool calls', async () => {
+  let receivedBody = ''
+  const server = await startServer((request, response) => {
+    request.on('data', (chunk: Buffer) => { receivedBody += chunk.toString() })
+    request.on('end', () => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: {
+            content: null,
+            tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read', arguments: '{"filePath":"src/app.ts"}' } }]
+          }
+        }]
+      }))
+    })
+  })
+
+  try {
+    const client = new LocalCompletionClient(server.url)
+    const completion = await client.complete({
+      messages: [{ role: 'user', content: 'Inspect the app.' }],
+      tools: [{ name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] } }]
+    })
+    const body = JSON.parse(receivedBody)
+    assert.equal(body.tool_choice, 'auto')
+    assert.equal(body.tools[0].function.name, 'read')
+    assert.equal(completion.text, '')
+    assert.equal(completion.finishReason, 'tool_calls')
+    assert.deepEqual(completion.toolCalls, [{ id: 'call_1', name: 'read', arguments: { filePath: 'src/app.ts' } }])
+  } finally {
+    await server.close()
+  }
+})
+
+test('preserves reasoning-only completions for agent recovery without exposing them as assistant text', async () => {
+  const server = await startServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({
+      choices: [{
+        finish_reason: 'stop',
+        message: { content: null, reasoning_content: 'private model reasoning' }
+      }]
+    }))
+  })
+
+  try {
+    const completion = await new LocalCompletionClient(server.url).complete({
+      messages: [{ role: 'user', content: 'Inspect the project.' }],
+      enableThinking: true
+    })
+    assert.equal(completion.text, '')
+    assert.equal(completion.reasoningText, 'private model reasoning')
+    assert.deepEqual(completion.toolCalls, [])
   } finally {
     await server.close()
   }
