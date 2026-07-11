@@ -368,7 +368,17 @@
 .conversation-inner { width: min(calc(100% - (var(--app-page-padding) * 2)), var(--app-content-max-width)); min-height: 100%; margin: 0 auto; padding: 54px 0 var(--conversation-bottom-clearance); }
 .conversation h1 { margin: 0 0 34px; color: var(--text-strong); font-size: 18px; font-weight: 500; line-height: 1.2; }
 .chat-message { color: var(--text-strong); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
-.user-message { width: fit-content; max-width: 82%; margin: 0 0 30px auto; padding: 9px 13px; border-radius: var(--radius-xl); background: var(--surface-selected); }
+.user-message { width: fit-content; max-width: 82%; margin: 0 0 30px auto; padding: 9px 13px; border-radius: var(--radius-xl); background: var(--surface-selected); position: relative; user-select: text; }
+
+.copy-user-message { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-weak); opacity: 0; cursor: pointer; transition: opacity 150ms ease, color 150ms ease, background 150ms ease; }
+.user-message:hover .copy-user-message { opacity: 1; }
+.copy-user-message:hover { color: var(--text-strong); background: var(--surface-selected); }
+.copy-user-message-icon { pointer-events: none; }
+  .user-message:hover .copy-user-message { opacity: 1; }
+  .copy-user-message { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border: none; background: var(--surface-raised); border-radius: var(--radius-sm); color: var(--text-weak); display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity 120ms ease, color 120ms ease, background 120ms ease; }
+  .copy-user-message:hover { color: var(--text-strong); background: var(--surface-selected); }
+  .copy-user-message:active { transform: scale(0.95); }
+  .copy-user-message-icon { width: 14px; height: 14px; }
 .assistant-message { margin: 0 0 34px; }
 .assistant-message.pending { min-height: 22px; color: var(--text-weak); }
 .activity-label { position: relative; display: inline-block; max-width: 100%; overflow: hidden; color: var(--activity-text-base); font-weight: 400; letter-spacing: 0.005em; text-overflow: ellipsis; white-space: nowrap; }

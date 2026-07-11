@@ -8,7 +8,7 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, Check, X, Clock, CheckCircle, XCircle, Loader2, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, Trash2 } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, Check, X, Clock, CheckCircle, XCircle, Loader2, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, Trash2, Copy } from 'lucide-react'
 import './MainApp.css'
 
 const COMPOSER_SHAPE_WIDTH = 760
@@ -1156,6 +1156,9 @@ export default function MainApp(): JSX.Element {
                 if (message.role === 'user') {
                   return (
                     <div className="chat-message user-message" key={message.id}>
+                      <button className="copy-user-message" onClick={() => navigator.clipboard.writeText(message.content)} title="Copy message">
+                        <Copy className="copy-user-message-icon" width={14} height={14} />
+                      </button>
                       {message.attachments && message.attachments.length > 0 && (
                         <div className="message-attachments">
                           {message.attachments.map((attachment) => <img src={attachment.dataUrl} alt={attachment.name} title={attachment.name} key={attachment.id} />)}
