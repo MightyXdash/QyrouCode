@@ -83,5 +83,27 @@ export const INITIAL_RUNTIME_ARTIFACTS = validateRuntimeArtifacts([
     sha256: '0bed19f882c98c452998311de58121cf74ec572eec3343cbcd33cc507766c359',
     executablePath: 'llama-server',
     companionLibraries: []
+  },
+  {
+    id: 'llama.cpp-b9951-linux-x64-cuda',
+    release: 'b9951',
+    platform: 'linux',
+    architecture: 'x64',
+    backend: 'cuda',
+    sourceUrl: 'https://codeload.github.com/ggml-org/llama.cpp/tar.gz/082b326fc76f6e9bbb835b3920a3022bfdb6691c',
+    sha256: '0bed19f882c98c452998311de58121cf74ec572eec3343cbcd33cc507766c359',
+    executablePath: 'llama-server',
+    companionLibraries: []
+  },
+  {
+    id: 'llama.cpp-b9951-linux-x64-vulkan',
+    release: 'b9951',
+    platform: 'linux',
+    architecture: 'x64',
+    backend: 'vulkan',
+    sourceUrl: 'https://codeload.github.com/ggml-org/llama.cpp/tar.gz/082b326fc76f6e9bbb835b3920a3022bfdb6691c',
+    sha256: '0bed19f882c98c452998311de58121cf74ec572eec3343cbcd33cc507766c359',
+    executablePath: 'llama-server',
+    companionLibraries: []
   }
 ])

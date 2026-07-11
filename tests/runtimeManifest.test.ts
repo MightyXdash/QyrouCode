@@ -35,6 +35,16 @@ test('pins the first runtime source to a llama.cpp release commit and archive di
   assert.equal(artifact?.executablePath, 'llama-server')
 })
 
+test('pins CUDA and Vulkan variants to the same reviewed llama.cpp source', () => {
+  const cuda = getRuntimeArtifact(INITIAL_RUNTIME_ARTIFACTS, 'linux', 'x64', 'cuda')
+  const vulkan = getRuntimeArtifact(INITIAL_RUNTIME_ARTIFACTS, 'linux', 'x64', 'vulkan')
+
+  assert.equal(cuda?.id, 'llama.cpp-b9951-linux-x64-cuda')
+  assert.equal(vulkan?.id, 'llama.cpp-b9951-linux-x64-vulkan')
+  assert.equal(cuda?.sourceUrl, 'https://codeload.github.com/ggml-org/llama.cpp/tar.gz/082b326fc76f6e9bbb835b3920a3022bfdb6691c')
+  assert.equal(vulkan?.sha256, '0bed19f882c98c452998311de58121cf74ec572eec3343cbcd33cc507766c359')
+})
+
 test('rejects unpinned runtime URLs and hashes', () => {
   assert.throws(
     () => validateRuntimeArtifacts([{ ...baseArtifact, sourceUrl: 'http://example.test/llama.tar.gz' }]),

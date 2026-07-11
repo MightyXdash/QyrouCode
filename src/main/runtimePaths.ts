@@ -1,7 +1,8 @@
 import { join } from 'node:path'
 import type { RuntimeArtifact } from '../shared/runtimeManifest'
 
-const runtimeDirectoryName = (artifact: RuntimeArtifact): string => `${artifact.platform}-${artifact.architecture}`
+const runtimeDirectoryName = (artifact: RuntimeArtifact): string =>
+  `${artifact.platform}-${artifact.architecture}-${artifact.backend}`
 
 export const developmentRuntimeDirectory = (appPath: string, artifact: RuntimeArtifact): string =>
   join(appPath, 'vendor', 'llama.cpp', runtimeDirectoryName(artifact))
