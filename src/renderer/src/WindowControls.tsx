@@ -36,7 +36,7 @@ declare global {
       getAgentSession: (threadId: string, projectPath: string) => Promise<PersistedAgentSession | null>
       getWorkspaceViewState: () => Promise<WorkspaceViewState>
       saveWorkspaceViewState: (state: WorkspaceViewState) => Promise<WorkspaceViewState>
-      startDownloadedModel: (repoId: string, filename: string) => Promise<LlamaRuntimeStatus>
+      startDownloadedModel: (repoId: string, filename: string, requireVision?: boolean) => Promise<LlamaRuntimeStatus>
       generateChatTitle: (userMessage: string) => Promise<string>
       checkModelCache: (modelId: string) => Promise<boolean>
       downloadModel: (repoId: string, ggufFile: string) => Promise<void>

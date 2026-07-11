@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { isAbsolute, relative, resolve } from 'path'
-import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall } from './localCompletionClient'
+import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall, LocalToolDefinition } from './localCompletionClient'
 import type { FileChangeDisplay } from '../shared/chat'
 import { COMPACTION_SYSTEM_PROMPT, buildAgentSystemPrompt } from './agentPrompt'
 import { AgentToolbox, type AgentTaskRequest } from './agentTools'
@@ -25,6 +25,7 @@ export type AgentToolEvent =
   | { type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
   | { type: 'tool-error'; toolCallId: string; error: string }
   | { type: 'files-changed'; files: FileChangeDisplay[] }
+  | { type: 'progress-update'; summary: string }
   | { type: 'reasoning-summary'; summary: string }
 
 const MAX_AGENT_STEPS = 50
@@ -34,10 +35,24 @@ const COMPACTION_RECENT_MESSAGES = 12
 const COMPACTION_MAX_TOKENS = 2_048
 const FINAL_MAX_TOKENS = 8_192
 const MAX_INTENT_REPROMPTS = 3
+const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
+const TASK_STATE_TOOL_NAME = 'cur_task_state'
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
 
+function messageContentCharacters(content: LocalChatMessage['content']): number {
+  if (typeof content === 'string') return content.length
+  if (!Array.isArray(content)) return 0
+  return content.reduce((total, part) => total + (part.type === 'text' ? part.text.length : IMAGE_CONTEXT_CHARACTER_WEIGHT), 0)
+}
+
 function contentCharacters(messages: readonly LocalChatMessage[]): number {
-  return messages.reduce((total, message) => total + (typeof message.content === 'string' ? message.content.length : JSON.stringify(message.content ?? '').length) + (message.toolCalls ? JSON.stringify(message.toolCalls).length : 0), 0)
+  return messages.reduce((total, message) => total + messageContentCharacters(message.content) + (message.toolCalls ? JSON.stringify(message.toolCalls).length : 0), 0)
+}
+
+function contentForCompaction(content: LocalChatMessage['content']): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content.map((part) => part.type === 'text' ? part.text : '[attached image]').join('\n')
 }
 
 function callKey(call: LocalToolCall): string {
@@ -97,6 +112,8 @@ export class AgentRuntime {
     let intentReprompts = 0
     let emptyCompletionRetries = 0
     let enableThinking = request.enableThinking ?? false
+    let taskStateReady = false
+    let currentTaskState = ''
     const toolbox = new AgentToolbox({
       projectPath: request.projectPath,
       signal: request.signal,
@@ -120,7 +137,8 @@ export class AgentRuntime {
       })
       const contentCalls = parseHealedToolCalls(completion.text, allowedNames)
       const reasoningCalls = parseHealedToolCalls(completion.reasoningText ?? '', allowedNames)
-      const healedCalls = completion.toolCalls.length ? completion.toolCalls : contentCalls.length ? contentCalls : reasoningCalls
+      const availableCalls = completion.toolCalls.length ? completion.toolCalls : contentCalls.length ? contentCalls : reasoningCalls
+      const healedCalls = availableCalls.slice(0, 1)
       if (!healedCalls.length) {
         const finalText = stripToolCallMarkup(completion.text)
         if (!finalText && completion.reasoningText && emptyCompletionRetries < MAX_INTENT_REPROMPTS) {
@@ -147,6 +165,23 @@ export class AgentRuntime {
 
       intentReprompts = 0
       emptyCompletionRetries = 0
+      const selectedCall = healedCalls[0]
+      if (onToolEvent && selectedCall.name !== TASK_STATE_TOOL_NAME && !taskStateReady) {
+        const definition = toolbox.definitions.find((tool) => tool.name === TASK_STATE_TOOL_NAME)
+        if (definition) {
+          const stateCall = await this.requestTaskState(request, messages, definition, selectedCall.name)
+          const stateMessage = typeof stateCall.arguments.message === 'string' ? stateCall.arguments.message.trim() : ''
+          onToolEvent({ type: 'tool-call', toolCallId: stateCall.id, name: stateCall.name, arguments: stateCall.arguments, summary: 'I’m sharing current progress' })
+          if (stateMessage) await this.emitProgressUpdate(stateMessage, onToolEvent)
+          const stateResult = await toolbox.execute(stateCall.name, stateCall.arguments)
+          onToolEvent({ type: 'tool-result', toolCallId: stateCall.id, result: stateResult })
+          messages.push({ role: 'assistant', content: null, toolCalls: [stateCall] })
+          messages.push({ role: 'tool', name: stateCall.name, toolCallId: stateCall.id, content: stateResult })
+          taskStateReady = true
+          currentTaskState = stateMessage
+          onState?.(messages)
+        }
+      }
       if (completion.reasoningText && onToolEvent) {
         onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
       }
@@ -169,8 +204,18 @@ export class AgentRuntime {
           error = result
         } else {
           try {
-            onToolEvent?.({ type: 'tool-call', toolCallId: call.id || randomUUID(), name: call.name, arguments: call.arguments })
+            const isTaskState = call.name === TASK_STATE_TOOL_NAME
+            const taskStateMessage = isTaskState && typeof call.arguments.message === 'string' ? call.arguments.message.trim() : ''
+            const uiMessage = isTaskState
+              ? 'I’m sharing current progress'
+              : onToolEvent ? await this.resolveUiMessage(request, messages, call, currentTaskState) : undefined
+            onToolEvent?.({ type: 'tool-call', toolCallId: call.id || randomUUID(), name: call.name, arguments: call.arguments, summary: uiMessage })
+            if (isTaskState && taskStateMessage && onToolEvent) await this.emitProgressUpdate(taskStateMessage, onToolEvent)
             result = await toolbox.execute(call.name, call.arguments)
+            if (isTaskState) {
+              taskStateReady = true
+              currentTaskState = taskStateMessage
+            }
           } catch (err) {
             const message = `Error: ${err instanceof Error ? err.message : 'Tool execution failed'}. Inspect this result and try a different approach.`
             result = message
@@ -196,6 +241,10 @@ export class AgentRuntime {
           onToolEvent?.({ type: 'tool-result', toolCallId: call.id || randomUUID(), result, filePath })
         }
         messages.push({ role: 'tool', name: call.name, toolCallId: call.id || randomUUID(), content: result, filePath })
+        if (call.name !== TASK_STATE_TOOL_NAME) {
+          taskStateReady = false
+          currentTaskState = ''
+        }
       }
       onState?.(messages)
     }
@@ -229,7 +278,7 @@ export class AgentRuntime {
     const completion = await this.provider.complete({
       messages: [
         { role: 'system', content: COMPACTION_SYSTEM_PROMPT },
-        { role: 'user', content: older.map((message) => `${message.role.toUpperCase()}: ${typeof message.content === 'string' ? message.content : JSON.stringify(message.content ?? message.toolCalls ?? [])}`).join('\n\n') }
+        { role: 'user', content: older.map((message) => `${message.role.toUpperCase()}: ${contentForCompaction(message.content) || JSON.stringify(message.toolCalls ?? [])}`).join('\n\n') }
       ],
       enableThinking: false,
       maxTokens: COMPACTION_MAX_TOKENS,
@@ -240,6 +289,66 @@ export class AgentRuntime {
       { role: 'user', content: `<previous-context-summary>\n${completion.text}\n</previous-context-summary>` },
       ...recent
     ]
+  }
+
+  private async requestTaskState(request: AgentRunRequest, messages: readonly LocalChatMessage[], definition: LocalToolDefinition, nextToolName: string): Promise<LocalToolCall> {
+    const completion = await this.provider.complete({
+      ...modelSettings(request, false),
+      messages: [
+        ...messages,
+        {
+          role: 'user',
+          content: `Call cur_task_state now before the ${nextToolName} tool. Put a natural roughly 60–65-word user-facing update in its message argument explaining what you are about to do or what the current subtask established. Do not call any other tool.`
+        }
+      ],
+      tools: [definition],
+      toolChoice: 'auto',
+      enableThinking: false,
+      maxTokens: 180,
+      signal: request.signal
+    })
+    const calls = completion.toolCalls.length
+      ? completion.toolCalls
+      : parseHealedToolCalls(completion.text, new Set([TASK_STATE_TOOL_NAME]))
+    const call = calls.find((candidate) => candidate.name === TASK_STATE_TOOL_NAME)
+    if (call && typeof call.arguments.message === 'string' && call.arguments.message.trim()) return call
+    return {
+      id: randomUUID(),
+      name: TASK_STATE_TOOL_NAME,
+      arguments: {
+        message: stripToolCallMarkup(completion.text).trim() || `I’m preparing the next ${nextToolName} step now. I’ll use it to gather the concrete information needed for this task, review the result carefully, and then share what changed or what I found before moving forward. This keeps the work visible, makes the current direction clear, and helps each action follow naturally from the evidence already available.`
+      }
+    }
+  }
+
+  private async resolveUiMessage(request: AgentRunRequest, messages: readonly LocalChatMessage[], call: LocalToolCall, progress: string): Promise<string | undefined> {
+    if (call.name === 'web_search' || call.name === 'web_fetch') return undefined
+    const supplied = typeof call.arguments.ui_message === 'string' ? call.arguments.ui_message.trim() : ''
+    if (supplied) return supplied.split(/\s+/).slice(0, 5).join(' ')
+    const completion = await this.provider.complete({
+      ...modelSettings(request, false),
+      messages: [
+        ...messages,
+        {
+          role: 'user',
+          content: `Write only a natural first-person UI activity message for the ${call.name} tool call described by this progress update: ${progress}. Use fewer than six words. Do not add punctuation, quotes, a heading, explanation, or a tool call.`
+        }
+      ],
+      tools: [],
+      toolChoice: 'none',
+      enableThinking: false,
+      maxTokens: 24,
+      signal: request.signal
+    })
+    const generated = stripToolCallMarkup(completion.text).replace(/^["'“”]+|["'“”.!]+$/g, '').trim()
+    return generated ? generated.split(/\s+/).slice(0, 5).join(' ') : `I’m using ${call.name}`
+  }
+
+  private async emitProgressUpdate(progress: string, onToolEvent: (event: AgentToolEvent) => void): Promise<void> {
+    for (let index = 0; index < progress.length; index += 3) {
+      onToolEvent({ type: 'progress-update', summary: progress.slice(0, index + 3) })
+      await new Promise((resolve) => setTimeout(resolve, 8))
+    }
   }
 
   private runSubagent(parent: AgentRunRequest, task: AgentTaskRequest, depth: number, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, onToolEvent?: (event: AgentToolEvent) => void): Promise<string> {

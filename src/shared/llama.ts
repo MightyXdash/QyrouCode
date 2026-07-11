@@ -12,6 +12,7 @@ export interface LlamaRuntimeStatus {
   backend: LlamaBackend
   executablePath?: string
   modelPath?: string
+  mmprojPath?: string
   message?: string
 }
 

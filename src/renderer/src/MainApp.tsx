@@ -1,26 +1,35 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { MODEL_LIST } from './modelCatalog'
 import { DEFAULT_RESPONSE_STYLE, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
 import { WINDOW_COMMANDS } from '../../shared/windowCommands'
 import type { Project } from '../../shared/projects'
-import { MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatMessage, type ChatThread, type ToolCallDisplay } from '../../shared/chat'
+import { MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatMessage, type ChatThread, type ToolCallDisplay } from '../../shared/chat'
 import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, Check, X, Clock, CheckCircle, XCircle, Loader2, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, Trash2, Copy } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy } from 'lucide-react'
 import './MainApp.css'
 
-const COMPOSER_SHAPE_WIDTH = 760
-const COMPOSER_CORNER_RADIUS = 32
-const COMPOSER_CURVE_UNIT_DIVISOR = 16
 const AUTO_SCROLL_THRESHOLD = 72
 const MAX_ACTIVITY_COMMAND_CHARACTERS = 40
 const WEB_ACTIVITY_HOLD_MS = 2_500
 const WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND = 150
+const PROJECT_THREAD_STAGGER_MS = 45
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 
+type ProjectThreadAnimationStyle = CSSProperties & {
+  '--thread-collapse-delay': string
+  '--thread-expand-delay': string
+}
+
+const projectThreadAnimationStyle = (index: number, count: number): ProjectThreadAnimationStyle => ({
+  '--thread-collapse-delay': `${(count - index - 1) * PROJECT_THREAD_STAGGER_MS}ms`,
+  '--thread-expand-delay': `${index * PROJECT_THREAD_STAGGER_MS}ms`
+})
+
 const toolIconMap: Record<string, typeof Terminal> = {
+  cur_task_state: Clock,
   bash: Terminal,
   write: FilePlus,
   edit: FileEdit,
@@ -79,19 +88,6 @@ const TITLEBAR_MENUS: Record<TitlebarMenuId, TitlebarMenuItem[]> = {
   ]
 }
 
-function ComposerShape({ height }: { height: number }): JSX.Element {
-  const radius = Math.min(COMPOSER_CORNER_RADIUS, height / 2)
-  const unit = radius / COMPOSER_CURVE_UNIT_DIVISOR
-  const right = COMPOSER_SHAPE_WIDTH
-  const bottom = height
-  const d = `M${radius} 0H${right - radius}C${right - (unit * 7)} 0 ${right - (unit * 3)} ${unit * 2} ${right - unit} ${unit * 7}C${right} ${unit * 9} ${right} ${unit * 12} ${right} ${radius}V${bottom - radius}C${right} ${bottom - (unit * 12)} ${right} ${bottom - (unit * 9)} ${right - unit} ${bottom - (unit * 7)}C${right - (unit * 3)} ${bottom - (unit * 2)} ${right - (unit * 7)} ${bottom} ${right - radius} ${bottom}H${radius}C${unit * 7} ${bottom} ${unit * 3} ${bottom - (unit * 2)} ${unit} ${bottom - (unit * 7)}C0 ${bottom - (unit * 9)} 0 ${bottom - (unit * 12)} 0 ${bottom - radius}V${radius}C0 ${unit * 12} 0 ${unit * 9} ${unit} ${unit * 7}C${unit * 3} ${unit * 2} ${unit * 7} 0 ${radius} 0Z`
-  return (
-    <svg className="composer-shape" viewBox={`0 0 ${COMPOSER_SHAPE_WIDTH} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-      <path d={d} vectorEffect="non-scaling-stroke" />
-    </svg>
-  )
-}
-
 function modelDisplayName(modelName: string): string {
   return modelName.split('/').at(-1) ?? modelName
 }
@@ -104,7 +100,9 @@ function truncateCommand(command: string): string {
 }
 
 function runningToolLabel(toolCall: ToolCallDisplay): string {
+  if (toolCall.name === 'cur_task_state') return 'Sharing current task state'
   if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searching the web'
+  if (toolCall.uiMessage) return toolCall.uiMessage.split(/\s+/).slice(0, 5).join(' ')
   if (toolCall.name === 'bash') {
     const command = typeof toolCall.arguments.command === 'string' ? truncateCommand(toolCall.arguments.command) : 'command'
     return `Running ${command}`
@@ -114,6 +112,22 @@ function runningToolLabel(toolCall: ToolCallDisplay): string {
     return filePath ? `Editing ${filePath}` : 'Editing'
   }
   return 'Thinking'
+}
+
+function completedToolLabel(toolCall: ToolCallDisplay): string {
+  if (toolCall.name === 'cur_task_state') return 'Shared current task state'
+  if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searched the web'
+  if (toolCall.name === 'read') return 'Viewed a file'
+  if (toolCall.name === 'grep' || toolCall.name === 'glob' || toolCall.name === 'list') return 'Looked through the project'
+  if (toolCall.name === 'write' || toolCall.name === 'edit') return 'Edited one file'
+  if (toolCall.name === 'apply_patch') {
+    const patch = typeof toolCall.arguments.patch === 'string' ? toolCall.arguments.patch : ''
+    const changedFiles = patch.match(/^\*\*\* (?:Add|Update|Delete) File:/gm)?.length ?? 0
+    return changedFiles > 1 ? 'Edited multiple files' : 'Edited one file'
+  }
+  if (toolCall.name === 'bash') return 'Ran a command'
+  if (toolCall.name === 'task') return 'Completed delegated work'
+  return 'Completed a tool call'
 }
 
 function webSearchDetail(toolCall: ToolCallDisplay): string | undefined {
@@ -131,6 +145,38 @@ function sourceLineCount(content: string): number {
   if (!content) return 0
   const lines = content.replace(/\r\n/g, '\n').split('\n')
   return lines.at(-1) === '' ? lines.length - 1 : lines.length
+}
+
+const blobDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Could not read the pasted image'))
+  reader.onerror = () => reject(reader.error ?? new Error('Could not read the pasted image'))
+  reader.readAsDataURL(blob)
+})
+
+async function pastedImageAttachment(file: File): Promise<ChatAttachment> {
+  if (!file.type.startsWith('image/')) throw new Error('Only image files can be attached')
+  if (file.size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('Each image must be 10 MB or smaller')
+  const bitmap = await createImageBitmap(file)
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Could not prepare the pasted image')
+    context.drawImage(bitmap, 0, 0)
+    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Could not prepare the pasted image')), 'image/png'))
+    if (blob.size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('The converted image must be 10 MB or smaller')
+    return {
+      id: crypto.randomUUID(),
+      name: file.name || 'Pasted image.png',
+      mimeType: 'image/png',
+      dataUrl: await blobDataUrl(blob),
+      size: blob.size
+    }
+  } finally {
+    bitmap.close()
+  }
 }
 
 function normalizedDisplayPath(path: string): string {
@@ -225,7 +271,6 @@ export default function MainApp(): JSX.Element {
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('Medium')
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
   const [openTitlebarMenu, setOpenTitlebarMenu] = useState<TitlebarMenuId | null>(null)
-  const [composerHeight, setComposerHeight] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [theme, setTheme] = useState<ThemePreference>('system')
   const [responseStylePreference, setResponseStylePreference] = useState<ResponseStylePreference>({ style: DEFAULT_RESPONSE_STYLE, customInstruction: '' })
@@ -324,6 +369,16 @@ export default function MainApp(): JSX.Element {
     }
   }
 
+  const holdCompletedActivity = (assistantId: string, label: string): void => {
+    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
+    const until = Date.now() + WEB_ACTIVITY_HOLD_MS
+    setHeldActivity({ assistantId, label, until })
+    activityHoldTimerRef.current = setTimeout(() => {
+      activityHoldTimerRef.current = null
+      setHeldActivity((current) => current?.assistantId === assistantId && current.until <= Date.now() ? null : current)
+    }, WEB_ACTIVITY_HOLD_MS)
+  }
+
   useEffect(() => {
     void window.api.getTheme().then(setTheme)
     void window.api.getResponseStylePreference().then(setResponseStylePreference)
@@ -351,6 +406,7 @@ export default function MainApp(): JSX.Element {
                 id: tc.id,
                 name: tc.name,
                 arguments: tc.arguments,
+                uiMessage: typeof tc.arguments.ui_message === 'string' ? tc.arguments.ui_message : undefined,
                 result: undefined,
                 filePath: undefined
               }))
@@ -490,7 +546,7 @@ export default function MainApp(): JSX.Element {
         content: '',
         timestamp: Date.now(),
         parentAssistantId: assistantId,
-        toolCalls: [{ id: event.toolCallId, name: event.name, arguments: event.arguments }]
+        toolCalls: [{ id: event.toolCallId, name: event.name, arguments: event.arguments, uiMessage: event.summary }]
       }
       const lastIdx = current.messages.length - 1
       const messages = [
@@ -511,6 +567,8 @@ export default function MainApp(): JSX.Element {
       const completedToolCall = completedToolMessage?.toolCalls?.find((toolCall) => toolCall.id === event.toolCallId)
       if (completedToolCall && WEB_TOOL_NAMES.has(completedToolCall.name) && completedToolMessage?.parentAssistantId) {
         holdWebActivity(completedToolMessage.parentAssistantId, false)
+      } else if (completedToolCall && completedToolMessage?.parentAssistantId) {
+        holdCompletedActivity(completedToolMessage.parentAssistantId, completedToolLabel(completedToolCall))
       }
       const messages = current.messages.map((message) =>
         message.role === 'tool' && message.toolCalls?.some((tc) => tc.id === event.toolCallId)
@@ -527,6 +585,44 @@ export default function MainApp(): JSX.Element {
       activeThreadRef.current = updated
       setActiveThread(updated)
       saveThreadDebounced()
+      return
+    }
+    if (event.type === 'progress-update') {
+      const current = activeThreadRef.current
+      if (!current) return
+      const pendingAssistant = [...current.messages].reverse().find((message) => message.role === 'assistant' && message.status === 'pending')
+      if (!pendingAssistant) return
+      const lastProgressIndex = current.messages.findLastIndex((message) =>
+        message.role === 'tool' && message.content === '__progress__' && message.parentAssistantId === pendingAssistant.id
+      )
+      const lastToolCallIndex = current.messages.findLastIndex((message) =>
+        message.role === 'tool' && message.parentAssistantId === pendingAssistant.id && (message.toolCalls?.length ?? 0) > 0
+      )
+      const existingProgress = lastProgressIndex > lastToolCallIndex ? current.messages[lastProgressIndex] : undefined
+      if (existingProgress) {
+        const messages = current.messages.map((message) => message.id === existingProgress.id
+          ? { ...message, reasoningSummary: event.summary }
+          : message)
+        const updated = { ...current, messages, updatedAt: Date.now() }
+        activeThreadRef.current = updated
+        setActiveThread(updated)
+        saveThreadDebounced()
+        return
+      }
+      const progressMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'tool',
+        content: '__progress__',
+        timestamp: Date.now(),
+        parentAssistantId: pendingAssistant.id,
+        reasoningSummary: event.summary
+      }
+      const lastIdx = current.messages.length - 1
+      const messages = [...current.messages.slice(0, lastIdx), progressMessage, current.messages[lastIdx]]
+      const updated = { ...current, messages, updatedAt: Date.now() }
+      activeThreadRef.current = updated
+      setActiveThread(updated)
+      saveThreadImmediate()
       return
     }
     if (event.type === 'tool-error') {
@@ -690,8 +786,6 @@ export default function MainApp(): JSX.Element {
     if (!textarea) return
     textarea.style.height = 'auto'
     textarea.style.height = `${textarea.scrollHeight}px`
-    const height = promptComposerRef.current?.offsetHeight
-    if (height) setComposerHeight((current) => current === height ? current : height)
   }, [prompt])
 
   const runTitlebarAction = (action: TitlebarAction): void => {
@@ -870,27 +964,6 @@ export default function MainApp(): JSX.Element {
     }
   }
 
-  const formatToolResultBrief = (name: string, result: string, filePath?: string): string => {
-    if (name === 'write' || name === 'edit') {
-      return filePath ? `→ ${filePath}` : result.split('\n')[0].slice(0, 80)
-    }
-    if (name === 'apply_patch') return result.split('\n')[0].slice(0, 80)
-    if (name === 'read') {
-      const match = result.match(/^(\d+):/)
-      return match ? `Read ${filePath || 'file'} (${result.trim().split('\n').length} lines)` : `Read ${filePath || 'file'}`
-    }
-    if (name === 'bash') {
-      const exitMatch = result.match(/Exit code: (.+)$/m)
-      return exitMatch ? `Exited ${exitMatch[1]}` : 'Ran command'
-    }
-    if (name === 'grep') return `${result.trim().split('\n').length} matches`
-    if (name === 'glob') return `${result.trim().split('\n').length} files`
-    if (name === 'web_search') return `Searched web`
-    if (name === 'web_fetch') return `Fetched page`
-    if (name === 'list') return `Listed directory`
-    return result.slice(0, 80)
-  }
-
   const formatDurationShort = (durationMs: number): string => {
     const seconds = Math.max(1, Math.round(durationMs / 1000))
     if (seconds < 60) return `${seconds}s`
@@ -907,6 +980,18 @@ export default function MainApp(): JSX.Element {
       setPendingAttachments((current) => [...current, ...selected].slice(0, MAX_CHAT_ATTACHMENTS))
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not attach the image')
+    }
+  }
+
+  const pasteChatImages = async (files: File[]): Promise<void> => {
+    setAttachmentError('')
+    try {
+      const availableSlots = Math.max(0, MAX_CHAT_ATTACHMENTS - pendingAttachments.length)
+      if (availableSlots === 0) throw new Error(`You can attach up to ${MAX_CHAT_ATTACHMENTS} images`)
+      const attachments = await Promise.all(files.slice(0, availableSlots).map(pastedImageAttachment))
+      setPendingAttachments((current) => [...current, ...attachments].slice(0, MAX_CHAT_ATTACHMENTS))
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not paste the image')
     }
   }
 
@@ -932,6 +1017,10 @@ export default function MainApp(): JSX.Element {
     event.preventDefault()
     const content = prompt.trim()
     if ((!content && pendingAttachments.length === 0) || completionState !== 'idle' || !selectedModel) return
+    if (pendingAttachments.length > 0 && !selectedModel.vision) {
+      setAttachmentError('The selected model does not support images')
+      return
+    }
     const isNewThread = !activeThreadRef.current
     const threadId = activeThreadRef.current?.id ?? crypto.randomUUID()
     const projectPath = activeThreadRef.current?.projectPath ?? selectedProjectPath ?? projects[0]?.path ?? ''
@@ -959,7 +1048,7 @@ export default function MainApp(): JSX.Element {
     if (isNewThread && content) void updateThreadTitle(threadId, content)
     startTimeRef.current = Date.now()
     try {
-      const status = await window.api.startDownloadedModel(selectedModel.hf_repo, selectedModel.gguf_file)
+      const status = await window.api.startDownloadedModel(selectedModel.hf_repo, selectedModel.gguf_file, pendingAttachments.length > 0)
       if (status.state !== 'ready') throw new Error(status.message ?? 'The local model could not start')
       const messages = thread.messages.flatMap((message) => {
         if (message.role === 'tool' || (message.role === 'assistant' && !message.content)) return []
@@ -1064,12 +1153,12 @@ export default function MainApp(): JSX.Element {
         <aside className="app-sidebar">
         <nav className="sidebar-nav" aria-label="Primary navigation">
           <button className="sidebar-action" type="button" onClick={startNewThread}>
-            <Plus size={16} />
+            <SquarePen size={16} />
             <span>New thread</span>
             <kbd>Ctrl N</kbd>
           </button>
           <button className="sidebar-action" type="button">
-            <Search size={14} />
+            <Search size={16} />
             <span>Search</span>
             <kbd>Ctrl K</kbd>
           </button>
@@ -1092,20 +1181,25 @@ export default function MainApp(): JSX.Element {
             : <div className="project-list">{projects.map((project) => {
               const projectThreads = threads.filter((thread) => thread.projectPath === project.path)
               const expanded = expandedProjects.has(project.path)
+              const showAllThreads = fullyExpandedProjects.has(project.path)
+              const visibleThreads = projectThreads.slice(0, showAllThreads ? projectThreads.length : 5)
+              const showMoreThreads = projectThreads.length > 5 && !showAllThreads
+              const visibleThreadItemCount = visibleThreads.length + Number(showMoreThreads)
               return (
                 <div className={expanded ? 'project-group expanded' : 'project-group'} key={project.path}>
                   <div className={selectedProjectPath === project.path && !activeThread ? 'project-row selected' : 'project-row'}>
-                    <button className="project-row-main" type="button" title={project.path} aria-expanded={expanded} onClick={() => toggleProject(project)}><Folder size={14} /><span>{project.name}</span></button>
-                    <button className="project-new-thread" type="button" aria-label={`New thread in ${project.name}`} title={`New thread in ${project.name}`} onClick={() => startProjectThread(project)}><Plus size={14} /></button>
+                    <button className="project-row-main" type="button" title={project.path} aria-expanded={expanded} onClick={() => toggleProject(project)}><FolderOpen size={14} /><span>{project.name}</span></button>
+                    <button className="project-new-thread" type="button" aria-label={`New thread in ${project.name}`} title={`New thread in ${project.name}`} onClick={() => startProjectThread(project)}><SquarePen size={15} /></button>
                   </div>
-                  {expanded && (
+                  <div className="project-threads-shell" aria-hidden={!expanded} inert={!expanded}>
                     <div className="project-threads">
-                      {projectThreads.slice(0, fullyExpandedProjects.has(project.path) ? projectThreads.length : 5).map((thread) =>
+                      {visibleThreads.map((thread, index) =>
                         renamingThreadId === thread.id ? (
                           <input
                             ref={renameInputRef}
                             className="project-thread-rename-input"
                             key={thread.id}
+                            style={projectThreadAnimationStyle(index, visibleThreadItemCount)}
                             value={renameValue}
                             onChange={(e) => setRenameValue(e.target.value)}
                             onBlur={() => commitRename(thread)}
@@ -1119,6 +1213,7 @@ export default function MainApp(): JSX.Element {
                             className={activeThread?.id === thread.id ? 'project-thread active' : 'project-thread'}
                             type="button"
                             key={thread.id}
+                            style={projectThreadAnimationStyle(index, visibleThreadItemCount)}
                             onClick={() => openThread(thread)}
                             onContextMenu={(e) => {
                               e.preventDefault()
@@ -1129,9 +1224,9 @@ export default function MainApp(): JSX.Element {
                           </button>
                         )
                       )}
-                      {projectThreads.length > 5 && !fullyExpandedProjects.has(project.path) && <button className="project-show-more" type="button" onClick={() => setFullyExpandedProjects((current) => new Set(current).add(project.path))}>Show more</button>}
+                      {showMoreThreads && <button className="project-show-more" style={projectThreadAnimationStyle(visibleThreads.length, visibleThreadItemCount)} type="button" onClick={() => setFullyExpandedProjects((current) => new Set(current).add(project.path))}>Show more</button>}
                     </div>
-                  )}
+                  </div>
                 </div>
               )
             })}</div>}
@@ -1155,31 +1250,39 @@ export default function MainApp(): JSX.Element {
               {activeThread.messages.map((message, messageIndex) => {
                 if (message.role === 'user') {
                   return (
-                    <div className="chat-message user-message" key={message.id}>
-                      <button className="copy-user-message" onClick={() => navigator.clipboard.writeText(message.content)} title="Copy message">
-                        <Copy className="copy-user-message-icon" width={14} height={14} />
-                      </button>
+                    <div className="user-turn" key={message.id}>
                       {message.attachments && message.attachments.length > 0 && (
                         <div className="message-attachments">
                           {message.attachments.map((attachment) => <img src={attachment.dataUrl} alt={attachment.name} title={attachment.name} key={attachment.id} />)}
                         </div>
                       )}
-                      {message.content && <MarkdownMessage content={message.content} />}
+                      {message.content && (
+                        <div className="chat-message user-message">
+                          <button className="copy-user-message" onClick={() => navigator.clipboard.writeText(message.content)} title="Copy message">
+                            <Copy className="copy-user-message-icon" width={14} height={14} />
+                          </button>
+                          <MarkdownMessage content={message.content} />
+                        </div>
+                      )}
                     </div>
                   )
                 }
                 if (message.role === 'tool') {
-                  const messageToolCalls = message.toolCalls ?? []
-                  if (messageToolCalls.length > 0 && messageToolCalls.every((toolCall) => WEB_TOOL_NAMES.has(toolCall.name))) return null
                   const parent = message.parentAssistantId
                     ? activeThread.messages.find((candidate) => candidate.id === message.parentAssistantId)
                     : activeThread.messages.slice(messageIndex + 1).find((candidate) => candidate.role === 'assistant')
                   const parentToolCalls = parent
                     ? activeThread.messages.filter((candidate) => candidate.role === 'tool' && candidate.parentAssistantId === parent.id).flatMap((candidate) => candidate.toolCalls ?? [])
                     : []
-                  if (parentToolCalls.length > 0 && parentToolCalls.every((toolCall) => WEB_TOOL_NAMES.has(toolCall.name))) return null
-                  const isFinishedWork = parent?.role === 'assistant' && parent.status !== 'pending'
-                  if (isFinishedWork && parent && !expandedWorkIds.has(parent.id)) return null
+                  if (message.content === '__progress__' && message.reasoningSummary) {
+                    if (parent?.role === 'assistant' && parent.status !== 'pending' && !expandedWorkIds.has(parent.id)) return null
+                    return (
+                      <div className="chat-message progress-message" key={message.id}>
+                        <span>{message.reasoningSummary}</span>
+                      </div>
+                    )
+                  }
+                  if (parent && !expandedWorkIds.has(parent.id)) return null
                   if (message.content === '__reasoning__' && message.reasoningSummary) {
                     return (
                       <div className="chat-message reasoning-message" key={message.id}>
@@ -1189,7 +1292,6 @@ export default function MainApp(): JSX.Element {
                       </div>
                     )
                   }
-                  if (message.toolCalls?.every((toolCall) => toolCall.result === undefined && !toolCall.error)) return null
                   return (
                     <div className="chat-message tool-message" key={message.id}>
                       {message.toolCalls?.map((tc) => {
@@ -1197,17 +1299,16 @@ export default function MainApp(): JSX.Element {
                         const hasError = !!tc.error
                         const running = !hasResult && !hasError
                         return (
-                          <div className={hasResult ? 'tool-call completed' : hasError ? 'tool-call error' : 'tool-call running'} key={tc.id}>
-                            {!running && <span className="tool-call-icon">{(() => {
+                          <details className={hasResult ? 'tool-call completed' : hasError ? 'tool-call error' : 'tool-call running'} key={tc.id}>
+                            <summary className="tool-call-summary">
+                            <span className="tool-call-icon">{(() => {
                               const Icon = toolIconMap[tc.name] ?? toolIconMap.default
                               return <Icon size={12} className={hasError ? 'tool-call-icon-error' : 'tool-call-icon-check'} />
-                            })()}</span>}
-                            {running
-                              ? <span className="activity-label" data-text={runningToolLabel(tc)}>{runningToolLabel(tc)}</span>
-                              : <span className="tool-call-name">{tc.name}</span>}
-                            {hasResult && tc.result && <span className="tool-call-result">{formatToolResultBrief(tc.name, tc.result, tc.filePath)}</span>}
-                            {hasError && tc.error && <span className="tool-call-error">{tc.error}</span>}
-                          </div>
+                            })()}</span>
+                            <span className="tool-call-name">{tc.uiMessage ?? (running ? runningToolLabel(tc) : completedToolLabel(tc))}</span>
+                            </summary>
+                            {(tc.result || tc.error) && <pre className="tool-call-preview">{tc.error ?? tc.result}</pre>}
+                          </details>
                         )
                       })}
                     </div>
@@ -1217,17 +1318,17 @@ export default function MainApp(): JSX.Element {
                   const turnToolCalls = activeThread.messages
                     .filter((candidate) => candidate.role === 'tool' && candidate.parentAssistantId === message.id)
                     .flatMap((candidate) => candidate.toolCalls ?? [])
-                  const isWebOnlyTurn = turnToolCalls.length > 0 && turnToolCalls.every((toolCall) => WEB_TOOL_NAMES.has(toolCall.name))
                   const displayedFileChanges = message.fileChanges ?? message.filesChanged?.map((path) => ({ path, ...legacyFileChangeCounts(path, turnToolCalls) })) ?? []
                   const totalAdditions = displayedFileChanges.reduce((total, file) => total + file.additions, 0)
                   const totalDeletions = displayedFileChanges.reduce((total, file) => total + file.deletions, 0)
-                  const showDuration = !isWebOnlyTurn && message.status !== 'pending' && message.durationMs !== undefined
+                  const showDuration = message.status !== 'pending' && message.durationMs !== undefined
                   const runningTool = [...activeThread.messages.slice(0, messageIndex)].reverse().find((candidate) =>
                     candidate.role === 'tool' && candidate.parentAssistantId === message.id && candidate.toolCalls?.some((toolCall) => toolCall.result === undefined && !toolCall.error)
                   )
                   const runningToolCall = runningTool?.toolCalls?.find((toolCall) => toolCall.result === undefined && !toolCall.error)
                   const heldActivityLabel = heldActivity?.assistantId === message.id && heldActivity.until > Date.now() ? heldActivity.label : undefined
                   const activeLabel = runningToolCall ? runningToolLabel(runningToolCall) : heldActivityLabel ?? 'Thinking'
+                  const activityToolCall = runningToolCall ?? (heldActivityLabel ? turnToolCalls.at(-1) : undefined)
                   const mostRecentSearch = [...turnToolCalls].reverse().find((toolCall) => toolCall.name === 'web_search')
                   const streamedSearchDetail = webSearchActivity?.assistantId === message.id
                     ? webSearchActivity.text.slice(0, webSearchActivity.revealedCharacters)
@@ -1256,7 +1357,15 @@ export default function MainApp(): JSX.Element {
                             ? <span className="terminal-activity-label">Stopped</span>
                             : message.status === 'error'
                               ? <span className="terminal-activity-label error">Failed</span>
-                              : <span className="assistant-activity"><span className="activity-label" data-text={activeLabel}>{activeLabel}</span>{visibleSearchDetail && <span className="web-search-detail">{visibleSearchDetail}</span>}</span>}
+                            : <button className="assistant-activity" type="button" aria-expanded={expanded} onClick={() => setExpandedWorkIds((current) => {
+                                const next = new Set(current)
+                                if (next.has(message.id)) next.delete(message.id)
+                                else next.add(message.id)
+                                return next
+                              })}>{activityToolCall && <span className="activity-tool-icon">{(() => {
+                                const Icon = toolIconMap[activityToolCall.name] ?? toolIconMap.default
+                                return <Icon size={13} />
+                              })()}</span>}<span className="activity-label" data-text={activeLabel}>{activeLabel}</span>{visibleSearchDetail && <span className="web-search-detail">{visibleSearchDetail}</span>}<ChevronRight size={12} className={expanded ? 'work-duration-chevron expanded' : 'work-duration-chevron'} /></button>}
                         {message.status !== 'pending' && displayedFileChanges.length > 0 && (
                           <div className="files-changed">
                             <div className="files-changed-summary">
@@ -1303,8 +1412,8 @@ export default function MainApp(): JSX.Element {
           </button>
         )}
 
-        <form className="prompt-composer" ref={promptComposerRef} onSubmit={(event) => void submitPrompt(event)}>
-          <ComposerShape height={composerHeight || COMPOSER_CORNER_RADIUS * 2} />
+        <form className={activeThread ? 'prompt-composer' : 'prompt-composer new-thread-composer'} ref={promptComposerRef} onSubmit={(event) => void submitPrompt(event)}>
+          <div className="composer-shape" aria-hidden="true" />
           {pendingAttachments.length > 0 && (
             <div className="composer-attachments" aria-label="Attached images">
               {pendingAttachments.map((attachment) => (
@@ -1319,6 +1428,14 @@ export default function MainApp(): JSX.Element {
             ref={promptTextareaRef}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
+            onPaste={(event) => {
+              const images = Array.from(event.clipboardData.items)
+                .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                .flatMap((item) => item.getAsFile() ?? [])
+              if (images.length === 0) return
+              event.preventDefault()
+              void pasteChatImages(images)
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
@@ -1331,7 +1448,7 @@ export default function MainApp(): JSX.Element {
           />
           {attachmentError && <div className="attachment-error" role="alert">{attachmentError}</div>}
           <div className="composer-toolbar" ref={controlsRef}>
-            <button className="composer-icon-button" type="button" aria-label="Attach images" title="Attach images" disabled={completionState !== 'idle' || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => void chooseChatImages()}><Plus size={14} /></button>
+            <button className="composer-icon-button" type="button" aria-label="Attach images" title="Attach images" disabled={completionState !== 'idle' || !selectedModel?.vision || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => void chooseChatImages()}><Plus size={14} /></button>
             <div className="composer-controls">
               <div className="composer-menu-wrap">
                 {openMenu !== null && (
@@ -1425,6 +1542,18 @@ export default function MainApp(): JSX.Element {
                 : <button className="send-button stop-button" type="button" aria-label="Stop response" onClick={() => { if (activeRequestIdRef.current) void window.api.cancelLocalCompletion(activeRequestIdRef.current) }}><Square size={14} /></button>}
             </div>
           </div>
+          {!activeThread && (
+            <div className="composer-project-strip">
+              <label className="composer-project-selector">
+                <FolderOpen size={14} aria-hidden="true" />
+                <select aria-label="Project" value={selectedProjectPath} onChange={(event) => setSelectedProjectPath(event.target.value)}>
+                  {projects.length === 0 && <option value="">No project</option>}
+                  {projects.map((project) => <option key={project.path} value={project.path}>{project.name}</option>)}
+                </select>
+                <ChevronDown size={12} aria-hidden="true" />
+              </label>
+            </div>
+          )}
         </form>
         </section>
       </main>

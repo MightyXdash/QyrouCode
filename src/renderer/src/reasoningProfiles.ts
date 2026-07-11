@@ -15,11 +15,11 @@ export interface ReasoningProfile {
 }
 
 const EFFORT_INSTRUCTIONS: Record<ReasoningEffort, string> = {
-  Instant: 'Answer immediately using the most direct reliable response. Do not perform an extended analysis. Be concise and avoid tangents.',
-  Low: 'Use a short, focused internal reasoning pass. Identify the key constraint, select the most direct sound approach, and avoid exploring unnecessary alternatives.',
-  Medium: 'Reason internally through a few plausible approaches and their important tradeoffs. Check the main assumptions, then choose the strongest approach without exhaustively exploring every branch.',
-  High: 'Reason deeply and explore multiple viable approaches. Test important assumptions, compare tradeoffs, consider meaningful failure modes and edge cases, then select and verify the best answer.',
-  'Extra high': 'Use the deepest feasible internal analysis. Systematically consider the relevant solution space, competing approaches, assumptions, edge cases, failure modes, and success conditions. Challenge and revise the leading answer, verify it from multiple angles, and produce the highest-quality answer you can.'
+  Instant: 'Answer immediately using the most direct reliable response. Break tool-based work into 1–4 substeps maximum. Be concise and avoid tangents.',
+  Low: 'Use a short, focused internal reasoning pass. Break tool-based work into about 2–6 substeps. Identify the key constraint, select the most direct sound approach, and avoid exploring unnecessary alternatives.',
+  Medium: 'Reason internally through a few plausible approaches and their important tradeoffs. Break tool-based work into about 3–8 substeps. Check the main assumptions, then choose the strongest approach without exhaustively exploring every branch.',
+  High: 'Reason deeply and explore multiple viable approaches. Break tool-based work into about 5–11 substeps. Test important assumptions, compare tradeoffs, consider meaningful failure modes and edge cases, then select and verify the best answer.',
+  'Extra high': 'Use the deepest feasible internal analysis. Break tool-based work into about 8–16 substeps. Systematically consider the relevant solution space, competing approaches, assumptions, edge cases, failure modes, and success conditions. Challenge and revise the leading answer, verify it from multiple angles, and produce the highest-quality answer you can.'
 }
 
 export function reasoningProfile(model: CatalogModel, effort: ReasoningEffort): ReasoningProfile {
@@ -27,7 +27,10 @@ export function reasoningProfile(model: CatalogModel, effort: ReasoningEffort): 
   const isGemma = model.base_model.toLowerCase().includes('gemma')
   const isQwen36Dense = model.base_model.includes('Qwen3.6-27B')
   const systemPrefix = enableThinking && isGemma ? '<|think|>\n' : ''
-  const systemPrompt = `${systemPrefix}${EFFORT_INSTRUCTIONS[effort]} Keep internal reasoning private: never reveal chain-of-thought, hidden analysis, or thinking tokens. Return only the useful final answer, with detail proportional to the task.`
+  const responseInstruction = enableThinking
+    ? 'Keep internal reasoning private: never reveal chain-of-thought, hidden analysis, or thinking tokens. Return only the useful final answer, with detail proportional to the task.'
+    : 'Return only the useful final answer, with detail proportional to the task.'
+  const systemPrompt = `${systemPrefix}${EFFORT_INSTRUCTIONS[effort]} ${responseInstruction}`
 
   if (isGemma) {
     return { enableThinking, systemPrompt, temperature: 1, topP: 0.95, topK: 64, minP: 0, presencePenalty: 0, repetitionPenalty: 1 }

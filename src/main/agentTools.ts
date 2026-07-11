@@ -43,14 +43,31 @@ const MAX_COMMAND_TIMEOUT_MS = 600_000
 const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules', 'dist', 'out', 'build', '.test-dist'])
 const DANGEROUS_COMMAND = /(?:\brm\s+-rf\s+(?:\/|~)|\bRemove-Item\b[^\r\n]*-Recurse[^\r\n]*(?:[A-Za-z]:\\|\s\/)|\b(?:shutdown|reboot|format)\b|\bgit\s+(?:reset\s+--hard|clean\s+-[^\s]*f))/i
 const READ_ONLY_COMMAND = /^\s*(?:git\s+(?:status|diff|log|show|branch|rev-parse|ls-files)\b|rg\b|grep\b|find\b|ls\b|pwd\b|cat\b|head\b|tail\b|wc\b|Get-ChildItem\b|Get-Content\b|Select-String\b)/i
+const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
+const TASK_STATE_TOOL_NAME = 'cur_task_state'
+const UI_MESSAGE_PROPERTY = {
+  type: 'string',
+  description: 'Required user-facing activity label. Write in first person, describe the current action naturally, and stay under six words by all means.'
+}
 
-const definition = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []): LocalToolDefinition => ({
-  name,
-  description,
-  parameters: { type: 'object', properties, required, additionalProperties: false }
-})
+const definition = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []): LocalToolDefinition => {
+  const generatesUiMessage = !WEB_TOOL_NAMES.has(name) && name !== TASK_STATE_TOOL_NAME
+  return {
+    name,
+    description,
+    parameters: {
+      type: 'object',
+      properties: generatesUiMessage ? { ui_message: UI_MESSAGE_PROPERTY, ...properties } : properties,
+      required: generatesUiMessage ? ['ui_message', ...required] : required,
+      additionalProperties: false
+    }
+  }
+}
 
 const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
+  definition(TASK_STATE_TOOL_NAME, 'Share a user-visible update after thinking and before a tool-based substep. Call this periodically as the task state changes. The message should naturally explain what you will do, what you are doing, or what you just established.', {
+    message: { type: 'string', description: 'A natural roughly 60–65-word user-facing task-state update. This is guidance, not a strict measured limit.' }
+  }, ['message']),
   definition('read', 'Read a UTF-8 text file with line numbers. Use this before editing an existing file.', {
     filePath: { type: 'string', description: 'Workspace-relative or absolute file path' },
     offset: { type: 'integer', minimum: 1, description: 'First one-based line to return' },
@@ -260,6 +277,7 @@ export class AgentToolbox {
   async execute(name: string, args: Record<string, unknown>): Promise<string> {
     this.options.signal?.throwIfAborted()
     switch (name) {
+      case TASK_STATE_TOOL_NAME: return 'Current task state shared with the user.'
       case 'read': return this.read(args)
       case 'list': return this.list(args)
       case 'glob': return this.glob(args)

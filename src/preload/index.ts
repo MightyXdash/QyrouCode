@@ -39,7 +39,7 @@ const api = {
   getAgentSession: (threadId: string, projectPath: string): Promise<PersistedAgentSession | null> => ipcRenderer.invoke('get-agent-session', threadId, projectPath),
   getWorkspaceViewState: (): Promise<WorkspaceViewState> => ipcRenderer.invoke('get-workspace-view-state'),
   saveWorkspaceViewState: (state: WorkspaceViewState): Promise<WorkspaceViewState> => ipcRenderer.invoke('save-workspace-view-state', state),
-  startDownloadedModel: (repoId: string, filename: string): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('start-downloaded-model', repoId, filename),
+  startDownloadedModel: (repoId: string, filename: string, requireVision = false): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('start-downloaded-model', repoId, filename, requireVision),
   generateChatTitle: (userMessage: string): Promise<string> => ipcRenderer.invoke('generate-chat-title', userMessage),
   checkModelCache: (modelId: string): Promise<boolean> =>
     ipcRenderer.invoke('check-model-cache', modelId),

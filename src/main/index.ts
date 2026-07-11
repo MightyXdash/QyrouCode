@@ -1,7 +1,7 @@
-import { app, shell, BrowserWindow, Menu, dialog, ipcMain, net } from 'electron'
+import { app, shell, BrowserWindow, Menu, dialog, ipcMain, nativeImage, net } from 'electron'
 import { randomUUID } from 'crypto'
 import { basename, dirname, extname, join } from 'path'
-import { existsSync, readdirSync, createWriteStream, mkdirSync, readFileSync, unlinkSync, renameSync, statSync } from 'fs'
+import { existsSync, readdirSync, createWriteStream, mkdirSync, unlinkSync, renameSync, statSync } from 'fs'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -13,7 +13,7 @@ import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManife
 import { LLAMA_TITLE_SERVER_PORT } from '../shared/llama'
 import type { LocalCompletionEvent, LocalCompletionStart } from './localCompletionClient'
 import type { AgentRunRequest, AgentToolEvent } from './agentRuntime'
-import { CHAT_ATTACHMENT_MIME_TYPES, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatAttachmentMimeType, type ChatThread } from '../shared/chat'
+import { CHAT_ATTACHMENT_MIME_TYPES, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatThread } from '../shared/chat'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -36,18 +36,16 @@ const SUMMARIZER_SERVER_PORT = 39283
 const MODEL_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const INVALID_PROJECT_NAME_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/
 const WINDOWS_RESERVED_PROJECT_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
-const CHAT_ATTACHMENT_MIME_BY_EXTENSION: Readonly<Record<string, ChatAttachmentMimeType>> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp'
-}
+const CHAT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif', 'heic', 'heif', 'ico'] as const
+const CHAT_IMAGE_EXTENSION_SET = new Set(CHAT_IMAGE_EXTENSIONS.map((extension) => `.${extension}`))
+const MODEL_DOWNLOAD_ATTEMPTS = 3
 
 let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
 let titleRuntime: LlamaRuntime | null = null
 let summarizerRuntime: LlamaRuntime | null = null
 const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController }>()
+const projectorlessRepositories = new Set<string>()
 
 function appIconPath(): string {
   const filename = process.platform === 'win32' ? WINDOWS_ICON_FILENAME : DEFAULT_ICON_FILENAME
@@ -130,33 +128,50 @@ function validateChatThread(value: unknown): ChatThread {
 }
 
 function readChatAttachment(filePath: string): ChatAttachment {
-  const mimeType = CHAT_ATTACHMENT_MIME_BY_EXTENSION[extname(filePath).toLowerCase()]
-  if (!mimeType) throw new Error('Choose a PNG, JPEG, or WebP image')
-  const size = statSync(filePath).size
-  if (size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('Each image must be 10 MB or smaller')
-  const data = readFileSync(filePath).toString('base64')
+  if (!CHAT_IMAGE_EXTENSION_SET.has(extname(filePath).toLowerCase())) throw new Error('Choose an image file')
+  if (statSync(filePath).size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('Each image must be 10 MB or smaller')
+  const image = nativeImage.createFromPath(filePath)
+  if (image.isEmpty()) throw new Error(`Could not decode ${basename(filePath)} as an image`)
+  const data = image.toPNG()
+  if (data.length > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('The converted image must be 10 MB or smaller')
   return {
     id: randomUUID(),
     name: basename(filePath),
-    mimeType,
-    dataUrl: `data:${mimeType};base64,${data}`,
-    size
+    mimeType: 'image/png',
+    dataUrl: `data:image/png;base64,${data.toString('base64')}`,
+    size: data.length
   }
 }
 
 function findProjector(modelPath: string): string | undefined {
-  const modelDir = dirname(modelPath)
-  if (!existsSync(modelDir)) return undefined
+  const candidates: string[] = []
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = join(directory, entry.name)
+      if (entry.isDirectory()) visit(entryPath)
+      else if (isProjectorFile(entry.name)) candidates.push(entryPath)
+    }
+  }
+
   try {
-    const match = readdirSync(modelDir).find((name) => {
-      const normalizedName = name.toLowerCase()
-      return normalizedName.endsWith(GGUF_FILE_EXTENSION) &&
-        MODEL_PROJECTOR_MARKERS.some((marker) => normalizedName.includes(marker))
-    })
-    return match ? join(modelDir, match) : undefined
+    visit(dirname(modelPath))
+    return candidates.sort((a, b) => projectorPreferenceRank(a) - projectorPreferenceRank(b))[0]
   } catch {
     return undefined
   }
+}
+
+function messageContentEquals(left: AgentRunRequest['messages'][number]['content'], right: AgentRunRequest['messages'][number]['content'] | undefined): boolean {
+  if (typeof left === 'string' || typeof right === 'string') return left === right
+  if (left === null || right === null || left === undefined || right === undefined) return left === right
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+  return left.every((part, index) => {
+    const candidate = right[index]
+    if (!candidate || part.type !== candidate.type) return false
+    return part.type === 'text'
+      ? candidate.type === 'text' && part.text === candidate.text
+      : candidate.type === 'image_url' && part.image_url.url === candidate.image_url.url
+  })
 }
 
 interface ModelTreeEntry {
@@ -256,6 +271,38 @@ function downloadGgufFile(
     })
     req.end()
   })
+}
+
+async function ensureModelProjector(repoId: string, modelPath: string): Promise<string | undefined> {
+  const cachedProjector = findProjector(modelPath)
+  if (cachedProjector || projectorlessRepositories.has(repoId)) return cachedProjector
+
+  const tree = await fetchModelTree(repoId)
+  const projectorPath = selectProjectorFile(tree)
+  if (!projectorPath) {
+    projectorlessRepositories.add(repoId)
+    return undefined
+  }
+
+  const filename = projectorPath.split('/').at(-1)
+  if (!filename) throw new Error('The model projector has an invalid filename')
+  const targetPath = join(dirname(modelPath), filename)
+  if (existsSync(targetPath)) return targetPath
+  const partPath = `${targetPath}.part`
+  const encodedPath = projectorPath.split('/').map((segment) => encodeURIComponent(segment)).join('/')
+  const cancelFns: Array<() => void> = []
+
+  for (let attempt = 1; attempt <= MODEL_DOWNLOAD_ATTEMPTS; attempt += 1) {
+    const resumeFrom = existsSync(partPath) ? statSync(partPath).size : 0
+    try {
+      await downloadGgufFile(repoId, encodedPath, partPath, resumeFrom, () => {}, cancelFns)
+      renameSync(partPath, targetPath)
+      return targetPath
+    } catch (error) {
+      if (attempt === MODEL_DOWNLOAD_ATTEMPTS) throw error
+    }
+  }
+  return undefined
 }
 
 function loadRenderer(targetWindow: BrowserWindow, query?: Record<string, string>): void {
@@ -379,7 +426,6 @@ function createWindow(): void {
     let downloaded = 0
     event.sender.send('download-progress', { repoId, downloaded, total })
 
-    const DOWNLOAD_ATTEMPTS = 3
     for (const file of targets) {
       if (cancelled) { activeDownloads.delete(repoId); throw new Error('Cancelled') }
       const filename = file.path.split('/').pop() as string
@@ -390,7 +436,7 @@ function createWindow(): void {
 
       let attempt = 0
       let completed = false
-      while (!completed && !cancelled && attempt < DOWNLOAD_ATTEMPTS) {
+      while (!completed && !cancelled && attempt < MODEL_DOWNLOAD_ATTEMPTS) {
         attempt++
         const resumeFrom = existsSync(partPath) ? statSync(partPath).size : 0
         try {
@@ -402,7 +448,7 @@ function createWindow(): void {
           completed = true
         } catch (error) {
           if (cancelled) throw new Error('Cancelled')
-          if (attempt >= DOWNLOAD_ATTEMPTS) throw error
+          if (attempt >= MODEL_DOWNLOAD_ATTEMPTS) throw error
         }
       }
       if (!completed) { activeDownloads.delete(repoId); throw new Error('Download failed after multiple attempts') }
@@ -478,7 +524,7 @@ app.whenReady().then(() => {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const result = await dialog.showOpenDialog(parent ?? undefined, {
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+      filters: [{ name: 'Images', extensions: [...CHAT_IMAGE_EXTENSIONS] }]
     })
     if (result.canceled) return []
     return result.filePaths.slice(0, MAX_CHAT_ATTACHMENTS).map(readChatAttachment)
@@ -519,12 +565,14 @@ app.whenReady().then(() => {
     if (!artifact) throw new Error('The selected model is not approved for local runtime use')
     if (!llamaRuntime) throw new Error('llama-server is not available')
     const resolved = await resolveModelArtifact(huggingFaceHubPath(), artifact)
-    return llamaRuntime.start(resolved.path, getSelectedContextWindowTokens())
+    return llamaRuntime.start(resolved.path, getSelectedContextWindowTokens(), findProjector(resolved.path))
   })
-  ipcMain.handle('start-downloaded-model', (_event, repoId: unknown, filename: unknown) => {
+  ipcMain.handle('start-downloaded-model', async (_event, repoId: unknown, filename: unknown, requireVision: unknown = false) => {
     if (!llamaRuntime) throw new Error('llama-server is not available')
+    if (typeof requireVision !== 'boolean') throw new Error('Invalid vision mode')
     const modelPath = resolveDownloadedModel(repoId, filename)
-    return llamaRuntime.start(modelPath, getSelectedContextWindowTokens(), findProjector(modelPath))
+    const projectorPath = requireVision ? await ensureModelProjector(repoId as string, modelPath) : findProjector(modelPath)
+    return llamaRuntime.start(modelPath, getSelectedContextWindowTokens(), projectorPath)
   })
   ipcMain.handle('generate-chat-title', async (_event, userMessage: unknown) => {
     if (typeof userMessage !== 'string' || !userMessage.trim()) throw new Error('A user message is required for title generation')
@@ -577,6 +625,9 @@ app.whenReady().then(() => {
       case 'files-changed':
         send({ requestId, type: 'files-changed', files: event.files })
         break
+      case 'progress-update':
+        send({ requestId, type: 'progress-update', summary: event.summary })
+        break
       case 'reasoning-summary':
         void summarizeReasoning(event.summary).then((summary) => {
           send({ requestId, type: 'reasoning-summary', summary })
@@ -601,7 +652,7 @@ app.whenReady().then(() => {
     const persistedLastUser = persisted ? [...persisted.messages].reverse().find((message) => message.role === 'user') : undefined
     const persistedFinished = persisted?.messages.at(-1)?.role === 'assistant'
     const resumedMessages = persisted
-      ? [...systemMessages, ...persisted.messages, ...(latestUserMessage && (persistedFinished || latestUserMessage.content !== persistedLastUser?.content) ? [latestUserMessage] : [])]
+      ? [...systemMessages, ...persisted.messages, ...(latestUserMessage && (persistedFinished || !messageContentEquals(latestUserMessage.content, persistedLastUser?.content)) ? [latestUserMessage] : [])]
       : request.messages
     const agentRequest = { ...request, messages: resumedMessages, projectPath: project.path, signal: controller.signal }
     void llamaRuntime.runAgent(

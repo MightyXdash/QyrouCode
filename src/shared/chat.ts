@@ -25,6 +25,7 @@ export interface ToolCallDisplay {
   id: string
   name: string
   arguments: Record<string, unknown>
+  uiMessage?: string
   result?: string
   filePath?: string
   error?: string
@@ -55,4 +56,3 @@ export interface ChatThread {
   updatedAt: number
   duration?: number
 }
-

@@ -5,6 +5,25 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { AgentToolbox } from '../src/main/agentTools.js'
 
+test('non-web tools require a compact UI message while web tools do not', () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  try {
+    const tools = new AgentToolbox({ projectPath })
+    for (const definition of tools.definitions) {
+      const parameters = definition.parameters as { properties: Record<string, unknown>; required: string[] }
+      if (definition.name === 'web_search' || definition.name === 'web_fetch' || definition.name === 'cur_task_state') {
+        assert.equal(parameters.properties.ui_message, undefined)
+        assert.ok(!parameters.required.includes('ui_message'))
+      } else {
+        assert.ok(parameters.properties.ui_message)
+        assert.ok(parameters.required.includes('ui_message'))
+      }
+    }
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
 test('coding tools read, search, edit, write, and patch inside the workspace', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
   try {
