@@ -1,6 +1,8 @@
 import { randomUUID } from 'crypto'
-import { relative, resolve } from 'path'
+import { existsSync, readFileSync } from 'fs'
+import { isAbsolute, relative, resolve } from 'path'
 import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall } from './localCompletionClient'
+import type { FileChangeDisplay } from '../shared/chat'
 import { COMPACTION_SYSTEM_PROMPT, buildAgentSystemPrompt } from './agentPrompt'
 import { AgentToolbox, type AgentTaskRequest } from './agentTools'
 import { parseHealedToolCalls, stripToolCallMarkup } from './toolCallParser'
@@ -22,7 +24,7 @@ export type AgentToolEvent =
   | { type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: string }
   | { type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
   | { type: 'tool-error'; toolCallId: string; error: string }
-  | { type: 'files-changed'; files: string[] }
+  | { type: 'files-changed'; files: FileChangeDisplay[] }
   | { type: 'reasoning-summary'; summary: string }
 
 const MAX_AGENT_STEPS = 50
@@ -74,10 +76,16 @@ export class AgentRuntime {
 
   async run(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void): Promise<void> {
     const modifiedFiles = new Set<string>()
-    await this.runInternal(request, 0, false, onDelta, onState, onToolEvent, modifiedFiles)
+    const originalFiles = new Map<string, string | null>()
+    try {
+      await this.runInternal(request, 0, false, onDelta, onState, onToolEvent, modifiedFiles, originalFiles)
+    } finally {
+      const files = summarizeFileChanges(request.projectPath, modifiedFiles, originalFiles)
+      if (files.length > 0) onToolEvent?.({ type: 'files-changed', files })
+    }
   }
 
-  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>): Promise<string> {
+  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>): Promise<string> {
     request.signal?.throwIfAborted()
     const systemPrompt = buildAgentSystemPrompt({
       projectPath: request.projectPath,
@@ -93,7 +101,7 @@ export class AgentRuntime {
       projectPath: request.projectPath,
       signal: request.signal,
       readOnly,
-      runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, onToolEvent) : undefined
+      runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, originalFiles, onToolEvent) : undefined
     })
     const allowedNames = new Set(toolbox.definitions.map((tool) => tool.name))
 
@@ -131,9 +139,6 @@ export class AgentRuntime {
         if (completion.reasoningText && onToolEvent) {
           onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
         }
-        if (modifiedFiles && modifiedFiles.size > 0 && onToolEvent) {
-          onToolEvent({ type: 'files-changed', files: [...modifiedFiles] })
-        }
         messages.push({ role: 'assistant', content: finalText, reasoningText: completion.reasoningText })
         onState?.(messages)
         await this.emitStreamedText(finalText, onDelta)
@@ -152,6 +157,8 @@ export class AgentRuntime {
         reasoningText: completion.reasoningText
       })
       for (const call of healedCalls) {
+        const candidatePaths = mutationPaths(call, request.projectPath)
+        for (const candidatePath of candidatePaths) captureOriginalFile(request.projectPath, candidatePath, originalFiles)
         const key = callKey(call)
         const repeats = (duplicateCalls.get(key) ?? 0) + 1
         duplicateCalls.set(key, repeats)
@@ -209,9 +216,6 @@ export class AgentRuntime {
     if (completion.reasoningText && onToolEvent) {
       onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
     }
-    if (modifiedFiles && modifiedFiles.size > 0 && onToolEvent) {
-      onToolEvent({ type: 'files-changed', files: [...modifiedFiles] })
-    }
     messages.push({ role: 'assistant', content: finalText, reasoningText: completion.reasoningText })
     onState?.(messages)
     await this.emitStreamedText(finalText, onDelta)
@@ -238,14 +242,14 @@ export class AgentRuntime {
     ]
   }
 
-  private runSubagent(parent: AgentRunRequest, task: AgentTaskRequest, depth: number, modifiedFiles?: Set<string>, onToolEvent?: (event: AgentToolEvent) => void): Promise<string> {
+  private runSubagent(parent: AgentRunRequest, task: AgentTaskRequest, depth: number, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, onToolEvent?: (event: AgentToolEvent) => void): Promise<string> {
     return this.runInternal({
       ...parent,
       messages: [
         { role: 'system', content: `Subagent task: ${task.description}. Return a single concise result to the parent agent. Include exact paths and evidence. Complete the requested work autonomously.` },
         { role: 'user', content: task.prompt }
       ]
-    }, depth, task.subagentType === 'explore', () => undefined, undefined, onToolEvent, modifiedFiles)
+    }, depth, task.subagentType === 'explore', () => undefined, undefined, onToolEvent, modifiedFiles, originalFiles)
   }
 
   private async emitStreamedText(text: string, onDelta: (delta: string) => void): Promise<void> {
@@ -267,4 +271,75 @@ function extractPatchPaths(patch: string, projectPath: string): string[] {
     }
   }
   return [...paths]
+}
+
+function safeRelativePath(projectPath: string, filePath: string): string | undefined {
+  const normalized = relative(projectPath, resolve(projectPath, filePath))
+  if (!normalized || normalized.startsWith('..') || isAbsolute(normalized)) return undefined
+  return normalized.replace(/\\/g, '/')
+}
+
+function mutationPaths(call: LocalToolCall, projectPath: string): string[] {
+  if ((call.name === 'write' || call.name === 'edit') && typeof call.arguments.filePath === 'string') {
+    const path = safeRelativePath(projectPath, call.arguments.filePath)
+    return path ? [path] : []
+  }
+  if (call.name === 'apply_patch' && typeof call.arguments.patch === 'string') {
+    return extractPatchPaths(call.arguments.patch, projectPath).filter((path) => safeRelativePath(projectPath, path) === path)
+  }
+  return []
+}
+
+function captureOriginalFile(projectPath: string, filePath: string, originals?: Map<string, string | null>): void {
+  if (!originals || originals.has(filePath)) return
+  const absolutePath = resolve(projectPath, filePath)
+  originals.set(filePath, existsSync(absolutePath) ? readFileSync(absolutePath, 'utf8') : null)
+}
+
+function contentLines(content: string | null): string[] {
+  if (!content) return []
+  const lines = content.replace(/\r\n/g, '\n').split('\n')
+  if (lines.at(-1) === '') lines.pop()
+  return lines
+}
+
+function lineChangeCounts(before: string | null, after: string | null): { additions: number; deletions: number } {
+  const previous = contentLines(before)
+  const current = contentLines(after)
+  if (previous.length === 0) return { additions: current.length, deletions: 0 }
+  if (current.length === 0) return { additions: 0, deletions: previous.length }
+
+  const maximumCells = 4_000_000
+  if (previous.length * current.length > maximumCells) {
+    let prefix = 0
+    while (prefix < previous.length && prefix < current.length && previous[prefix] === current[prefix]) prefix += 1
+    let suffix = 0
+    while (suffix < previous.length - prefix && suffix < current.length - prefix && previous[previous.length - suffix - 1] === current[current.length - suffix - 1]) suffix += 1
+    return {
+      additions: current.length - prefix - suffix,
+      deletions: previous.length - prefix - suffix
+    }
+  }
+
+  let priorRow = new Uint32Array(current.length + 1)
+  for (const previousLine of previous) {
+    const nextRow = new Uint32Array(current.length + 1)
+    for (let index = 1; index <= current.length; index += 1) {
+      nextRow[index] = previousLine === current[index - 1]
+        ? priorRow[index - 1] + 1
+        : Math.max(priorRow[index], nextRow[index - 1])
+    }
+    priorRow = nextRow
+  }
+  const commonLines = priorRow[current.length]
+  return { additions: current.length - commonLines, deletions: previous.length - commonLines }
+}
+
+function summarizeFileChanges(projectPath: string, modifiedFiles: ReadonlySet<string>, originals: ReadonlyMap<string, string | null>): FileChangeDisplay[] {
+  return [...modifiedFiles].flatMap((path) => {
+    const absolutePath = resolve(projectPath, path)
+    const after = existsSync(absolutePath) ? readFileSync(absolutePath, 'utf8') : null
+    const counts = lineChangeCounts(originals.get(path) ?? null, after)
+    return counts.additions > 0 || counts.deletions > 0 ? [{ path, ...counts }] : []
+  })
 }

@@ -15,6 +15,12 @@ export interface ChatAttachment {
 
 export type AssistantMessageStatus = 'pending' | 'completed' | 'cancelled' | 'error'
 
+export interface FileChangeDisplay {
+  path: string
+  additions: number
+  deletions: number
+}
+
 export interface ToolCallDisplay {
   id: string
   name: string
@@ -32,6 +38,7 @@ export interface ChatMessage {
   toolCalls?: ToolCallDisplay[]
   reasoningSummary?: string
   filesChanged?: string[]
+  fileChanges?: FileChangeDisplay[]
   attachments?: ChatAttachment[]
   parentAssistantId?: string
   status?: AssistantMessageStatus

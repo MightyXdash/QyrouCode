@@ -127,6 +127,49 @@ function messageText(content: import('../../main/localCompletionClient').LocalMe
   return content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n')
 }
 
+function sourceLineCount(content: string): number {
+  if (!content) return 0
+  const lines = content.replace(/\r\n/g, '\n').split('\n')
+  return lines.at(-1) === '' ? lines.length - 1 : lines.length
+}
+
+function normalizedDisplayPath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/^\.\//, '')
+}
+
+function legacyFileChangeCounts(path: string, toolCalls: readonly ToolCallDisplay[]): { additions: number; deletions: number } {
+  const normalizedPath = normalizedDisplayPath(path)
+  let additions = 0
+  let deletions = 0
+
+  for (const toolCall of toolCalls) {
+    if (toolCall.name === 'write' && typeof toolCall.arguments.filePath === 'string' && normalizedDisplayPath(toolCall.arguments.filePath) === normalizedPath) {
+      additions = typeof toolCall.arguments.content === 'string' ? sourceLineCount(toolCall.arguments.content) : additions
+      deletions = 0
+      continue
+    }
+    if (toolCall.name === 'edit' && typeof toolCall.arguments.filePath === 'string' && normalizedDisplayPath(toolCall.arguments.filePath) === normalizedPath) {
+      additions += typeof toolCall.arguments.newString === 'string' ? sourceLineCount(toolCall.arguments.newString) : 0
+      deletions += typeof toolCall.arguments.oldString === 'string' ? sourceLineCount(toolCall.arguments.oldString) : 0
+      continue
+    }
+    if (toolCall.name === 'apply_patch' && typeof toolCall.arguments.patch === 'string') {
+      let currentPath = ''
+      for (const line of toolCall.arguments.patch.split('\n')) {
+        const header = line.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/)
+        if (header) {
+          currentPath = normalizedDisplayPath(header[1].trim())
+          continue
+        }
+        if (currentPath !== normalizedPath) continue
+        if (line.startsWith('+') && !line.startsWith('+++')) additions += 1
+        if (line.startsWith('-') && !line.startsWith('---')) deletions += 1
+      }
+    }
+  }
+  return { additions, deletions }
+}
+
 function normalizeRestoredThread(thread: ChatThread): ChatThread {
   const normalized: ChatMessage[] = []
   for (let index = 0; index < thread.messages.length;) {
@@ -546,7 +589,7 @@ export default function MainApp(): JSX.Element {
       if (!current) return
       const messages = current.messages.map((message, index) =>
         index === current.messages.length - 1 && message.role === 'assistant'
-          ? { ...message, filesChanged: event.files }
+          ? { ...message, fileChanges: event.files }
           : message
       )
       const updated = { ...current, messages, updatedAt: Date.now() }
@@ -594,9 +637,12 @@ export default function MainApp(): JSX.Element {
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
   }, [])
 
-  useEffect(() => {
-    if (autoScrollEnabled) conversationEndRef.current?.scrollIntoView({ behavior: completionState === 'streaming' ? 'auto' : 'smooth' })
-  }, [activeThread, autoScrollEnabled, completionState])
+  useLayoutEffect(() => {
+    const target = conversationRef.current
+    if (!target) return
+    const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight
+    setAutoScrollEnabled(distanceFromBottom <= AUTO_SCROLL_THRESHOLD)
+  }, [activeThread])
 
   useEffect(() => {
     if (!projectDialogOpen) return
@@ -1169,6 +1215,9 @@ export default function MainApp(): JSX.Element {
                     .filter((candidate) => candidate.role === 'tool' && candidate.parentAssistantId === message.id)
                     .flatMap((candidate) => candidate.toolCalls ?? [])
                   const isWebOnlyTurn = turnToolCalls.length > 0 && turnToolCalls.every((toolCall) => WEB_TOOL_NAMES.has(toolCall.name))
+                  const displayedFileChanges = message.fileChanges ?? message.filesChanged?.map((path) => ({ path, ...legacyFileChangeCounts(path, turnToolCalls) })) ?? []
+                  const totalAdditions = displayedFileChanges.reduce((total, file) => total + file.additions, 0)
+                  const totalDeletions = displayedFileChanges.reduce((total, file) => total + file.deletions, 0)
                   const showDuration = !isWebOnlyTurn && message.status !== 'pending' && message.durationMs !== undefined
                   const runningTool = [...activeThread.messages.slice(0, messageIndex)].reverse().find((candidate) =>
                     candidate.role === 'tool' && candidate.parentAssistantId === message.id && candidate.toolCalls?.some((toolCall) => toolCall.result === undefined && !toolCall.error)
@@ -1205,12 +1254,20 @@ export default function MainApp(): JSX.Element {
                             : message.status === 'error'
                               ? <span className="terminal-activity-label error">Failed</span>
                               : <span className="assistant-activity"><span className="activity-label" data-text={activeLabel}>{activeLabel}</span>{visibleSearchDetail && <span className="web-search-detail">{visibleSearchDetail}</span>}</span>}
-                        {message.filesChanged && message.filesChanged.length > 0 && (
+                        {message.status !== 'pending' && displayedFileChanges.length > 0 && (
                           <div className="files-changed">
-                            <span className="files-changed-label">Files changed</span>
-                            {message.filesChanged.map((file) => (
-                              <span className="files-changed-file" key={file}>{file}</span>
-                            ))}
+                            <div className="files-changed-summary">
+                              <span>{displayedFileChanges.length} Changed {displayedFileChanges.length === 1 ? 'file' : 'files'}</span>
+                              <span className="files-changed-totals"><span className="line-additions">+{totalAdditions}</span><span className="line-deletions">−{totalDeletions}</span></span>
+                            </div>
+                            <div className="files-changed-list">
+                              {displayedFileChanges.map((file) => (
+                                <div className="files-changed-file" key={file.path}>
+                                  <span className="files-changed-path">{file.path}</span>
+                                  <span className="files-changed-row-end"><span className="line-additions">+{file.additions}</span><span className="line-deletions">−{file.deletions}</span><ChevronRight size={13} aria-hidden="true" /></span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>

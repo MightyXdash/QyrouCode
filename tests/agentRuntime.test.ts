@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { AgentRuntime, type AgentCompletionProvider } from '../src/main/agentRuntime.js'
+import { AgentRuntime, type AgentCompletionProvider, type AgentToolEvent } from '../src/main/agentRuntime.js'
 import type { LocalCompletion, LocalCompletionRequest, LocalMessageContent } from '../src/main/localCompletionClient.js'
 
 const textContent = (content: LocalMessageContent | undefined): string => typeof content === 'string' ? content : ''
@@ -34,6 +34,7 @@ test('runs native and healed local-model tools end to end before returning a fin
     ])
     let output = ''
     const persistedStates: LocalCompletionRequest['messages'][] = []
+    const toolEvents: AgentToolEvent[] = []
     await new AgentRuntime(provider).run({
       threadId: 'thread-1',
       projectPath,
@@ -43,7 +44,7 @@ test('runs native and healed local-model tools end to end before returning a fin
       ],
       enableThinking: true,
       temperature: 0.8
-    }, (delta) => { output += delta }, (messages) => { persistedStates.push(messages.map((message) => ({ ...message }))) })
+    }, (delta) => { output += delta }, (messages) => { persistedStates.push(messages.map((message) => ({ ...message }))) }, (event) => { toolEvents.push(event) })
 
     assert.equal(readFileSync(join(projectPath, 'src', 'result.ts'), 'utf8'), 'export const result = 1\n')
     assert.equal(output, 'Implemented the requested file and verified its contents.')
@@ -57,6 +58,10 @@ test('runs native and healed local-model tools end to end before returning a fin
     assert.ok(provider.requests[2].messages.some((message) => message.role === 'tool' && message.name === 'read'))
     assert.ok(persistedStates.some((messages) => messages.some((message) => message.role === 'tool' && message.name === 'write')))
     assert.equal(persistedStates.at(-1)?.at(-1)?.content, 'Implemented the requested file and verified its contents.')
+    assert.deepEqual(toolEvents.find((event) => event.type === 'files-changed'), {
+      type: 'files-changed',
+      files: [{ path: 'src/result.ts', additions: 1, deletions: 0 }]
+    })
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

@@ -74,7 +74,7 @@ export type LocalCompletionEvent =
   | { requestId: string; type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: string }
   | { requestId: string; type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
   | { requestId: string; type: 'tool-error'; toolCallId: string; error: string }
-  | { requestId: string; type: 'files-changed'; files: string[] }
+  | { requestId: string; type: 'files-changed'; files: import('../shared/chat').FileChangeDisplay[] }
   | { requestId: string; type: 'reasoning-summary'; summary: string }
   | { requestId: string; type: 'complete' }
   | { requestId: string; type: 'cancelled' }
