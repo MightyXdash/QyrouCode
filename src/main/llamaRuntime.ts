@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { existsSync, statSync } from 'fs'
 import { arch, cpus, freemem, platform } from 'os'
 import { delimiter, join } from 'path'
@@ -6,21 +6,24 @@ import { app } from 'electron'
 import {
   LLAMA_SERVER_HOST,
   LLAMA_SERVER_PORT,
+  backendAppearsInDeviceList,
   buildLlamaServerArgs,
   type LlamaBackend,
   type LlamaPlatform,
   type LlamaRuntimeStatus
 } from '../shared/llama'
+import { INITIAL_RUNTIME_ARTIFACTS, getRuntimeArtifact, type RuntimeArchitecture } from '../shared/runtimeManifest'
 import { LocalCompletionClient, type LocalCompletionRequest } from './localCompletionClient'
 import { AgentRuntime, type AgentRunRequest, type AgentStateListener, type AgentToolEvent } from './agentRuntime'
+import { developmentRuntimeDirectory, packagedRuntimeExecutable } from './runtimePaths'
 
-const SERVER_BINARY_NAME = platform() === 'win32' ? 'llama-server.exe' : 'llama-server'
 const HEALTH_PATH = '/health'
 const HEALTH_TIMEOUT_MS = 120000
 const HEALTH_POLL_INTERVAL_MS = 350
 const TERMINATION_TIMEOUT_MS = 3000
 const STDERR_TAIL_LENGTH = 800
 const SUPPORTED_PLATFORMS = new Set(['darwin', 'linux', 'win32'])
+const SERVER_BINARY_NAME = platform() === 'win32' ? 'llama-server.exe' : 'llama-server'
 
 const currentPlatform = (): LlamaPlatform => {
   const value = platform()
@@ -28,40 +31,116 @@ const currentPlatform = (): LlamaPlatform => {
   return value as LlamaPlatform
 }
 
-const preferredBackend = (targetPlatform: LlamaPlatform): LlamaBackend => {
+const configuredBackend = (): LlamaBackend | undefined => {
   const configured = process.env['SUPRACODE_LLAMA_BACKEND']
   if (configured === 'metal' || configured === 'cuda' || configured === 'vulkan' || configured === 'cpu') return configured
+  return undefined
+}
+
+const preferredBackends = (targetPlatform: LlamaPlatform): readonly LlamaBackend[] => {
+  const configured = configuredBackend()
+  if (configured) return [configured]
+  if (targetPlatform === 'darwin') return ['metal', 'cpu']
+  return ['cuda', 'vulkan', 'cpu']
+}
+
+const legacyBackend = (targetPlatform: LlamaPlatform): LlamaBackend => {
+  const configured = configuredBackend()
+  if (configured) return configured
   if (targetPlatform === 'darwin') return 'metal'
   return process.env['CUDA_PATH'] || process.env['CUDA_HOME'] ? 'cuda' : 'vulkan'
 }
 
-const executableCandidates = (): string[] => {
-  const configuredPath = process.env['SUPRACODE_LLAMA_SERVER']
-  const pathDirectories = (process.env['PATH'] ?? '').split(delimiter).filter(Boolean)
-  const bundledDirectory = join(process.resourcesPath, 'llama.cpp', `${platform()}-${arch()}`)
-  const developmentDirectory = join(app.getAppPath(), 'vendor', 'llama.cpp', `${platform()}-${arch()}`)
-  return [
-    ...(configuredPath ? [configuredPath] : []),
-    join(bundledDirectory, SERVER_BINARY_NAME),
-    join(developmentDirectory, SERVER_BINARY_NAME),
-    ...pathDirectories.map((directory) => join(directory, SERVER_BINARY_NAME))
-  ]
+const currentArchitecture = (): RuntimeArchitecture => {
+  const value = arch()
+  if (value !== 'arm64' && value !== 'x64') throw new Error(`Unsupported architecture: ${value}`)
+  return value
 }
 
-const findExecutable = (): string | undefined => executableCandidates().find((candidate) => existsSync(candidate))
+interface RuntimeCandidate {
+  backend: LlamaBackend
+  executablePath: string
+}
+
+const backendAvailable = (candidate: RuntimeCandidate): boolean => {
+  if (candidate.backend === 'cpu') return true
+  try {
+    const devices = execFileSync(candidate.executablePath, ['--list-devices'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true
+    })
+    return backendAppearsInDeviceList(candidate.backend, devices)
+  } catch {
+    return false
+  }
+}
+
+const inferredBackend = (executablePath: string, fallback: LlamaBackend): LlamaBackend => {
+  try {
+    const devices = execFileSync(executablePath, ['--list-devices'], { encoding: 'utf8', timeout: 5000, windowsHide: true })
+    for (const backend of ['cuda', 'vulkan', 'metal'] as const) {
+      if (backendAppearsInDeviceList(backend, devices)) return backend
+    }
+    return 'cpu'
+  } catch {
+    return fallback
+  }
+}
+
+const findLegacyRuntime = (targetPlatform: LlamaPlatform): RuntimeCandidate | undefined => {
+  const legacyDirectory = `${platform()}-${arch()}`
+  const candidates = [
+    ...(process.env['SUPRACODE_LLAMA_SERVER'] ? [process.env['SUPRACODE_LLAMA_SERVER']] : []),
+    join(process.resourcesPath, 'llama.cpp', legacyDirectory, SERVER_BINARY_NAME),
+    join(app.getAppPath(), 'vendor', 'llama.cpp', legacyDirectory, SERVER_BINARY_NAME),
+    ...(process.env['PATH'] ?? '').split(delimiter).filter(Boolean).map((directory) => join(directory, SERVER_BINARY_NAME))
+  ]
+  for (const executablePath of candidates) {
+    if (!executablePath || !existsSync(executablePath)) continue
+    const candidate = { executablePath, backend: inferredBackend(executablePath, legacyBackend(targetPlatform)) }
+    if (backendAvailable(candidate)) return candidate
+  }
+  return undefined
+}
+
+const findRuntime = (): RuntimeCandidate | undefined => {
+  const targetPlatform = currentPlatform()
+  const targetArchitecture = currentArchitecture()
+  const configuredPath = process.env['SUPRACODE_LLAMA_SERVER']
+  const configured = configuredBackend()
+  if (configuredPath && configured && existsSync(configuredPath)) {
+    const candidate = { backend: inferredBackend(configuredPath, configured), executablePath: configuredPath }
+    return backendAvailable(candidate) ? candidate : undefined
+  }
+
+  for (const backend of preferredBackends(targetPlatform)) {
+    const artifact = getRuntimeArtifact(INITIAL_RUNTIME_ARTIFACTS, targetPlatform, targetArchitecture, backend)
+    if (!artifact) continue
+    const executableCandidates = [
+      packagedRuntimeExecutable(process.resourcesPath, artifact),
+      join(developmentRuntimeDirectory(app.getAppPath(), artifact), artifact.executablePath)
+    ]
+    for (const executablePath of executableCandidates) {
+      if (!existsSync(executablePath)) continue
+      const candidate = { backend, executablePath }
+      if (backendAvailable(candidate)) return candidate
+    }
+  }
+  return findLegacyRuntime(targetPlatform)
+}
 
 export class LlamaRuntime {
   private process: ChildProcessWithoutNullStreams | null = null
   private status: LlamaRuntimeStatus
 
   constructor(private readonly port = LLAMA_SERVER_PORT) {
-    const targetPlatform = currentPlatform()
-    const executablePath = findExecutable()
+    const runtime = findRuntime()
     this.status = {
-      state: executablePath ? 'stopped' : 'unavailable',
-      backend: preferredBackend(targetPlatform),
-      executablePath,
-      message: executablePath ? undefined : 'llama-server is not installed'
+      state: runtime ? 'stopped' : 'unavailable',
+      backend: runtime?.backend,
+      executablePath: runtime?.executablePath,
+      message: runtime ? undefined : 'No compatible llama-server runtime is installed'
     }
   }
 
@@ -98,12 +177,15 @@ export class LlamaRuntime {
       if (this.status.modelPath === modelPath && this.status.mmprojPath === mmprojPath) return this.getStatus()
       await this.stop()
     }
-    const executablePath = this.status.executablePath ?? findExecutable()
-    if (!executablePath) return this.getStatus()
+    const runtime = findRuntime()
+    if (!runtime) {
+      this.status = { state: 'unavailable', message: 'No compatible llama-server runtime is installed' }
+      return this.getStatus()
+    }
+    const { backend, executablePath } = runtime
     if (!existsSync(modelPath)) throw new Error('The selected GGUF model does not exist')
 
     const targetPlatform = currentPlatform()
-    const backend = preferredBackend(targetPlatform)
     const args = buildLlamaServerArgs({
       platform: targetPlatform,
       backend,

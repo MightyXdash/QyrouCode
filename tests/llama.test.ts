@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FIRST_LOAD_CONTEXT_TOKENS, buildLlamaServerArgs, type LlamaLaunchProfile } from '../src/shared/llama.js'
+import { FIRST_LOAD_CONTEXT_TOKENS, backendAppearsInDeviceList, buildLlamaServerArgs, type LlamaLaunchProfile } from '../src/shared/llama.js'
 
 const baseProfile: LlamaLaunchProfile = {
   platform: 'darwin',
@@ -23,6 +23,12 @@ test('configures accelerated inference with bounded batching and quantized KV ca
   assert.ok(args.includes('q8_0'))
   assert.ok(args.includes('--cont-batching'))
   assert.equal(args[args.indexOf('--threads') + 1], '6')
+})
+
+test('recognizes numbered CUDA and Vulkan devices from llama-server probes', () => {
+  assert.equal(backendAppearsInDeviceList('cuda', 'Available devices:\n  CUDA0: NVIDIA GeForce RTX 4090'), true)
+  assert.equal(backendAppearsInDeviceList('vulkan', 'Available devices:\n  Vulkan1: NVIDIA GeForce RTX 3090'), true)
+  assert.equal(backendAppearsInDeviceList('cuda', 'Available devices:\n  CPU: 32 cores'), false)
 })
 
 test('allows an isolated port for auxiliary model runtimes', () => {

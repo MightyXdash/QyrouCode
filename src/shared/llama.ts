@@ -9,7 +9,7 @@ export type LlamaServerState = 'unavailable' | 'stopped' | 'starting' | 'ready' 
 
 export interface LlamaRuntimeStatus {
   state: LlamaServerState
-  backend: LlamaBackend
+  backend?: LlamaBackend
   executablePath?: string
   modelPath?: string
   mmprojPath?: string
@@ -36,6 +36,9 @@ const DEFAULT_BATCH_SIZE = 2048
 const CONSERVATIVE_BATCH_SIZE = 1024
 const DEFAULT_MICRO_BATCH_SIZE = 512
 const CONSERVATIVE_MICRO_BATCH_SIZE = 256
+
+export const backendAppearsInDeviceList = (backend: LlamaBackend, devices: string): boolean =>
+  new RegExp(`\\b${backend}(?:\\d+)?\\s*:`, 'i').test(devices)
 
 const boundedThreadCount = (logicalCpuCount: number, maximum: number): number =>
   Math.max(MINIMUM_THREAD_COUNT, Math.min(maximum, Math.floor(logicalCpuCount)))

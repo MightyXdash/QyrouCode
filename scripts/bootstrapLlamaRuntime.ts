@@ -4,7 +4,7 @@ import { createReadStream } from 'node:fs'
 import { access, chmod, copyFile, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { arch, platform } from 'node:os'
 import { basename, join, resolve } from 'node:path'
-import { INITIAL_RUNTIME_ARTIFACTS, getRuntimeArtifact, type RuntimeArtifact } from '../src/shared/runtimeManifest'
+import { INITIAL_RUNTIME_ARTIFACTS, getRuntimeArtifact, type RuntimeArtifact, type RuntimeBackend } from '../src/shared/runtimeManifest'
 import { developmentRuntimeDirectory } from '../src/main/runtimePaths'
 
 const hashFile = async (path: string): Promise<string> =>
@@ -45,6 +45,19 @@ const execute = (command: string, args: string[]): void => {
   execFileSync(command, args, { stdio: 'inherit' })
 }
 
+const requestedBackend = (): RuntimeBackend => {
+  const flagIndex = process.argv.lastIndexOf('--backend')
+  const backend = flagIndex === -1 ? 'cuda' : process.argv[flagIndex + 1]
+  if (backend === 'cpu' || backend === 'cuda' || backend === 'vulkan') return backend
+  throw new Error(`Unsupported runtime backend: ${backend ?? ''}`)
+}
+
+const backendCmakeArguments = (backend: RuntimeBackend): string[] => [
+  `-DGGML_CUDA=${backend === 'cuda' ? 'ON' : 'OFF'}`,
+  '-DGGML_METAL=OFF',
+  `-DGGML_VULKAN=${backend === 'vulkan' ? 'ON' : 'OFF'}`
+]
+
 const bootstrap = async (): Promise<void> => {
   const targetPlatform = platform()
   const targetArchitecture = arch()
@@ -52,8 +65,9 @@ const bootstrap = async (): Promise<void> => {
     throw new Error(`No bootstrap runtime is available for ${targetPlatform}-${targetArchitecture}`)
   }
 
-  const artifact = getRuntimeArtifact(INITIAL_RUNTIME_ARTIFACTS, 'linux', 'x64', 'cpu')
-  if (!artifact) throw new Error('No pinned Linux x64 CPU runtime artifact is configured')
+  const backend = requestedBackend()
+  const artifact = getRuntimeArtifact(INITIAL_RUNTIME_ARTIFACTS, 'linux', 'x64', backend)
+  if (!artifact) throw new Error(`No pinned Linux x64 ${backend} runtime artifact is configured`)
 
   const appPath = resolve(process.cwd())
   const targetDirectory = developmentRuntimeDirectory(appPath, artifact)
@@ -86,9 +100,7 @@ const bootstrap = async (): Promise<void> => {
       '-DCMAKE_BUILD_TYPE=Release',
       '-DBUILD_SHARED_LIBS=OFF',
       '-DGGML_NATIVE=OFF',
-      '-DGGML_CUDA=OFF',
-      '-DGGML_METAL=OFF',
-      '-DGGML_VULKAN=OFF'
+      ...backendCmakeArguments(backend)
     ])
     execute('cmake', ['--build', buildDirectory, '--target', 'llama-server', '--parallel'])
 
@@ -101,6 +113,7 @@ const bootstrap = async (): Promise<void> => {
     await writeFile(join(stagingDirectory, 'receipt.json'), JSON.stringify({
       id: artifact.id,
       release: artifact.release,
+      backend: artifact.backend,
       sourceUrl: artifact.sourceUrl,
       sourceSha256: artifact.sha256,
       executablePath: artifact.executablePath
