@@ -12,7 +12,7 @@ import {
 } from '../shared/settings'
 import type { Project } from '../shared/projects'
 import type { ChatThread } from '../shared/chat'
-import { DEFAULT_WORKSPACE_VIEW_STATE, VIEW_REASONING_EFFORTS, type PersistedAgentMessage, type PersistedAgentSession, type WorkspaceViewState } from '../shared/agent'
+import { DEFAULT_WORKSPACE_VIEW_STATE, VIEW_REASONING_EFFORTS, type AgentModelProvenance, type PersistedAgentMessage, type PersistedAgentSession, type WorkspaceViewState } from '../shared/agent'
 import { FIRST_LOAD_CONTEXT_TOKENS } from '../shared/llama'
 
 const settingsStore = new Store<SettingsStoreData>({
@@ -101,6 +101,17 @@ export const deleteChatThread = (threadId: string): ChatThread[] => {
   return threads
 }
 
+const validModelProvenance = (value: unknown): value is AgentModelProvenance => {
+  if (!value || typeof value !== 'object') return false
+  const model = value as Partial<AgentModelProvenance>
+  return ['local', 'remote'].includes(model.source ?? '') &&
+    typeof model.provider === 'string' && Boolean(model.provider) &&
+    typeof model.modelId === 'string' && Boolean(model.modelId) &&
+    typeof model.displayName === 'string' && Boolean(model.displayName) &&
+    ['retain', 'discard'].includes(model.reasoningRetention ?? '') &&
+    (model.connectionId === undefined || typeof model.connectionId === 'string')
+}
+
 const validAgentMessage = (value: unknown): value is PersistedAgentMessage => {
   if (!value || typeof value !== 'object') return false
   const message = value as Partial<PersistedAgentMessage>
@@ -112,6 +123,8 @@ const validAgentMessage = (value: unknown): value is PersistedAgentMessage => {
   if (!['user', 'assistant', 'tool'].includes(message.role ?? '') || !validContent) return false
   if (message.role === 'tool' && (typeof message.toolCallId !== 'string' || typeof message.name !== 'string')) return false
   if (message.toolCalls !== undefined && (!Array.isArray(message.toolCalls) || !message.toolCalls.every((call) => call && typeof call.id === 'string' && typeof call.name === 'string' && call.arguments && typeof call.arguments === 'object' && !Array.isArray(call.arguments)))) return false
+  if (message.reasoningText !== undefined && typeof message.reasoningText !== 'string') return false
+  if (message.model !== undefined && !validModelProvenance(message.model)) return false
   return true
 }
 
@@ -119,6 +132,12 @@ export const getAgentSession = (threadId: string, projectPath: string): Persiste
   const session = settingsStore.get('agentSessions')?.[threadId]
   if (!session || session.threadId !== threadId || session.projectPath !== projectPath || !Array.isArray(session.messages) || !session.messages.every(validAgentMessage)) return undefined
   return session
+}
+
+export const getAgentSessions = (): Record<string, PersistedAgentSession> => {
+  const sessions = settingsStore.get('agentSessions') ?? {}
+  return Object.fromEntries(Object.entries(sessions).filter(([threadId, session]) =>
+    session.threadId === threadId && Array.isArray(session.messages) && session.messages.every(validAgentMessage)))
 }
 
 export const saveAgentSession = (session: PersistedAgentSession): PersistedAgentSession => {

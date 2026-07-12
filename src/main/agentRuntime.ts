@@ -2,7 +2,8 @@ import { randomUUID } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { isAbsolute, relative, resolve } from 'path'
 import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall, LocalToolDefinition } from './localCompletionClient'
-import type { FileChangeDisplay } from '../shared/chat'
+import type { FileChangeDisplay, ToolUiMessage } from '../shared/chat'
+import type { AgentModelProvenance } from '../shared/agent'
 import { COMPACTION_SYSTEM_PROMPT, buildAgentSystemPrompt } from './agentPrompt'
 import { AgentToolbox, type AgentTaskRequest } from './agentTools'
 import { parseHealedToolCalls, stripToolCallMarkup } from './toolCallParser'
@@ -16,12 +17,13 @@ export interface AgentRunRequest extends Omit<LocalCompletionRequest, 'signal' |
   threadId: string
   projectPath: string
   signal?: AbortSignal
+  model?: AgentModelProvenance
 }
 
 export type AgentStateListener = (messages: readonly LocalChatMessage[]) => void
 
 export type AgentToolEvent =
-  | { type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: string }
+  | { type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: ToolUiMessage }
   | { type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
   | { type: 'tool-error'; toolCallId: string; error: string }
   | { type: 'files-changed'; files: FileChangeDisplay[] }
@@ -37,6 +39,7 @@ const FINAL_MAX_TOKENS = 8_192
 const MAX_INTENT_REPROMPTS = 3
 const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
 const TASK_STATE_TOOL_NAME = 'cur_task_state'
+const TASK_STATE_SIMILARITY_THRESHOLD = 0.42
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
 
 function messageContentCharacters(content: LocalChatMessage['content']): number {
@@ -72,6 +75,17 @@ function isIntentWithoutAction(value: string): boolean {
   return normalized.length > 0 && normalized.length < 2_000 && INTENT_PATTERN.test(normalized)
 }
 
+function taskStatesAreSimilar(left: string, right: string): boolean {
+  if (!left.trim() || !right.trim()) return false
+  const words = (value: string): Set<string> => new Set(value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((word) => word.length > 2))
+  const leftWords = words(left)
+  const rightWords = words(right)
+  if (!leftWords.size || !rightWords.size) return left.trim().toLowerCase() === right.trim().toLowerCase()
+  let shared = 0
+  for (const word of leftWords) if (rightWords.has(word)) shared += 1
+  return shared / Math.min(leftWords.size, rightWords.size) >= TASK_STATE_SIMILARITY_THRESHOLD
+}
+
 function modelSettings(request: AgentRunRequest, enableThinking = request.enableThinking): Omit<LocalCompletionRequest, 'messages'> {
   return {
     enableThinking,
@@ -86,21 +100,32 @@ function modelSettings(request: AgentRunRequest, enableThinking = request.enable
   }
 }
 
+function retainedReasoning(request: AgentRunRequest, reasoningText: string | undefined): string | undefined {
+  if (!reasoningText) return undefined
+  if (!request.model || request.model.source === 'local') return reasoningText
+  return request.model.reasoningRetention === 'retain' ? reasoningText : undefined
+}
+
+function modelProvenance(request: AgentRunRequest): { model: AgentModelProvenance } | Record<string, never> {
+  return request.model ? { model: request.model } : {}
+}
+
 export class AgentRuntime {
   constructor(private readonly provider: AgentCompletionProvider) {}
 
   async run(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void): Promise<void> {
     const modifiedFiles = new Set<string>()
     const originalFiles = new Map<string, string | null>()
+    const visibleTaskStates: string[] = []
     try {
-      await this.runInternal(request, 0, false, onDelta, onState, onToolEvent, modifiedFiles, originalFiles)
+      await this.runInternal(request, 0, false, onDelta, onState, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates)
     } finally {
       const files = summarizeFileChanges(request.projectPath, modifiedFiles, originalFiles)
       if (files.length > 0) onToolEvent?.({ type: 'files-changed', files })
     }
   }
 
-  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>): Promise<string> {
+  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, visibleTaskStates: string[] = []): Promise<string> {
     request.signal?.throwIfAborted()
     const systemPrompt = buildAgentSystemPrompt({
       projectPath: request.projectPath,
@@ -118,7 +143,7 @@ export class AgentRuntime {
       projectPath: request.projectPath,
       signal: request.signal,
       readOnly,
-      runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, originalFiles, onToolEvent) : undefined
+      runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, originalFiles, onToolEvent, visibleTaskStates) : undefined
     })
     const allowedNames = new Set(toolbox.definitions.map((tool) => tool.name))
 
@@ -150,14 +175,14 @@ export class AgentRuntime {
         if (!finalText) throw new Error('The local model completed a turn without a visible answer or usable tool call')
         if (isIntentWithoutAction(finalText) && intentReprompts < MAX_INTENT_REPROMPTS) {
           intentReprompts += 1
-          messages.push({ role: 'assistant', content: finalText })
+          messages.push({ role: 'assistant', content: finalText, ...modelProvenance(request) })
           messages.push({ role: 'user', content: 'Continue now using the available tools. If no tool is needed, provide the completed final answer instead of describing future actions.' })
           continue
         }
         if (completion.reasoningText && onToolEvent) {
           onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
         }
-        messages.push({ role: 'assistant', content: finalText, reasoningText: completion.reasoningText })
+        messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
         onState?.(messages)
         await this.emitStreamedText(finalText, onDelta)
         return finalText
@@ -171,14 +196,12 @@ export class AgentRuntime {
         if (definition) {
           const stateCall = await this.requestTaskState(request, messages, definition, selectedCall.name)
           const stateMessage = typeof stateCall.arguments.message === 'string' ? stateCall.arguments.message.trim() : ''
-          onToolEvent({ type: 'tool-call', toolCallId: stateCall.id, name: stateCall.name, arguments: stateCall.arguments, summary: 'I’m sharing current progress' })
-          if (stateMessage) await this.emitProgressUpdate(stateMessage, onToolEvent)
+          if (stateMessage && this.registerVisibleTaskState(stateMessage, visibleTaskStates)) await this.emitProgressUpdate(stateMessage, onToolEvent)
           const stateResult = await toolbox.execute(stateCall.name, stateCall.arguments)
-          onToolEvent({ type: 'tool-result', toolCallId: stateCall.id, result: stateResult })
-          messages.push({ role: 'assistant', content: null, toolCalls: [stateCall] })
+          messages.push({ role: 'assistant', content: null, toolCalls: [stateCall], ...modelProvenance(request) })
           messages.push({ role: 'tool', name: stateCall.name, toolCallId: stateCall.id, content: stateResult })
           taskStateReady = true
-          currentTaskState = stateMessage
+          currentTaskState = visibleTaskStates.at(-1) ?? stateMessage
           onState?.(messages)
         }
       }
@@ -189,7 +212,8 @@ export class AgentRuntime {
         role: 'assistant',
         content: stripToolCallMarkup(completion.text) || null,
         toolCalls: healedCalls,
-        reasoningText: completion.reasoningText
+        reasoningText: retainedReasoning(request, completion.reasoningText),
+        ...modelProvenance(request)
       })
       for (const call of healedCalls) {
         const candidatePaths = mutationPaths(call, request.projectPath)
@@ -206,15 +230,16 @@ export class AgentRuntime {
           try {
             const isTaskState = call.name === TASK_STATE_TOOL_NAME
             const taskStateMessage = isTaskState && typeof call.arguments.message === 'string' ? call.arguments.message.trim() : ''
+            const taskStateChanged = !isTaskState || !onToolEvent || this.registerVisibleTaskState(taskStateMessage, visibleTaskStates)
             const uiMessage = isTaskState
-              ? 'I’m sharing current progress'
+              ? undefined
               : onToolEvent ? await this.resolveUiMessage(request, messages, call, currentTaskState) : undefined
-            onToolEvent?.({ type: 'tool-call', toolCallId: call.id || randomUUID(), name: call.name, arguments: call.arguments, summary: uiMessage })
-            if (isTaskState && taskStateMessage && onToolEvent) await this.emitProgressUpdate(taskStateMessage, onToolEvent)
+            if (!isTaskState) onToolEvent?.({ type: 'tool-call', toolCallId: call.id || randomUUID(), name: call.name, arguments: call.arguments, summary: uiMessage })
+            if (isTaskState && taskStateMessage && taskStateChanged && onToolEvent) await this.emitProgressUpdate(taskStateMessage, onToolEvent)
             result = await toolbox.execute(call.name, call.arguments)
             if (isTaskState) {
               taskStateReady = true
-              currentTaskState = taskStateMessage
+              if (taskStateChanged) currentTaskState = taskStateMessage
             }
           } catch (err) {
             const message = `Error: ${err instanceof Error ? err.message : 'Tool execution failed'}. Inspect this result and try a different approach.`
@@ -235,16 +260,11 @@ export class AgentRuntime {
           }
         }
         if (filePath) modifiedFiles?.add(filePath)
-        if (error) {
-          onToolEvent?.({ type: 'tool-error', toolCallId: call.id || randomUUID(), error })
-        } else {
-          onToolEvent?.({ type: 'tool-result', toolCallId: call.id || randomUUID(), result, filePath })
+        if (call.name !== TASK_STATE_TOOL_NAME) {
+          if (error) onToolEvent?.({ type: 'tool-error', toolCallId: call.id || randomUUID(), error })
+          else onToolEvent?.({ type: 'tool-result', toolCallId: call.id || randomUUID(), result, filePath })
         }
         messages.push({ role: 'tool', name: call.name, toolCallId: call.id || randomUUID(), content: result, filePath })
-        if (call.name !== TASK_STATE_TOOL_NAME) {
-          taskStateReady = false
-          currentTaskState = ''
-        }
       }
       onState?.(messages)
     }
@@ -265,7 +285,7 @@ export class AgentRuntime {
     if (completion.reasoningText && onToolEvent) {
       onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
     }
-    messages.push({ role: 'assistant', content: finalText, reasoningText: completion.reasoningText })
+    messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
     onState?.(messages)
     await this.emitStreamedText(finalText, onDelta)
     return finalText
@@ -298,7 +318,7 @@ export class AgentRuntime {
         ...messages,
         {
           role: 'user',
-          content: `Call cur_task_state now before the ${nextToolName} tool. Put a natural roughly 60–65-word user-facing update in its message argument explaining what you are about to do or what the current subtask established. Do not call any other tool.`
+          content: `Call cur_task_state now before the ${nextToolName} tool. Put a natural roughly 60–65-word user-facing update in its message argument explaining the distinct current substep and what comes next. Prefer neutral state language and do not begin with first-person wording unless it is genuinely necessary. Do not call any other tool.`
         }
       ],
       tools: [definition],
@@ -316,32 +336,44 @@ export class AgentRuntime {
       id: randomUUID(),
       name: TASK_STATE_TOOL_NAME,
       arguments: {
-        message: stripToolCallMarkup(completion.text).trim() || `I’m preparing the next ${nextToolName} step now. I’ll use it to gather the concrete information needed for this task, review the result carefully, and then share what changed or what I found before moving forward. This keeps the work visible, makes the current direction clear, and helps each action follow naturally from the evidence already available.`
+        message: stripToolCallMarkup(completion.text).trim() || `The next ${nextToolName} step is ready to begin. It will gather the concrete information needed for this task, support a careful review of the result, and establish what should happen afterward. This keeps the work visible, makes the current direction clear, and helps each action follow naturally from the evidence already available.`
       }
     }
   }
 
-  private async resolveUiMessage(request: AgentRunRequest, messages: readonly LocalChatMessage[], call: LocalToolCall, progress: string): Promise<string | undefined> {
+  private async resolveUiMessage(request: AgentRunRequest, messages: readonly LocalChatMessage[], call: LocalToolCall, progress: string): Promise<ToolUiMessage | undefined> {
     if (call.name === 'web_search' || call.name === 'web_fetch') return undefined
-    const supplied = typeof call.arguments.ui_message === 'string' ? call.arguments.ui_message.trim() : ''
-    if (supplied) return supplied.split(/\s+/).slice(0, 5).join(' ')
+    const supplied = call.arguments.ui_message && typeof call.arguments.ui_message === 'object' && !Array.isArray(call.arguments.ui_message)
+      ? call.arguments.ui_message as Partial<ToolUiMessage>
+      : undefined
+    const present = typeof supplied?.uim_prt === 'string' ? supplied.uim_prt.trim() : ''
+    const past = typeof supplied?.uim_pat === 'string' ? supplied.uim_pat.trim() : ''
+    if (present && past) return { uim_prt: present.split(/\s+/).slice(0, 5).join(' '), uim_pat: past.split(/\s+/).slice(0, 5).join(' ') }
     const completion = await this.provider.complete({
       ...modelSettings(request, false),
       messages: [
         ...messages,
         {
           role: 'user',
-          content: `Write only a natural first-person UI activity message for the ${call.name} tool call described by this progress update: ${progress}. Use fewer than six words. Do not add punctuation, quotes, a heading, explanation, or a tool call.`
+          content: `Return only compact JSON for the ${call.name} tool call described by this progress update: ${progress}. Use exactly this shape: {"uim_prt":"present-tense first-person label","uim_pat":"past-tense completed label"}. Keep each value under six words. Do not add explanation or a tool call.`
         }
       ],
       tools: [],
       toolChoice: 'none',
       enableThinking: false,
-      maxTokens: 24,
+      maxTokens: 64,
       signal: request.signal
     })
-    const generated = stripToolCallMarkup(completion.text).replace(/^["'“”]+|["'“”.!]+$/g, '').trim()
-    return generated ? generated.split(/\s+/).slice(0, 5).join(' ') : `I’m using ${call.name}`
+    try {
+      const generated = JSON.parse(stripToolCallMarkup(completion.text)) as Partial<ToolUiMessage>
+      if (typeof generated.uim_prt === 'string' && typeof generated.uim_pat === 'string') {
+        return {
+          uim_prt: generated.uim_prt.trim().split(/\s+/).slice(0, 5).join(' '),
+          uim_pat: generated.uim_pat.trim().split(/\s+/).slice(0, 5).join(' ')
+        }
+      }
+    } catch {}
+    return { uim_prt: `I’m using ${call.name}`, uim_pat: `Used ${call.name}` }
   }
 
   private async emitProgressUpdate(progress: string, onToolEvent: (event: AgentToolEvent) => void): Promise<void> {
@@ -351,14 +383,20 @@ export class AgentRuntime {
     }
   }
 
-  private runSubagent(parent: AgentRunRequest, task: AgentTaskRequest, depth: number, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, onToolEvent?: (event: AgentToolEvent) => void): Promise<string> {
+  private registerVisibleTaskState(message: string, visibleTaskStates: string[]): boolean {
+    if (!message || visibleTaskStates.some((visible) => taskStatesAreSimilar(visible, message))) return false
+    visibleTaskStates.push(message)
+    return true
+  }
+
+  private runSubagent(parent: AgentRunRequest, task: AgentTaskRequest, depth: number, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, onToolEvent?: (event: AgentToolEvent) => void, visibleTaskStates: string[] = []): Promise<string> {
     return this.runInternal({
       ...parent,
       messages: [
         { role: 'system', content: `Subagent task: ${task.description}. Return a single concise result to the parent agent. Include exact paths and evidence. Complete the requested work autonomously.` },
         { role: 'user', content: task.prompt }
       ]
-    }, depth, task.subagentType === 'explore', () => undefined, undefined, onToolEvent, modifiedFiles, originalFiles)
+    }, depth, task.subagentType === 'explore', () => undefined, undefined, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates)
   }
 
   private async emitStreamedText(text: string, onDelta: (delta: string) => void): Promise<void> {

@@ -8,15 +8,55 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2 } from 'lucide-react'
+import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
+import type { ConnectionSummary } from '../../shared/connections'
+import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRawReasoning, type RemoteModel } from '../../shared/remoteModels'
+import type { ConversationExportRequest } from '../../shared/conversationExport'
+import SettingsPage, {
+  type SettingsConnectionRequest,
+  type SettingsConnectionTestResult,
+  type SettingsExportOptions,
+  type SettingsExportState
+} from './settings/SettingsPage'
 import './MainApp.css'
 
 const AUTO_SCROLL_THRESHOLD = 72
 const MAX_ACTIVITY_COMMAND_CHARACTERS = 40
-const WEB_ACTIVITY_HOLD_MS = 2_500
 const WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND = 150
+const DEFAULT_ACTIVITY_SWEEP_DURATION_MS = 1_800
 const PROJECT_THREAD_STAGGER_MS = 45
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
+const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 128_000
+const DEFAULT_AGENT_MAX_TOKENS = 8_192
+
+type MainView = 'chat' | 'settings'
+
+interface ComposerModel {
+  id: string
+  source: 'local' | 'remote'
+  modelId: string
+  displayName: string
+  providerName: string
+  context_length: number
+  vision: boolean
+  connectionId?: string
+  localModel?: (typeof MODEL_LIST)[number]
+  remoteModel?: RemoteModel
+}
+
+const DEFAULT_EXPORT_OPTIONS: SettingsExportOptions = {
+  scope: 'current-thread',
+  format: 'jsonl',
+  includeMessages: true,
+  includeToolCalls: true,
+  includeTimestamps: true,
+  includeReasoningSummaries: true,
+  includeEligibleRawReasoning: false,
+  attachmentMode: 'metadata'
+}
+
+const DEFAULT_EXPORT_STATE: SettingsExportState = { busy: false }
 
 type ProjectThreadAnimationStyle = CSSProperties & {
   '--thread-collapse-delay': string
@@ -99,10 +139,17 @@ function truncateCommand(command: string): string {
     : `${normalized.slice(0, MAX_ACTIVITY_COMMAND_CHARACTERS - 1)}…`
 }
 
+function activitySweepDurationMs(): number {
+  const value = getComputedStyle(document.documentElement).getPropertyValue('--activity-sweep-duration').trim()
+  if (value.endsWith('ms')) return Number.parseFloat(value) || DEFAULT_ACTIVITY_SWEEP_DURATION_MS
+  if (value.endsWith('s')) return (Number.parseFloat(value) || DEFAULT_ACTIVITY_SWEEP_DURATION_MS / 1_000) * 1_000
+  return DEFAULT_ACTIVITY_SWEEP_DURATION_MS
+}
+
 function runningToolLabel(toolCall: ToolCallDisplay): string {
   if (toolCall.name === 'cur_task_state') return 'Sharing current task state'
   if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searching the web'
-  if (toolCall.uiMessage) return toolCall.uiMessage.split(/\s+/).slice(0, 5).join(' ')
+  if (toolCall.uiMessage?.uim_prt) return toolCall.uiMessage.uim_prt
   if (toolCall.name === 'bash') {
     const command = typeof toolCall.arguments.command === 'string' ? truncateCommand(toolCall.arguments.command) : 'command'
     return `Running ${command}`
@@ -117,6 +164,7 @@ function runningToolLabel(toolCall: ToolCallDisplay): string {
 function completedToolLabel(toolCall: ToolCallDisplay): string {
   if (toolCall.name === 'cur_task_state') return 'Shared current task state'
   if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searched the web'
+  if (toolCall.uiMessage?.uim_pat) return toolCall.uiMessage.uim_pat
   if (toolCall.name === 'read') return 'Viewed a file'
   if (toolCall.name === 'grep' || toolCall.name === 'glob' || toolCall.name === 'list') return 'Looked through the project'
   if (toolCall.name === 'write' || toolCall.name === 'edit') return 'Edited one file'
@@ -265,6 +313,7 @@ function normalizeRestoredThread(thread: ChatThread): ChatThread {
 }
 
 export default function MainApp(): JSX.Element {
+  const [activeView, setActiveView] = useState<MainView>('chat')
   const [prompt, setPrompt] = useState('')
   const [selectedModelId, setSelectedModelId] = useState('')
   const [downloadedModelIds, setDownloadedModelIds] = useState<Set<string> | null>(null)
@@ -291,7 +340,8 @@ export default function MainApp(): JSX.Element {
   const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set())
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState('')
-  const [heldActivity, setHeldActivity] = useState<{ assistantId: string; label: string; until: number } | null>(null)
+  const [heldActivity, setHeldActivity] = useState<{ assistantId: string; toolCallId: string; label: string; until: number } | null>(null)
+  const [presentTenseToolIds, setPresentTenseToolIds] = useState<Set<string>>(new Set())
   const [webSearchActivity, setWebSearchActivity] = useState<{ assistantId: string; text: string; revealedCharacters: number } | null>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
   const titlebarMenuRef = useRef<HTMLElement>(null)
@@ -311,6 +361,8 @@ export default function MainApp(): JSX.Element {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activityHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const webSearchRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const toolCallStartedAtRef = useRef<Map<string, number>>(new Map())
+  const toolTenseTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const renameInputRef = useRef<HTMLInputElement>(null)
   const [contextMenu, setContextMenu] = useState<{ thread: ChatThread; x: number; y: number } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -318,10 +370,42 @@ export default function MainApp(): JSX.Element {
   const [renameValue, setRenameValue] = useState('')
   const [deleteConfirmThread, setDeleteConfirmThread] = useState<ChatThread | null>(null)
   const [regeneratingThreadId, setRegeneratingThreadId] = useState<string | null>(null)
+  const [connections, setConnections] = useState<ConnectionSummary[] | null>(null)
+  const [exportOptions, setExportOptions] = useState<SettingsExportOptions>(DEFAULT_EXPORT_OPTIONS)
+  const [exportState, setExportState] = useState<SettingsExportState>(DEFAULT_EXPORT_STATE)
   const downloadedModels = downloadedModelIds
     ? MODEL_LIST.filter((model) => downloadedModelIds.has(model.id))
     : []
-  const selectedModel = downloadedModels.find((model) => model.id === selectedModelId)
+  const composerModels = useMemo<ComposerModel[]>(() => {
+    const localModels = downloadedModels.map((model): ComposerModel => ({
+      id: model.id,
+      source: 'local',
+      modelId: model.id,
+      displayName: modelDisplayName(model.base_model),
+      providerName: 'Local',
+      context_length: model.context_length,
+      vision: model.vision,
+      localModel: model
+    }))
+    const remoteModels = (connections ?? []).flatMap((connection): ComposerModel[] =>
+      connection.selectedModelIds.flatMap((modelId) => {
+        const remoteModel = getRemoteModel(modelId)
+        if (connection.kind !== 'openai-compatible' && (!remoteModel || !remoteModel.availableOn.includes(connection.kind))) return []
+        return [{
+          id: `remote:${connection.id}:${modelId}`,
+          source: 'remote',
+          connectionId: connection.id,
+          modelId,
+          displayName: remoteModel?.displayName ?? modelDisplayName(modelId),
+          providerName: connection.providerName,
+          context_length: remoteModel?.contextWindow ?? DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW,
+          vision: remoteModel?.inputModalities.includes('image') ?? false,
+          remoteModel
+        }]
+      }))
+    return [...localModels, ...remoteModels]
+  }, [connections, downloadedModels])
+  const selectedModel = composerModels.find((model) => model.id === selectedModelId)
 
   const contextTokens = useMemo(() => {
     if (!activeThread || !selectedModel) return null
@@ -331,13 +415,13 @@ export default function MainApp(): JSX.Element {
     return { used, total, percent: Math.min(Math.round((used / total) * 100), 100) }
   }, [activeThread, selectedModel])
 
-  const clearHeldActivity = (): void => {
+  const clearHeldActivity = (preserveActiveTool = false): void => {
     if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
     activityHoldTimerRef.current = null
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
     webSearchRevealTimerRef.current = null
-    setHeldActivity(null)
-    setWebSearchActivity(null)
+    setHeldActivity((current) => preserveActiveTool && current?.toolCallId && toolCallStartedAtRef.current.has(current.toolCallId) ? current : null)
+    if (!preserveActiveTool) setWebSearchActivity(null)
   }
 
   const revealWebSearchDetail = (assistantId: string, text: string): void => {
@@ -355,33 +439,42 @@ export default function MainApp(): JSX.Element {
     webSearchRevealTimerRef.current = setInterval(update, 16)
   }
 
-  const holdWebActivity = (assistantId: string, running: boolean): void => {
+  const holdWebActivity = (assistantId: string, toolCallId: string): void => {
     if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
     activityHoldTimerRef.current = null
-    const until = running ? Number.POSITIVE_INFINITY : Date.now() + WEB_ACTIVITY_HOLD_MS
-    setHeldActivity({ assistantId, label: 'Searching the web', until })
-    if (!running) {
-      activityHoldTimerRef.current = setTimeout(() => {
-        activityHoldTimerRef.current = null
-        setHeldActivity((current) => current?.assistantId === assistantId && current.until <= Date.now() ? null : current)
-        setWebSearchActivity((current) => current?.assistantId === assistantId ? null : current)
-      }, WEB_ACTIVITY_HOLD_MS)
-    }
+    setHeldActivity({ assistantId, toolCallId, label: 'Searching the web', until: Number.POSITIVE_INFINITY })
   }
 
-  const holdCompletedActivity = (assistantId: string, label: string): void => {
+  const holdCompletedActivity = (assistantId: string, toolCallId: string, label: string): void => {
     if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
-    const until = Date.now() + WEB_ACTIVITY_HOLD_MS
-    setHeldActivity({ assistantId, label, until })
-    activityHoldTimerRef.current = setTimeout(() => {
-      activityHoldTimerRef.current = null
-      setHeldActivity((current) => current?.assistantId === assistantId && current.until <= Date.now() ? null : current)
-    }, WEB_ACTIVITY_HOLD_MS)
+    activityHoldTimerRef.current = null
+    setHeldActivity({ assistantId, toolCallId, label, until: Number.POSITIVE_INFINITY })
+  }
+
+  const schedulePastTense = (toolCallId: string, assistantId: string, pastLabel: string): void => {
+    const duration = activitySweepDurationMs()
+    const startedAt = toolCallStartedAtRef.current.get(toolCallId) ?? Date.now()
+    const elapsed = Math.max(0, Date.now() - startedAt)
+    const delay = duration - (elapsed % duration)
+    const existingTimer = toolTenseTimerRefs.current.get(toolCallId)
+    if (existingTimer) clearTimeout(existingTimer)
+    const timer = setTimeout(() => {
+      toolTenseTimerRefs.current.delete(toolCallId)
+      toolCallStartedAtRef.current.delete(toolCallId)
+      setPresentTenseToolIds((current) => {
+        const next = new Set(current)
+        next.delete(toolCallId)
+        return next
+      })
+      setHeldActivity((current) => current?.assistantId === assistantId && current.toolCallId === toolCallId ? { ...current, label: pastLabel } : current)
+    }, delay)
+    toolTenseTimerRefs.current.set(toolCallId, timer)
   }
 
   useEffect(() => {
     void window.api.getTheme().then(setTheme)
     void window.api.getResponseStylePreference().then(setResponseStylePreference)
+    void window.api.getConnections().then(setConnections).catch(() => setConnections([]))
     void Promise.all([window.api.getProjects(), window.api.getExpandedProjectPaths(), window.api.getChatThreads(), window.api.getWorkspaceViewState()]).then(async ([storedProjects, storedExpandedPaths, storedThreads, storedViewState]) => {
       const projectPaths = new Set(storedProjects.map((project) => project.path))
       const reconciledThreads = await Promise.all(storedThreads.map(async (thread) => {
@@ -406,7 +499,14 @@ export default function MainApp(): JSX.Element {
                 id: tc.id,
                 name: tc.name,
                 arguments: tc.arguments,
-                uiMessage: typeof tc.arguments.ui_message === 'string' ? tc.arguments.ui_message : undefined,
+                uiMessage: (() => {
+                  const value = tc.arguments.ui_message
+                  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+                  const candidate = value as { uim_prt?: unknown; uim_pat?: unknown }
+                  return typeof candidate.uim_prt === 'string' && typeof candidate.uim_pat === 'string'
+                    ? { uim_prt: candidate.uim_prt, uim_pat: candidate.uim_pat }
+                    : undefined
+                })(),
                 result: undefined,
                 filePath: undefined
               }))
@@ -465,9 +565,9 @@ export default function MainApp(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (!downloadedModelIds || downloadedModels.some((model) => model.id === selectedModelId)) return
-    setSelectedModelId(downloadedModels[0]?.id ?? '')
-  }, [downloadedModelIds, downloadedModels, selectedModelId])
+    if (!downloadedModelIds || connections === null || composerModels.some((model) => model.id === selectedModelId)) return
+    setSelectedModelId(composerModels[0]?.id ?? '')
+  }, [composerModels, connections, downloadedModelIds, selectedModelId])
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent): void => {
@@ -532,9 +632,11 @@ export default function MainApp(): JSX.Element {
       const current = activeThreadRef.current
       if (!current) return
       const assistantId = current.messages.at(-1)?.role === 'assistant' ? current.messages.at(-1)?.id : undefined
+      toolCallStartedAtRef.current.set(event.toolCallId, Date.now())
+      setPresentTenseToolIds((current) => new Set(current).add(event.toolCallId))
       if (assistantId) {
         if (WEB_TOOL_NAMES.has(event.name)) {
-          holdWebActivity(assistantId, true)
+          holdWebActivity(assistantId, event.toolCallId)
           const detail = webSearchDetail({ id: event.toolCallId, name: event.name, arguments: event.arguments })
           if (detail) revealWebSearchDetail(assistantId, detail)
         }
@@ -566,9 +668,11 @@ export default function MainApp(): JSX.Element {
       const completedToolMessage = current.messages.find((message) => message.role === 'tool' && message.toolCalls?.some((toolCall) => toolCall.id === event.toolCallId))
       const completedToolCall = completedToolMessage?.toolCalls?.find((toolCall) => toolCall.id === event.toolCallId)
       if (completedToolCall && WEB_TOOL_NAMES.has(completedToolCall.name) && completedToolMessage?.parentAssistantId) {
-        holdWebActivity(completedToolMessage.parentAssistantId, false)
+        holdWebActivity(completedToolMessage.parentAssistantId, event.toolCallId)
+        schedulePastTense(event.toolCallId, completedToolMessage.parentAssistantId, completedToolLabel(completedToolCall))
       } else if (completedToolCall && completedToolMessage?.parentAssistantId) {
-        holdCompletedActivity(completedToolMessage.parentAssistantId, completedToolLabel(completedToolCall))
+        holdCompletedActivity(completedToolMessage.parentAssistantId, event.toolCallId, runningToolLabel(completedToolCall))
+        schedulePastTense(event.toolCallId, completedToolMessage.parentAssistantId, completedToolLabel(completedToolCall))
       }
       const messages = current.messages.map((message) =>
         message.role === 'tool' && message.toolCalls?.some((tc) => tc.id === event.toolCallId)
@@ -590,6 +694,7 @@ export default function MainApp(): JSX.Element {
     if (event.type === 'progress-update') {
       const current = activeThreadRef.current
       if (!current) return
+      clearHeldActivity(true)
       const pendingAssistant = [...current.messages].reverse().find((message) => message.role === 'assistant' && message.status === 'pending')
       if (!pendingAssistant) return
       const lastProgressIndex = current.messages.findLastIndex((message) =>
@@ -631,7 +736,11 @@ export default function MainApp(): JSX.Element {
       const failedToolMessage = current.messages.find((message) => message.role === 'tool' && message.toolCalls?.some((toolCall) => toolCall.id === event.toolCallId))
       const failedToolCall = failedToolMessage?.toolCalls?.find((toolCall) => toolCall.id === event.toolCallId)
       if (failedToolCall && WEB_TOOL_NAMES.has(failedToolCall.name) && failedToolMessage?.parentAssistantId) {
-        holdWebActivity(failedToolMessage.parentAssistantId, false)
+        holdWebActivity(failedToolMessage.parentAssistantId, event.toolCallId)
+        schedulePastTense(event.toolCallId, failedToolMessage.parentAssistantId, completedToolLabel(failedToolCall))
+      } else if (failedToolCall && failedToolMessage?.parentAssistantId) {
+        holdCompletedActivity(failedToolMessage.parentAssistantId, event.toolCallId, runningToolLabel(failedToolCall))
+        schedulePastTense(event.toolCallId, failedToolMessage.parentAssistantId, completedToolLabel(failedToolCall))
       }
       const messages = current.messages.map((message) =>
         message.role === 'tool' && message.toolCalls?.some((tc) => tc.id === event.toolCallId)
@@ -719,6 +828,12 @@ export default function MainApp(): JSX.Element {
           }
         : message)
       const finalThread = { ...completed, messages, updatedAt: completedAt }
+      const completedAssistantId = completed.messages.at(-1)?.role === 'assistant' ? completed.messages.at(-1)?.id : undefined
+      if (completedAssistantId) setExpandedWorkIds((current) => {
+        const next = new Set(current)
+        next.delete(completedAssistantId)
+        return next
+      })
       activeThreadRef.current = finalThread
       setActiveThread(finalThread)
       setThreads((current) => [finalThread, ...current.filter((thread) => thread.id !== finalThread.id)])
@@ -731,6 +846,7 @@ export default function MainApp(): JSX.Element {
   useEffect(() => () => {
     if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
+    for (const timer of toolTenseTimerRefs.current.values()) clearTimeout(timer)
   }, [])
 
   useLayoutEffect(() => {
@@ -854,6 +970,7 @@ export default function MainApp(): JSX.Element {
   }
 
   const startNewThread = (): void => {
+    setActiveView('chat')
     if (activeRequestIdRef.current) void window.api.cancelLocalCompletion(activeRequestIdRef.current)
     activeRequestIdRef.current = null
     activeThreadRef.current = null
@@ -942,6 +1059,7 @@ export default function MainApp(): JSX.Element {
 
   const openThread = (thread: ChatThread): void => {
     if (activeRequestIdRef.current) return
+    setActiveView('chat')
     activeThreadRef.current = thread
     setActiveThread(thread)
     setSelectedProjectPath(thread.projectPath)
@@ -1025,8 +1143,24 @@ export default function MainApp(): JSX.Element {
     const threadId = activeThreadRef.current?.id ?? crypto.randomUUID()
     const projectPath = activeThreadRef.current?.projectPath ?? selectedProjectPath ?? projects[0]?.path ?? ''
     const now = Date.now()
+    const modelProvenance: AgentModelProvenance = selectedModel.source === 'local'
+      ? {
+          source: 'local',
+          provider: selectedModel.providerName,
+          modelId: selectedModel.modelId,
+          displayName: selectedModel.displayName,
+          reasoningRetention: 'retain'
+        }
+      : {
+          source: 'remote',
+          connectionId: selectedModel.connectionId,
+          provider: selectedModel.providerName,
+          modelId: selectedModel.modelId,
+          displayName: selectedModel.displayName,
+          reasoningRetention: selectedModel.remoteModel && shouldRetainRawReasoning(selectedModel.remoteModel) ? 'retain' : 'discard'
+        }
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content, attachments: pendingAttachments, timestamp: now }
-    const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '', timestamp: now, startedAt: now, status: 'pending' }
+    const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '', timestamp: now, startedAt: now, status: 'pending', model: modelProvenance }
     const thread: ChatThread = {
       id: threadId,
       projectPath,
@@ -1048,8 +1182,12 @@ export default function MainApp(): JSX.Element {
     if (isNewThread && content) void updateThreadTitle(threadId, content)
     startTimeRef.current = Date.now()
     try {
-      const status = await window.api.startDownloadedModel(selectedModel.hf_repo, selectedModel.gguf_file, pendingAttachments.length > 0)
-      if (status.state !== 'ready') throw new Error(status.message ?? 'The local model could not start')
+      if (selectedModel.source === 'local') {
+        const localModel = selectedModel.localModel
+        if (!localModel) throw new Error('The selected local model is unavailable')
+        const status = await window.api.startDownloadedModel(localModel.hf_repo, localModel.gguf_file, pendingAttachments.length > 0)
+        if (status.state !== 'ready') throw new Error(status.message ?? 'The local model could not start')
+      }
       const messages = thread.messages.flatMap((message) => {
         if (message.role === 'tool' || (message.role === 'assistant' && !message.content)) return []
         if (message.role === 'user' && message.attachments?.length) {
@@ -1063,28 +1201,33 @@ export default function MainApp(): JSX.Element {
         }
         return message.content ? [{ role: message.role as 'user' | 'assistant', content: message.content }] : []
       })
-      const profile = reasoningProfile(selectedModel, reasoningEffort)
-      const systemPrompt = `${profile.systemPrompt}\n\n${responseStylePrompt(responseStylePreference)}`
-      const start = await window.api.startLocalCompletion({
+      const localProfile = selectedModel.localModel ? reasoningProfile(selectedModel.localModel, reasoningEffort) : undefined
+      const systemPrompt = localProfile
+        ? `${localProfile.systemPrompt}\n\n${responseStylePrompt(responseStylePreference)}`
+        : responseStylePrompt(responseStylePreference)
+      const target: AgentExecutionTarget = selectedModel.source === 'local'
+        ? { source: 'local', modelId: selectedModel.modelId, displayName: selectedModel.displayName }
+        : { source: 'remote', connectionId: selectedModel.connectionId ?? '', modelId: selectedModel.modelId, reasoningEffort }
+      const start = await window.api.startAgentCompletion(target, {
         threadId,
         projectPath,
         messages: [
           { role: 'system', content: systemPrompt },
           ...messages
         ],
-        enableThinking: profile.enableThinking,
-        temperature: profile.temperature,
-        topP: profile.topP,
-        topK: profile.topK,
-        minP: profile.minP,
-        presencePenalty: profile.presencePenalty,
-        repetitionPenalty: profile.repetitionPenalty,
-        maxTokens: 8192
+        enableThinking: localProfile?.enableThinking ?? reasoningEffort !== 'Instant',
+        temperature: localProfile?.temperature,
+        topP: localProfile?.topP,
+        topK: localProfile?.topK,
+        minP: localProfile?.minP,
+        presencePenalty: localProfile?.presencePenalty,
+        repetitionPenalty: localProfile?.repetitionPenalty,
+        maxTokens: DEFAULT_AGENT_MAX_TOKENS
       })
       activeRequestIdRef.current = start.requestId
       setCompletionState('streaming')
     } catch (error) {
-      setCompletionError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'The local model could not start')
+      setCompletionError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'The selected model could not start')
       const current = activeThreadRef.current
       if (current) {
         const completedAt = Date.now()
@@ -1282,7 +1425,8 @@ export default function MainApp(): JSX.Element {
                       </div>
                     )
                   }
-                  if (parent && !expandedWorkIds.has(parent.id)) return null
+                  const parentIsFinished = parent?.role === 'assistant' && parent.status !== 'pending'
+                  if (parentIsFinished && parent && !expandedWorkIds.has(parent.id)) return null
                   if (message.content === '__reasoning__' && message.reasoningSummary) {
                     return (
                       <div className="chat-message reasoning-message" key={message.id}>
@@ -1292,25 +1436,59 @@ export default function MainApp(): JSX.Element {
                       </div>
                     )
                   }
+                  if (message.toolCalls?.every((toolCall) => toolCall.result === undefined && !toolCall.error)) return null
+                  const hasLaterProgress = activeThread.messages.slice(messageIndex + 1).some((candidate) =>
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && candidate.content === '__progress__'
+                  )
+                  if (!parentIsFinished && !hasLaterProgress) return null
+                  const previousProgressOffset = activeThread.messages.slice(0, messageIndex).findLastIndex((candidate) =>
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && candidate.content === '__progress__'
+                  )
+                  const nextProgressOffset = activeThread.messages.slice(messageIndex + 1).findIndex((candidate) =>
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && candidate.content === '__progress__'
+                  )
+                  const phaseStart = previousProgressOffset + 1
+                  const phaseEnd = nextProgressOffset >= 0 ? messageIndex + 1 + nextProgressOffset : activeThread.messages.length
+                  const phaseToolMessages = activeThread.messages.slice(phaseStart, phaseEnd).filter((candidate) =>
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && (candidate.toolCalls?.length ?? 0) > 0
+                  )
+                  if (phaseToolMessages.at(-1)?.id !== message.id) return null
+                  const phaseToolCalls = phaseToolMessages.flatMap((candidate) => candidate.toolCalls ?? [])
+                  const bundleCall = phaseToolCalls.at(-1)
+                  if (!bundleCall) return null
+                  const bundleRunning = bundleCall.result === undefined && !bundleCall.error
+                  const bundleUsesPresentTense = bundleRunning || presentTenseToolIds.has(bundleCall.id)
+                  const BundleIcon = toolIconMap[bundleCall.name] ?? toolIconMap.default
+                  const bundleLabel = bundleUsesPresentTense ? runningToolLabel(bundleCall) : completedToolLabel(bundleCall)
                   return (
                     <div className="chat-message tool-message" key={message.id}>
-                      {message.toolCalls?.map((tc) => {
-                        const hasResult = tc.result !== undefined && !tc.error
-                        const hasError = !!tc.error
-                        const running = !hasResult && !hasError
-                        return (
-                          <details className={hasResult ? 'tool-call completed' : hasError ? 'tool-call error' : 'tool-call running'} key={tc.id}>
-                            <summary className="tool-call-summary">
-                            <span className="tool-call-icon">{(() => {
-                              const Icon = toolIconMap[tc.name] ?? toolIconMap.default
-                              return <Icon size={12} className={hasError ? 'tool-call-icon-error' : 'tool-call-icon-check'} />
-                            })()}</span>
-                            <span className="tool-call-name">{tc.uiMessage ?? (running ? runningToolLabel(tc) : completedToolLabel(tc))}</span>
-                            </summary>
-                            {(tc.result || tc.error) && <pre className="tool-call-preview">{tc.error ?? tc.result}</pre>}
-                          </details>
-                        )
-                      })}
+                      <details className="tool-bundle">
+                        <summary className="tool-bundle-summary">
+                          <span className="tool-call-icon"><BundleIcon size={12} className={bundleCall.error ? 'tool-call-icon-error' : 'tool-call-icon-check'} /></span>
+                          <span className="tool-bundle-label">{bundleLabel}</span>
+                          <ChevronDown size={12} className="tool-bundle-chevron" />
+                        </summary>
+                        <div className="tool-bundle-list">
+                          {phaseToolCalls.map((tc) => {
+                            const hasResult = tc.result !== undefined && !tc.error
+                            const hasError = !!tc.error
+                            const running = !hasResult && !hasError
+                            const usesPresentTense = running || presentTenseToolIds.has(tc.id)
+                            return (
+                              <details className={hasResult ? 'tool-call completed' : hasError ? 'tool-call error' : 'tool-call running'} key={tc.id}>
+                                <summary className="tool-call-summary">
+                                  <span className="tool-call-icon">{(() => {
+                                    const Icon = toolIconMap[tc.name] ?? toolIconMap.default
+                                    return <Icon size={12} className={hasError ? 'tool-call-icon-error' : 'tool-call-icon-check'} />
+                                  })()}</span>
+                                  <span className="tool-call-name">{usesPresentTense ? runningToolLabel(tc) : completedToolLabel(tc)}</span>
+                                </summary>
+                                {(tc.result || tc.error) && <pre className="tool-call-preview">{tc.error ?? tc.result}</pre>}
+                              </details>
+                            )
+                          })}
+                        </div>
+                      </details>
                     </div>
                   )
                 }
@@ -1329,6 +1507,7 @@ export default function MainApp(): JSX.Element {
                   const heldActivityLabel = heldActivity?.assistantId === message.id && heldActivity.until > Date.now() ? heldActivity.label : undefined
                   const activeLabel = runningToolCall ? runningToolLabel(runningToolCall) : heldActivityLabel ?? 'Thinking'
                   const activityToolCall = runningToolCall ?? (heldActivityLabel ? turnToolCalls.at(-1) : undefined)
+                  const activityIsAnimating = !activityToolCall || !!runningToolCall || presentTenseToolIds.has(activityToolCall.id)
                   const mostRecentSearch = [...turnToolCalls].reverse().find((toolCall) => toolCall.name === 'web_search')
                   const streamedSearchDetail = webSearchActivity?.assistantId === message.id
                     ? webSearchActivity.text.slice(0, webSearchActivity.revealedCharacters)
@@ -1357,15 +1536,12 @@ export default function MainApp(): JSX.Element {
                             ? <span className="terminal-activity-label">Stopped</span>
                             : message.status === 'error'
                               ? <span className="terminal-activity-label error">Failed</span>
-                            : <button className="assistant-activity" type="button" aria-expanded={expanded} onClick={() => setExpandedWorkIds((current) => {
-                                const next = new Set(current)
-                                if (next.has(message.id)) next.delete(message.id)
-                                else next.add(message.id)
-                                return next
-                              })}>{activityToolCall && <span className="activity-tool-icon">{(() => {
+                            : <span className={activityToolCall ? 'assistant-activity tool-active' : 'assistant-activity'}>{activityToolCall && <span className="activity-tool-icon">{(() => {
                                 const Icon = toolIconMap[activityToolCall.name] ?? toolIconMap.default
                                 return <Icon size={13} />
-                              })()}</span>}<span className="activity-label" data-text={activeLabel}>{activeLabel}</span>{visibleSearchDetail && <span className="web-search-detail">{visibleSearchDetail}</span>}<ChevronRight size={12} className={expanded ? 'work-duration-chevron expanded' : 'work-duration-chevron'} /></button>}
+                              })()}</span>}{activityIsAnimating
+                                ? <span className="activity-label" data-text={activeLabel}>{activeLabel}</span>
+                                : <span className="activity-label-static">{activeLabel}</span>}{visibleSearchDetail && <span className="web-search-detail">{visibleSearchDetail}</span>}</span>}
                         {message.status !== 'pending' && displayedFileChanges.length > 0 && (
                           <div className="files-changed">
                             <div className="files-changed-summary">

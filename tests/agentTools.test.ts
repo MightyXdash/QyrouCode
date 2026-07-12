@@ -15,7 +15,10 @@ test('non-web tools require a compact UI message while web tools do not', () => 
         assert.equal(parameters.properties.ui_message, undefined)
         assert.ok(!parameters.required.includes('ui_message'))
       } else {
-        assert.ok(parameters.properties.ui_message)
+        const uiMessage = parameters.properties.ui_message as { type?: string; required?: string[]; properties?: Record<string, unknown> }
+        assert.equal(uiMessage.type, 'object')
+        assert.deepEqual(uiMessage.required, ['uim_prt', 'uim_pat'])
+        assert.deepEqual(Object.keys(uiMessage.properties ?? {}), ['uim_prt', 'uim_pat'])
         assert.ok(parameters.required.includes('ui_message'))
       }
     }

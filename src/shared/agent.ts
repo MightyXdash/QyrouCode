@@ -16,6 +16,22 @@ export interface PersistedToolCall {
   arguments: Record<string, unknown>
 }
 
+export type AgentModelSource = 'local' | 'remote'
+export type ReasoningRetention = 'retain' | 'discard'
+
+export interface AgentModelProvenance {
+  source: AgentModelSource
+  connectionId?: string
+  provider: string
+  modelId: string
+  displayName: string
+  reasoningRetention: ReasoningRetention
+}
+
+export type AgentExecutionTarget =
+  | { source: 'local'; modelId: string; displayName: string }
+  | { source: 'remote'; connectionId: string; modelId: string; reasoningEffort: ViewReasoningEffort }
+
 export interface PersistedAgentMessage {
   role: 'user' | 'assistant' | 'tool'
   content: PersistedMessageContent
@@ -24,6 +40,7 @@ export interface PersistedAgentMessage {
   toolCalls?: PersistedToolCall[]
   reasoningText?: string
   filePath?: string
+  model?: AgentModelProvenance
 }
 
 export interface PersistedAgentSession {

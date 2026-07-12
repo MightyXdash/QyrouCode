@@ -21,11 +21,16 @@ export interface FileChangeDisplay {
   deletions: number
 }
 
+export interface ToolUiMessage {
+  uim_prt: string
+  uim_pat: string
+}
+
 export interface ToolCallDisplay {
   id: string
   name: string
   arguments: Record<string, unknown>
-  uiMessage?: string
+  uiMessage?: ToolUiMessage
   result?: string
   filePath?: string
   error?: string
@@ -46,6 +51,7 @@ export interface ChatMessage {
   startedAt?: number
   completedAt?: number
   durationMs?: number
+  model?: import('./agent').AgentModelProvenance
 }
 
 export interface ChatThread {

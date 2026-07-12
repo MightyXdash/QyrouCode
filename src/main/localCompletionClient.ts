@@ -32,6 +32,7 @@ export interface LocalChatMessage {
   toolCalls?: readonly LocalToolCall[]
   reasoningText?: string
   filePath?: string
+  model?: import('../shared/agent').AgentModelProvenance
 }
 
 export interface LocalCompletionRequest {
@@ -71,7 +72,7 @@ export interface LocalCompletionStart {
 
 export type LocalCompletionEvent =
   | { requestId: string; type: 'delta'; delta: string }
-  | { requestId: string; type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: string }
+  | { requestId: string; type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: import('../shared/chat').ToolUiMessage }
   | { requestId: string; type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
   | { requestId: string; type: 'tool-error'; toolCallId: string; error: string }
   | { requestId: string; type: 'files-changed'; files: import('../shared/chat').FileChangeDisplay[] }

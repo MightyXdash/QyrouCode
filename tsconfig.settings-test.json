@@ -10,8 +10,10 @@
   },
   "include": [
     "src/shared/settings.ts",
+    "src/shared/connections.ts",
     "src/shared/llama.ts",
     "src/shared/modelManifest.ts",
+    "src/shared/remoteModels.ts",
     "src/main/runtimePaths.ts",
     "src/main/modelResolver.ts",
     "src/main/localCompletionClient.ts",
@@ -34,6 +36,8 @@
     "tests/runtimePaths.test.ts",
     "tests/runtimeManifest.test.ts",
     "tests/settings.test.ts",
+    "tests/connections.test.ts",
+    "tests/remoteModels.test.ts",
     "tests/reasoningProfiles.test.ts"
   ]
 }

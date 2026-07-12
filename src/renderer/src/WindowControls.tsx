@@ -7,7 +7,10 @@ import type { LocalCompletionEvent, LocalCompletionStart } from '../../main/loca
 import type { AgentRunRequest } from '../../main/agentRuntime'
 import type { Project } from '../../shared/projects'
 import type { ChatAttachment, ChatThread } from '../../shared/chat'
-import type { PersistedAgentSession, WorkspaceViewState } from '../../shared/agent'
+import type { AgentExecutionTarget, PersistedAgentSession, WorkspaceViewState } from '../../shared/agent'
+import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, ConnectionTestResult } from '../../shared/connections'
+import type { ConnectionSecurityStatus } from '../../main/connectionStore'
+import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../../shared/conversationExport'
 
 declare global {
   interface Window {
@@ -24,6 +27,14 @@ declare global {
       getTheme: () => Promise<ThemePreference>
       getResponseStylePreference: () => Promise<ResponseStylePreference>
       setTheme: (theme: ThemePreference) => Promise<ThemePreference>
+      getConnections: () => Promise<ConnectionSummary[]>
+      getConnectionSecurityStatus: () => Promise<ConnectionSecurityStatus>
+      saveConnection: (input: ConnectionInput, connectionId?: string) => Promise<ConnectionMutationResult>
+      testConnection: (input: ConnectionInput, connectionId?: string) => Promise<ConnectionTestResult>
+      deleteConnection: (connectionId: string) => Promise<boolean>
+      updateConnectionModels: (connectionId: string, selectedModelIds: string[]) => Promise<ConnectionMutationResult>
+      previewConversationExport: (request: ConversationExportRequest) => Promise<ConversationExportPreview>
+      exportConversations: (request: ConversationExportRequest) => Promise<ConversationExportResult>
       getProjects: () => Promise<Project[]>
       getExpandedProjectPaths: () => Promise<string[]>
       setExpandedProjectPaths: (paths: string[]) => Promise<string[]>
@@ -45,6 +56,7 @@ declare global {
       getLlamaStatus: () => Promise<LlamaRuntimeStatus>
       startLocalModel: (modelId: string) => Promise<LlamaRuntimeStatus>
       startLocalCompletion: (request: AgentRunRequest) => Promise<LocalCompletionStart>
+      startAgentCompletion: (target: AgentExecutionTarget, request: AgentRunRequest) => Promise<LocalCompletionStart>
       cancelLocalCompletion: (requestId: string) => Promise<boolean>
       onLocalCompletionEvent: (callback: (event: LocalCompletionEvent) => void) => () => void
       startLlamaServer: (modelPath: string, contextTokens: number) => Promise<LlamaRuntimeStatus>

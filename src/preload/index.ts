@@ -6,8 +6,10 @@ import type { LocalCompletionEvent, LocalCompletionStart } from '../main/localCo
 import type { AgentRunRequest } from '../main/agentRuntime'
 import type { Project } from '../shared/projects'
 import type { ChatAttachment, ChatThread } from '../shared/chat'
-import type { WorkspaceViewState } from '../shared/agent'
-import type { PersistedAgentSession } from '../shared/agent'
+import type { AgentExecutionTarget, PersistedAgentSession, WorkspaceViewState } from '../shared/agent'
+import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, ConnectionTestResult } from '../shared/connections'
+import type { ConnectionSecurityStatus } from '../main/connectionStore'
+import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../shared/conversationExport'
 
 const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
@@ -27,6 +29,14 @@ const api = {
   getTheme: (): Promise<ThemePreference> => ipcRenderer.invoke('get-theme'),
   getResponseStylePreference: (): Promise<ResponseStylePreference> => ipcRenderer.invoke('get-response-style-preference'),
   setTheme: (theme: ThemePreference): Promise<ThemePreference> => ipcRenderer.invoke('set-theme', theme),
+  getConnections: (): Promise<ConnectionSummary[]> => ipcRenderer.invoke('get-connections'),
+  getConnectionSecurityStatus: (): Promise<ConnectionSecurityStatus> => ipcRenderer.invoke('get-connection-security-status'),
+  saveConnection: (input: ConnectionInput, connectionId?: string): Promise<ConnectionMutationResult> => ipcRenderer.invoke('save-connection', input, connectionId),
+  testConnection: (input: ConnectionInput, connectionId?: string): Promise<ConnectionTestResult> => ipcRenderer.invoke('test-connection', input, connectionId),
+  deleteConnection: (connectionId: string): Promise<boolean> => ipcRenderer.invoke('delete-connection', connectionId),
+  updateConnectionModels: (connectionId: string, selectedModelIds: string[]): Promise<ConnectionMutationResult> => ipcRenderer.invoke('update-connection-models', connectionId, selectedModelIds),
+  previewConversationExport: (request: ConversationExportRequest): Promise<ConversationExportPreview> => ipcRenderer.invoke('preview-conversation-export', request),
+  exportConversations: (request: ConversationExportRequest): Promise<ConversationExportResult> => ipcRenderer.invoke('export-conversations', request),
   getProjects: (): Promise<Project[]> => ipcRenderer.invoke('get-projects'),
   getExpandedProjectPaths: (): Promise<string[]> => ipcRenderer.invoke('get-expanded-project-paths'),
   setExpandedProjectPaths: (paths: string[]): Promise<string[]> => ipcRenderer.invoke('set-expanded-project-paths', paths),
@@ -65,6 +75,7 @@ const api = {
    * and render deltas in a conversation surface without moving or restyling the current UI elements.
    */
   startLocalCompletion: (request: AgentRunRequest): Promise<LocalCompletionStart> => ipcRenderer.invoke('start-local-completion', request),
+  startAgentCompletion: (target: AgentExecutionTarget, request: AgentRunRequest): Promise<LocalCompletionStart> => ipcRenderer.invoke('start-agent-completion', target, request),
   cancelLocalCompletion: (requestId: string): Promise<boolean> => ipcRenderer.invoke('cancel-local-completion', requestId),
   onLocalCompletionEvent: (callback: (event: LocalCompletionEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, completionEvent: LocalCompletionEvent) => callback(completionEvent)

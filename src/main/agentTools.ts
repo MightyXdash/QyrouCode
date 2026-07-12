@@ -46,8 +46,14 @@ const READ_ONLY_COMMAND = /^\s*(?:git\s+(?:status|diff|log|show|branch|rev-parse
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 const TASK_STATE_TOOL_NAME = 'cur_task_state'
 const UI_MESSAGE_PROPERTY = {
-  type: 'string',
-  description: 'Required user-facing activity label. Write in first person, describe the current action naturally, and stay under six words by all means.'
+  type: 'object',
+  description: 'Required user-facing activity labels for this tool. Do not place a message directly under ui_message.',
+  properties: {
+    uim_prt: { type: 'string', description: 'Present-continuous first-person label describing the action in progress, such as “I’m reading the file”. Stay under six words.' },
+    uim_pat: { type: 'string', description: 'Past-tense label describing the completed action. Stay under six words.' }
+  },
+  required: ['uim_prt', 'uim_pat'],
+  additionalProperties: false
 }
 
 const definition = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []): LocalToolDefinition => {
@@ -65,8 +71,8 @@ const definition = (name: string, description: string, properties: Record<string
 }
 
 const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
-  definition(TASK_STATE_TOOL_NAME, 'Share a user-visible update after thinking and before a tool-based substep. Call this periodically as the task state changes. The message should naturally explain what you will do, what you are doing, or what you just established.', {
-    message: { type: 'string', description: 'A natural roughly 60–65-word user-facing task-state update. This is guidance, not a strict measured limit.' }
+  definition(TASK_STATE_TOOL_NAME, 'Share a user-visible update after thinking and before a meaningful tool-based substep. Call this only when the task state materially changes. Prefer neutral state language and do not default to first person.', {
+    message: { type: 'string', description: 'A natural roughly 60–65-word user-facing task-state update. Prefer neutral phrasing; use first person only when genuinely natural. This is guidance, not a strict measured limit.' }
   }, ['message']),
   definition('read', 'Read a UTF-8 text file with line numbers. Use this before editing an existing file.', {
     filePath: { type: 'string', description: 'Workspace-relative or absolute file path' },

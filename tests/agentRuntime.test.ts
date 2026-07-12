@@ -12,6 +12,7 @@ const taskStateCompletion = (id: string, message = REQUIRED_PROGRESS): LocalComp
   text: '',
   toolCalls: [{ id, name: 'cur_task_state', arguments: { message } }]
 })
+const uiMessage = (uim_prt: string, uim_pat: string): { uim_prt: string; uim_pat: string } => ({ uim_prt, uim_pat })
 
 class ScriptedProvider implements AgentCompletionProvider {
   readonly requests: LocalCompletionRequest[] = []
@@ -33,9 +34,9 @@ test('runs native and healed local-model tools end to end before returning a fin
   try {
     writeFileSync(join(projectPath, 'AGENTS.md'), 'Always create files under src.\n', 'utf8')
     const provider = new ScriptedProvider([
-      { text: '', toolCalls: [{ id: 'call_1', name: 'write', arguments: { ui_message: 'I’m creating the result module', filePath: 'src/result.ts', content: 'export const result = 1\n' } }] },
+      { text: '', toolCalls: [{ id: 'call_1', name: 'write', arguments: { ui_message: uiMessage('I’m creating the result module', 'Created the result module'), filePath: 'src/result.ts', content: 'export const result = 1\n' } }] },
       taskStateCompletion('state_write'),
-      { text: '<tool_call>{"name":"read","arguments":{"ui_message":"I’m verifying the result module","filePath":"src/result.ts"}}</tool_call>', toolCalls: [] },
+      { text: '<tool_call>{"name":"read","arguments":{"ui_message":{"uim_prt":"I’m verifying the result module","uim_pat":"Verified the result module"},"filePath":"src/result.ts"}}</tool_call>', toolCalls: [] },
       taskStateCompletion('state_read'),
       { text: 'Implemented the requested file and verified its contents.', toolCalls: [] }
     ])
@@ -59,6 +60,7 @@ test('runs native and healed local-model tools end to end before returning a fin
     assert.match(system, /You are SupraCode/)
     assert.match(system, /Use a high reasoning effort internally/)
     assert.match(system, /Always create files under src/)
+    assert.match(system, /Do not default to first person/)
     assert.doesNotMatch(system, /\bOpenCode\b/i)
     assert.equal(provider.requests[0].toolChoice, 'auto')
     assert.ok(provider.requests[0].tools?.some((tool) => tool.name === 'web_search'))
@@ -77,6 +79,31 @@ test('runs native and healed local-model tools end to end before returning a fin
   }
 })
 
+test('suppresses substantially similar task-state updates across one run', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const firstState = 'Repository inspection is underway to provide a comprehensive overview of the available files, code structure, and project resources. The resulting inventory will clarify the current scope, expose the main components, and identify any areas that need closer attention before deciding which implementation or research step should follow.'
+    const duplicateState = 'The repository structure is being explored to provide a comprehensive overview of available files, code organization, and project resources. This inventory will clarify the project scope, reveal the primary components, and identify any areas requiring closer attention before choosing the next implementation or research step.'
+    const provider = new ScriptedProvider([
+      taskStateCompletion('state_first', firstState),
+      taskStateCompletion('state_duplicate', duplicateState),
+      { text: 'Repository inspection is complete.', toolCalls: [] }
+    ])
+    const events: AgentToolEvent[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-duplicate-state',
+      projectPath,
+      messages: [{ role: 'user', content: 'Inspect the repository.' }]
+    }, () => {}, undefined, (event) => events.push(event))
+
+    assert.equal(events.filter((event) => event.type === 'progress-update' && event.summary === firstState).length, 1)
+    assert.equal(events.filter((event) => event.type === 'progress-update' && event.summary === duplicateState).length, 0)
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
 test('executes one tool per model turn and emits authored progress and UI messages', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
@@ -85,8 +112,8 @@ test('executes one tool per model turn and emits authored progress and UI messag
       {
         text: progress,
         toolCalls: [
-          { id: 'call_first', name: 'write', arguments: { ui_message: 'I’m creating the fixture', filePath: 'first.txt', content: 'first' } },
-          { id: 'call_second', name: 'write', arguments: { ui_message: 'I’m creating another fixture', filePath: 'second.txt', content: 'second' } }
+          { id: 'call_first', name: 'write', arguments: { ui_message: uiMessage('I’m creating the fixture', 'Created the fixture'), filePath: 'first.txt', content: 'first' } },
+          { id: 'call_second', name: 'write', arguments: { ui_message: uiMessage('I’m creating another fixture', 'Created another fixture'), filePath: 'second.txt', content: 'second' } }
         ]
       },
       taskStateCompletion('state_single', progress),
@@ -106,13 +133,14 @@ test('executes one tool per model turn and emits authored progress and UI messag
     const toolCallIndex = events.findIndex((event) => event.type === 'tool-call' && event.toolCallId === 'call_first')
     const completedProgressIndex = events.findIndex((event) => event.type === 'progress-update' && event.summary === progress)
     assert.ok(progressEvents.length > 1)
+    assert.ok(!events.some((event) => event.type === 'tool-call' && event.name === 'cur_task_state'))
     assert.ok(completedProgressIndex >= 0 && completedProgressIndex < toolCallIndex)
     assert.deepEqual(events.find((event) => event.type === 'tool-call' && event.toolCallId === 'call_first'), {
       type: 'tool-call',
       toolCallId: 'call_first',
       name: 'write',
-      arguments: { ui_message: 'I’m creating the fixture', filePath: 'first.txt', content: 'first' },
-      summary: 'I’m creating the fixture'
+      arguments: { ui_message: uiMessage('I’m creating the fixture', 'Created the fixture'), filePath: 'first.txt', content: 'first' },
+      summary: uiMessage('I’m creating the fixture', 'Created the fixture')
     })
     assert.match(textContent(provider.requests[0].messages[0].content), /Call exactly one tool at a time/)
     assert.equal(provider.requests[2].messages.find((message) => message.role === 'assistant')?.toolCalls?.length, 1)
@@ -125,7 +153,7 @@ test('does not block a tool when the model writes a shorter progress message', a
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
     const provider = new ScriptedProvider([
-      { text: '', toolCalls: [{ id: 'short_progress', name: 'write', arguments: { ui_message: 'I’m writing the fixture', filePath: 'short.txt', content: 'done' } }] },
+      { text: '', toolCalls: [{ id: 'short_progress', name: 'write', arguments: { ui_message: uiMessage('I’m writing the fixture', 'Wrote the fixture'), filePath: 'short.txt', content: 'done' } }] },
       taskStateCompletion('state_short', 'I’ll create the requested fixture now, verify that the write succeeds, and then report the result.'),
       { text: 'Created the fixture successfully.', toolCalls: [] }
     ])
@@ -148,7 +176,7 @@ test('generates a UI message when a non-web tool omits one', async () => {
     const provider = new ScriptedProvider([
       { text: '', toolCalls: [{ id: 'missing_ui', name: 'write', arguments: { filePath: 'generated.txt', content: 'done' } }] },
       taskStateCompletion('state_missing_ui'),
-      { text: 'I’m creating the requested file', toolCalls: [] },
+      { text: '{"uim_prt":"I’m creating the requested file","uim_pat":"Created the requested file"}', toolCalls: [] },
       { text: 'Created the requested file.', toolCalls: [] }
     ])
     const events: AgentToolEvent[] = []
@@ -160,7 +188,7 @@ test('generates a UI message when a non-web tool omits one', async () => {
     }, () => {}, undefined, (event) => events.push(event))
 
     const toolCall = events.find((event) => event.type === 'tool-call' && event.toolCallId === 'missing_ui')
-    assert.equal(toolCall?.type === 'tool-call' ? toolCall.summary : undefined, 'I’m creating the requested file')
+    assert.deepEqual(toolCall?.type === 'tool-call' ? toolCall.summary : undefined, uiMessage('I’m creating the requested file', 'Created the requested file'))
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
