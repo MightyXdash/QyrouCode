@@ -46,14 +46,15 @@ interface ComposerModel {
 }
 
 const DEFAULT_EXPORT_OPTIONS: SettingsExportOptions = {
-  scope: 'current-thread',
+  scope: 'thread',
   format: 'jsonl',
   includeMessages: true,
   includeToolCalls: true,
   includeTimestamps: true,
   includeReasoningSummaries: true,
-  includeEligibleRawReasoning: false,
-  attachmentMode: 'metadata'
+  includeRawReasoning: false,
+  attachments: 'metadata',
+  redactSensitiveData: true
 }
 
 const DEFAULT_EXPORT_STATE: SettingsExportState = { busy: false }
@@ -971,6 +972,7 @@ export default function MainApp(): JSX.Element {
 
   const startNewThread = (): void => {
     setActiveView('chat')
+    setActiveView('chat')
     if (activeRequestIdRef.current) void window.api.cancelLocalCompletion(activeRequestIdRef.current)
     activeRequestIdRef.current = null
     activeThreadRef.current = null
@@ -1060,6 +1062,7 @@ export default function MainApp(): JSX.Element {
   const openThread = (thread: ChatThread): void => {
     if (activeRequestIdRef.current) return
     setActiveView('chat')
+    setActiveView('chat')
     activeThreadRef.current = thread
     setActiveThread(thread)
     setSelectedProjectPath(thread.projectPath)
@@ -1129,6 +1132,48 @@ export default function MainApp(): JSX.Element {
     }
     const current = activeThreadRef.current
     if (current) void window.api.saveChatThread(current)
+  }
+
+  const exportRequest = (options: SettingsExportOptions): SettingsExportOptions => ({
+    ...options,
+    threadId: options.scope === 'thread' ? activeThread?.id : undefined,
+    projectPath: options.scope === 'project' ? selectedProjectPath : undefined
+  })
+
+  const saveProviderConnection = async ({ input, connectionId }: SettingsConnectionRequest): Promise<void> => {
+    const result = await window.api.saveConnection(input, connectionId)
+    if (!result.ok) throw new Error(result.error)
+    setConnections((current) => [...(current ?? []).filter((connection) => connection.id !== result.connection.id), result.connection])
+  }
+
+  const testProviderConnection = ({ input, connectionId }: SettingsConnectionRequest): Promise<SettingsConnectionTestResult> =>
+    window.api.testConnection(input, connectionId)
+
+  const disconnectProvider = async (connectionId: string): Promise<void> => {
+    await window.api.deleteConnection(connectionId)
+    setConnections((current) => (current ?? []).filter((connection) => connection.id !== connectionId))
+  }
+
+  const updateProviderModels = async (connectionId: string, selectedModelIds: readonly string[]): Promise<void> => {
+    const result = await window.api.updateConnectionModels(connectionId, [...selectedModelIds])
+    if (!result.ok) throw new Error(result.error)
+    setConnections((current) => [...(current ?? []).filter((connection) => connection.id !== connectionId), result.connection])
+  }
+
+  const updateExportOptions = (options: SettingsExportOptions): void => {
+    const request = exportRequest(options)
+    setExportOptions(request)
+    void window.api.previewConversationExport(request).then((preview) => setExportState((current) => ({ ...current, preview, error: undefined }))).catch((error) => setExportState((current) => ({ ...current, error: error instanceof Error ? error.message : 'Could not preview export' })))
+  }
+
+  const runExport = async (options: SettingsExportOptions): Promise<void> => {
+    setExportState((current) => ({ ...current, busy: true, error: undefined }))
+    try {
+      const result = await window.api.exportConversations(exportRequest(options))
+      setExportState((current) => ({ ...current, busy: false, result }))
+    } catch (error) {
+      setExportState((current) => ({ ...current, busy: false, error: error instanceof Error ? error.message : 'Could not export conversations' }))
+    }
   }
 
   const submitPrompt = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
@@ -1305,6 +1350,10 @@ export default function MainApp(): JSX.Element {
             <span>Search</span>
             <kbd>Ctrl K</kbd>
           </button>
+          <button className={activeView === 'settings' ? 'sidebar-action active' : 'sidebar-action'} type="button" aria-current={activeView === 'settings' ? 'page' : undefined} onClick={() => setActiveView('settings')}>
+            <Settings2 size={16} />
+            <span>Settings</span>
+          </button>
         </nav>
         <div className="sidebar-section">
           <div className="sidebar-section-heading">
@@ -1377,6 +1426,21 @@ export default function MainApp(): JSX.Element {
         </aside>
 
         <section className="app-workspace">
+        {activeView === 'settings' ? (
+          <SettingsPage
+            connections={connections ?? []}
+            catalog={REMOTE_MODEL_CATALOG}
+            exportOptions={exportRequest(exportOptions)}
+            exportState={exportState}
+            onSaveConnection={saveProviderConnection}
+            onTestConnection={testProviderConnection}
+            onDisconnectConnection={disconnectProvider}
+            onUpdateModelSelection={updateProviderModels}
+            onExportOptionsChange={updateExportOptions}
+            onExport={runExport}
+            onClose={() => setActiveView('chat')}
+          />
+        ) : <>
         {activeThread ? (
           <div
             className="conversation"
@@ -1654,7 +1718,7 @@ export default function MainApp(): JSX.Element {
                       onClick={() => { if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current); setOpenMenu('model') }}
                     >
                       <span>Model</span>
-                      <span className="advanced-value">{selectedModel ? modelDisplayName(selectedModel.base_model) : 'None'}</span>
+                      <span className="advanced-value">{selectedModel?.displayName ?? 'None'}</span>
                       <ChevronDown size={12} />
                     </button>
                   </div>
@@ -1670,20 +1734,20 @@ export default function MainApp(): JSX.Element {
                   >
                     <div className="menu-heading">Model</div>
                     {downloadedModelIds === null && <div className="menu-message">Checking downloaded models…</div>}
-                    {downloadedModelIds !== null && downloadedModels.length === 0 && (
+                    {downloadedModelIds !== null && composerModels.length === 0 && (
                       <div className="menu-message">
                         <strong>No downloaded models</strong>
                         <span>Download a supported model to use it here.</span>
                       </div>
                     )}
-                    {downloadedModels.map((model) => (
+                    {composerModels.map((model) => (
                       <button
                         className={model.id === selectedModelId ? 'menu-option selected' : 'menu-option'}
                         key={model.id}
                         type="button"
                         onClick={() => { setSelectedModelId(model.id); setOpenMenu(null) }}
                       >
-                        <span className="menu-option-copy"><strong>{modelDisplayName(model.base_model)}</strong></span>
+                        <span className="menu-option-copy"><strong>{model.displayName}</strong><small>{model.providerName}</small></span>
                       </button>
                     ))}
                   </div>
@@ -1708,7 +1772,7 @@ export default function MainApp(): JSX.Element {
                   </div>
                 )}
                 <button className="composer-select model-select" type="button" disabled={completionState !== 'idle'} onClick={() => setOpenMenu(openMenu === null ? 'advanced' : null)}>
-                  <span>{selectedModel ? modelDisplayName(selectedModel.base_model) : (downloadedModelIds === null ? 'Checking models…' : 'No models')}</span>
+                  <span>{selectedModel?.displayName ?? (downloadedModelIds === null ? 'Checking models…' : 'No models')}</span>
                   <span className="combined-effort">{reasoningEffort}</span>
                   <ChevronDown size={12} />
                 </button>
@@ -1731,6 +1795,7 @@ export default function MainApp(): JSX.Element {
             </div>
           )}
         </form>
+        </>}
         </section>
       </main>
       {projectDialogOpen && (

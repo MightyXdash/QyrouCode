@@ -113,6 +113,13 @@
 :root[data-theme='light'] { color-scheme: light; }
 :root[data-theme='dark'] { color-scheme: dark; }
 
+.app-error-screen { display: grid; min-height: 100dvh; place-items: center; padding: 32px; background: var(--background-base); color: var(--text-base); font-family: 'DM Sans', sans-serif; }
+.app-error-screen div { width: min(480px, 100%); padding: 24px; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-lg); background: var(--surface-raised); }
+.app-error-screen span { color: var(--interactive); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.app-error-screen h1 { margin: 8px 0; color: var(--text-strong); font-size: 24px; font-weight: 500; }
+.app-error-screen p { margin-bottom: 18px; font-size: 12px; line-height: 1.5; }
+.app-error-screen button { height: 32px; padding: 0 14px; border: 0; border-radius: var(--radius-md); background: var(--text-strong); color: var(--background-base); font: 500 12px 'DM Sans'; cursor: pointer; }
+
 .app-shell {
   position: relative;
   display: grid;
@@ -320,6 +327,7 @@
 }
 
 .sidebar-action:hover { background: var(--surface-hover); color: var(--text-strong); }
+.sidebar-action.active { background: var(--surface-selected); color: var(--text-strong); }
 .sidebar-action svg, .composer-icon-button svg { fill: none; stroke: currentColor; stroke-linecap: round; }
 .sidebar-action kbd { color: var(--text-weaker); font: 11px 'JetBrains Mono', monospace; opacity: 0; }
 .sidebar-action:hover kbd { opacity: 1; }
@@ -638,7 +646,7 @@
 .advanced-menu { right: var(--app-menu-alignment-offset); width: var(--app-advanced-menu-width); overflow: visible; }
 .submenu-menu { right: auto; left: calc(100% + var(--app-submenu-gap) - var(--app-menu-alignment-offset)); transform-origin: bottom left; }
 .reasoning-menu { width: var(--app-reasoning-menu-width); }
-.model-menu { width: var(--app-model-menu-width); }
+.model-menu { width: max(var(--app-model-menu-width), 260px); max-height: 420px; overflow-y: auto; }
 .menu-heading { padding: 5px var(--app-menu-item-padding-inline) 6px; color: var(--text-weak); font-size: 10px; font-weight: 500; }
 .menu-heading-compact { padding: 3px var(--app-menu-item-padding-inline) 4px; color: var(--text-weak); font-size: 10px; font-weight: 500; }
 .menu-divider { height: var(--border-width-hairline); margin: 2px 5px 3px; background: var(--border-weak); }
@@ -657,6 +665,7 @@
 .menu-option.selected { background: var(--surface-selected); color: var(--text-strong); }
 .menu-option-copy { display: grid; min-width: 0; flex: 1; }
 .menu-option-copy strong { overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.menu-option-copy small { overflow: hidden; color: var(--text-weak); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .menu-option-compact { min-height: 26px; padding: 1px var(--app-menu-item-padding-inline); font-size: 11px; }
 .checkmark { color: var(--interactive); font-size: 12px; }
 
