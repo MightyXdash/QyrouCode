@@ -7,7 +7,6 @@ export type RemoteReasoningEffort = typeof REMOTE_REASONING_EFFORTS[number]
 export type NativeReasoningEffort = typeof NATIVE_REASONING_EFFORTS[number]
 export type RemoteInputModality = 'text' | 'image' | 'file' | 'audio' | 'video'
 export type RemoteOutputModality = 'text' | 'image' | 'audio'
-export type RemoteRawReasoningPolicy = 'retain' | 'discard'
 export type CatalogConnectionKind = Exclude<ConnectionKind, 'openai-compatible'>
 export type DirectConnectionKind = Exclude<CatalogConnectionKind, 'openrouter'>
 
@@ -35,7 +34,6 @@ export interface RemoteModel {
   availableOn: readonly CatalogConnectionKind[]
   providerModelIds: Readonly<Partial<Record<CatalogConnectionKind, string>>>
   reasoning: RemoteModelReasoning
-  rawReasoningPolicy: RemoteRawReasoningPolicy
 }
 
 export interface RemoteModelGroup {
@@ -212,8 +210,7 @@ const defineRemoteModel = (seed: RemoteModelSeed): RemoteModel => {
     providerModelIds: directProvider
       ? { openrouter: seed.id, [directProvider]: directModelId }
       : { openrouter: seed.id },
-    reasoning: seed.reasoning,
-    rawReasoningPolicy: seed.id.startsWith('qwen/') || seed.id.startsWith('deepseek/') ? 'retain' : 'discard'
+    reasoning: seed.reasoning
   }
 }
 
@@ -729,9 +726,5 @@ export const supportsRemoteInputModality = (
   modality: RemoteInputModality
 ): boolean => resolveModelReference(model).inputModalities.includes(modality)
 
-export const shouldRetainRawReasoning = (model: RemoteModel | string): boolean => {
-  if (typeof model !== 'string') return model.rawReasoningPolicy === 'retain'
-  const resolved = getRemoteModel(model)
-  if (resolved) return resolved.rawReasoningPolicy === 'retain'
-  return model.startsWith('qwen/') || model.startsWith('deepseek/')
-}
+export const shouldRetainRemoteReasoning = (connectionKind: ConnectionKind): boolean =>
+  connectionKind === 'openrouter' || connectionKind === 'openai-compatible'

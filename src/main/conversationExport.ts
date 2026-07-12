@@ -33,7 +33,6 @@ export interface BuiltConversationExport {
   records: ConversationExportRecord[]
 }
 
-const RETAINED_REMOTE_PUBLISHERS = new Set(['deepseek', 'qwen'])
 const REDACTED_VALUE = '[REDACTED]'
 const SENSITIVE_REPLACEMENTS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bsk-ant-[A-Za-z0-9_-]{12,}\b/g, REDACTED_VALUE],
@@ -46,8 +45,7 @@ const SENSITIVE_REPLACEMENTS: ReadonlyArray<readonly [RegExp, string]> = [
 function canRetainReasoning(model: AgentModelProvenance | undefined): boolean {
   if (!model) return true
   if (model.source === 'local') return true
-  const publisher = model.modelId.split('/')[0]?.toLowerCase() ?? ''
-  return model.reasoningRetention === 'retain' && RETAINED_REMOTE_PUBLISHERS.has(publisher)
+  return model.reasoningRetention === 'retain'
 }
 
 function redactString(value: string): string {
@@ -63,10 +61,7 @@ function redactValue<T>(value: T): T {
 
 function filteredContent(content: PersistedMessageContent, attachments: ConversationExportRequest['attachments']): PersistedMessageContent {
   if (!Array.isArray(content)) return content
-  const parts = content.flatMap((part) => {
-    if (part.type === 'text') return [part]
-    return attachments === 'embedded' ? [part] : []
-  })
+  const parts = content.filter((part) => part.type === 'text' || attachments === 'embedded')
   if (parts.length === 0) return ''
   return parts
 }
@@ -84,7 +79,8 @@ function modelMetadata(model: AgentModelProvenance | undefined): Record<string, 
 
 function persistedMessageToOpenAI(message: PersistedAgentMessage, request: ConversationExportRequest): OpenAIExportMessage | undefined {
   if (!request.includeToolCalls && message.role === 'tool') return undefined
-  const hasToolCalls = Boolean(request.includeToolCalls && message.toolCalls?.length)
+  const toolCalls = request.includeToolCalls ? message.toolCalls ?? [] : []
+  const hasToolCalls = toolCalls.length > 0
   const hasEligibleReasoning = Boolean(request.includeRawReasoning && message.reasoningText && canRetainReasoning(message.model))
   if (!request.includeMessages && message.role !== 'tool' && !hasToolCalls && !hasEligibleReasoning) return undefined
   const exported: OpenAIExportMessage = {
@@ -93,7 +89,7 @@ function persistedMessageToOpenAI(message: PersistedAgentMessage, request: Conve
     name: message.role === 'tool' ? message.name : undefined,
     tool_call_id: message.role === 'tool' ? message.toolCallId : undefined,
     tool_calls: hasToolCalls
-      ? message.toolCalls.map((call) => ({
+      ? toolCalls.map((call) => ({
           id: call.id,
           type: 'function',
           function: { name: call.name, arguments: JSON.stringify(call.arguments) }

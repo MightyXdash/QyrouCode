@@ -8,6 +8,7 @@ import {
   type ThemePreference,
   type ResponseStylePreference,
   validateOnboardingPreferences,
+  validateResponseStylePreference,
   validateThemePreference
 } from '../shared/settings'
 import type { Project } from '../shared/projects'
@@ -60,6 +61,19 @@ export const setTheme = (value: unknown): ThemePreference => {
   const preferences = settingsStore.get('onboardingPreferences')
   if (preferences) settingsStore.set('onboardingPreferences', { ...preferences, theme })
   return theme
+}
+
+export const setResponseStylePreference = (value: unknown): ResponseStylePreference => {
+  const responseStyle = validateResponseStylePreference(value)
+  const preferences = settingsStore.get('onboardingPreferences')
+  if (preferences) {
+    settingsStore.set('onboardingPreferences', {
+      ...preferences,
+      responseStyle: responseStyle.style,
+      customResponseInstruction: responseStyle.customInstruction
+    })
+  }
+  return responseStyle
 }
 
 export const getProjects = (): Project[] => settingsStore.get('projects') ?? []

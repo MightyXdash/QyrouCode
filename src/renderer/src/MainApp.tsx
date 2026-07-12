@@ -11,14 +11,15 @@ import { responseStylePrompt } from './responseStylePrompts'
 import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2 } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
-import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRawReasoning, type RemoteModel } from '../../shared/remoteModels'
+import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
 import type { ConversationExportRequest } from '../../shared/conversationExport'
-import SettingsPage, {
+import SettingsDialog, {
+  type LocalModelDownloadState,
   type SettingsConnectionRequest,
   type SettingsConnectionTestResult,
   type SettingsExportOptions,
   type SettingsExportState
-} from './settings/SettingsPage'
+} from './settings/SettingsDialog'
 import './MainApp.css'
 
 const AUTO_SCROLL_THRESHOLD = 72
@@ -29,8 +30,6 @@ const PROJECT_THREAD_STAGGER_MS = 45
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 128_000
 const DEFAULT_AGENT_MAX_TOKENS = 8_192
-
-type MainView = 'chat' | 'settings'
 
 interface ComposerModel {
   id: string
@@ -314,10 +313,11 @@ function normalizeRestoredThread(thread: ChatThread): ChatThread {
 }
 
 export default function MainApp(): JSX.Element {
-  const [activeView, setActiveView] = useState<MainView>('chat')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [selectedModelId, setSelectedModelId] = useState('')
   const [downloadedModelIds, setDownloadedModelIds] = useState<Set<string> | null>(null)
+  const [localModelDownloads, setLocalModelDownloads] = useState<Record<string, LocalModelDownloadState>>({})
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('Medium')
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
   const [openTitlebarMenu, setOpenTitlebarMenu] = useState<TitlebarMenuId | null>(null)
@@ -452,6 +452,12 @@ export default function MainApp(): JSX.Element {
     setHeldActivity({ assistantId, toolCallId, label, until: Number.POSITIVE_INFINITY })
   }
 
+  const refreshDownloadedModels = async (): Promise<void> => {
+    const downloadedRepos = await window.api.getDownloadedModels(MODEL_LIST.map((model) => model.hf_repo))
+    const repoSet = new Set(downloadedRepos)
+    setDownloadedModelIds(new Set(MODEL_LIST.filter((model) => repoSet.has(model.hf_repo)).map((model) => model.id)))
+  }
+
   const schedulePastTense = (toolCallId: string, assistantId: string, pastLabel: string): void => {
     const duration = activitySweepDurationMs()
     const startedAt = toolCallStartedAtRef.current.get(toolCallId) ?? Date.now()
@@ -559,11 +565,15 @@ export default function MainApp(): JSX.Element {
       projectExpansionLoadedRef.current = true
       viewStateLoadedRef.current = true
     })
-    void window.api.getDownloadedModels(MODEL_LIST.map((model) => model.hf_repo)).then((downloadedRepos) => {
-      const repoSet = new Set(downloadedRepos)
-      setDownloadedModelIds(new Set(MODEL_LIST.filter((model) => repoSet.has(model.hf_repo)).map((model) => model.id)))
-    }).catch(() => setDownloadedModelIds(new Set()))
+    void refreshDownloadedModels().catch(() => setDownloadedModelIds(new Set()))
   }, [])
+
+  useEffect(() => window.api.onDownloadProgress((progress) => {
+    setLocalModelDownloads((current) => ({
+      ...current,
+      [progress.repoId]: { downloaded: progress.downloaded, total: progress.total }
+    }))
+  }), [])
 
   useEffect(() => {
     if (!downloadedModelIds || connections === null || composerModels.some((model) => model.id === selectedModelId)) return
@@ -971,8 +981,7 @@ export default function MainApp(): JSX.Element {
   }
 
   const startNewThread = (): void => {
-    setActiveView('chat')
-    setActiveView('chat')
+    setSettingsOpen(false)
     if (activeRequestIdRef.current) void window.api.cancelLocalCompletion(activeRequestIdRef.current)
     activeRequestIdRef.current = null
     activeThreadRef.current = null
@@ -1061,8 +1070,7 @@ export default function MainApp(): JSX.Element {
 
   const openThread = (thread: ChatThread): void => {
     if (activeRequestIdRef.current) return
-    setActiveView('chat')
-    setActiveView('chat')
+    setSettingsOpen(false)
     activeThreadRef.current = thread
     setActiveThread(thread)
     setSelectedProjectPath(thread.projectPath)
@@ -1160,6 +1168,41 @@ export default function MainApp(): JSX.Element {
     setConnections((current) => [...(current ?? []).filter((connection) => connection.id !== connectionId), result.connection])
   }
 
+  const downloadLocalModel = async (model: (typeof MODEL_LIST)[number]): Promise<void> => {
+    setLocalModelDownloads((current) => ({ ...current, [model.hf_repo]: { downloaded: 0, total: 0 } }))
+    try {
+      await window.api.downloadModel(model.hf_repo, model.gguf_file)
+      await refreshDownloadedModels()
+      setLocalModelDownloads((current) => {
+        const next = { ...current }
+        delete next[model.hf_repo]
+        return next
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Download failed.'
+      setLocalModelDownloads((current) => ({ ...current, [model.hf_repo]: { ...(current[model.hf_repo] ?? { downloaded: 0, total: 0 }), error: message } }))
+    }
+  }
+
+  const cancelLocalModelDownload = async (model: (typeof MODEL_LIST)[number]): Promise<void> => {
+    await window.api.cancelDownload(model.hf_repo)
+    setLocalModelDownloads((current) => {
+      const next = { ...current }
+      delete next[model.hf_repo]
+      return next
+    })
+  }
+
+  const changeResponseStyle = async (preference: ResponseStylePreference): Promise<void> => {
+    const previous = responseStylePreference
+    setResponseStylePreference(preference)
+    try {
+      setResponseStylePreference(await window.api.setResponseStylePreference(preference))
+    } catch {
+      setResponseStylePreference(previous)
+    }
+  }
+
   const updateExportOptions = (options: SettingsExportOptions): void => {
     const request = exportRequest(options)
     setExportOptions(request)
@@ -1202,7 +1245,7 @@ export default function MainApp(): JSX.Element {
           provider: selectedModel.providerName,
           modelId: selectedModel.modelId,
           displayName: selectedModel.displayName,
-          reasoningRetention: selectedModel.remoteModel && shouldRetainRawReasoning(selectedModel.remoteModel) ? 'retain' : 'discard'
+          reasoningRetention: shouldRetainRemoteReasoning(connections?.find((connection) => connection.id === selectedModel.connectionId)?.kind ?? 'openai') ? 'retain' : 'discard'
         }
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content, attachments: pendingAttachments, timestamp: now }
     const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '', timestamp: now, startedAt: now, status: 'pending', model: modelProvenance }
@@ -1350,7 +1393,7 @@ export default function MainApp(): JSX.Element {
             <span>Search</span>
             <kbd>Ctrl K</kbd>
           </button>
-          <button className={activeView === 'settings' ? 'sidebar-action active' : 'sidebar-action'} type="button" aria-current={activeView === 'settings' ? 'page' : undefined} onClick={() => setActiveView('settings')}>
+          <button className={settingsOpen ? 'sidebar-action active' : 'sidebar-action'} type="button" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(true)}>
             <Settings2 size={16} />
             <span>Settings</span>
           </button>
@@ -1426,21 +1469,6 @@ export default function MainApp(): JSX.Element {
         </aside>
 
         <section className="app-workspace">
-        {activeView === 'settings' ? (
-          <SettingsPage
-            connections={connections ?? []}
-            catalog={REMOTE_MODEL_CATALOG}
-            exportOptions={exportRequest(exportOptions)}
-            exportState={exportState}
-            onSaveConnection={saveProviderConnection}
-            onTestConnection={testProviderConnection}
-            onDisconnectConnection={disconnectProvider}
-            onUpdateModelSelection={updateProviderModels}
-            onExportOptionsChange={updateExportOptions}
-            onExport={runExport}
-            onClose={() => setActiveView('chat')}
-          />
-        ) : <>
         {activeThread ? (
           <div
             className="conversation"
@@ -1795,9 +1823,34 @@ export default function MainApp(): JSX.Element {
             </div>
           )}
         </form>
-        </>}
         </section>
       </main>
+      {settingsOpen && (
+        <SettingsDialog
+          connections={connections ?? []}
+          catalog={REMOTE_MODEL_CATALOG}
+          localCatalog={MODEL_LIST}
+          downloadedLocalModelIds={downloadedModelIds ?? new Set()}
+          localModelDownloads={localModelDownloads}
+          theme={theme}
+          reasoningEffort={reasoningEffort}
+          responseStyle={responseStylePreference}
+          exportOptions={exportRequest(exportOptions)}
+          exportState={exportState}
+          onThemeChange={selectTheme}
+          onReasoningEffortChange={setReasoningEffort}
+          onResponseStyleChange={changeResponseStyle}
+          onSaveConnection={saveProviderConnection}
+          onTestConnection={testProviderConnection}
+          onDisconnectConnection={disconnectProvider}
+          onUpdateModelSelection={updateProviderModels}
+          onDownloadLocalModel={downloadLocalModel}
+          onCancelLocalModelDownload={cancelLocalModelDownload}
+          onExportOptionsChange={updateExportOptions}
+          onExport={runExport}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
       {projectDialogOpen && (
         <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectSaving) setProjectDialogOpen(false) }}>
           <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">

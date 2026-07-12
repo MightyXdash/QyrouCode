@@ -16,6 +16,7 @@
     "src/shared/remoteModels.ts",
     "src/main/runtimePaths.ts",
     "src/main/modelResolver.ts",
+    "src/main/conversationExport.ts",
     "src/main/localCompletionClient.ts",
     "src/main/agentPrompt.ts",
     "src/main/agentRuntime.ts",
@@ -38,6 +39,7 @@
     "tests/settings.test.ts",
     "tests/connections.test.ts",
     "tests/remoteModels.test.ts",
+    "tests/conversationExport.test.ts",
     "tests/reasoningProfiles.test.ts"
   ]
 }

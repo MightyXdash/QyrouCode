@@ -26,6 +26,7 @@ declare global {
       completeOnboarding: (preferences: OnboardingPreferences) => Promise<void>
       getTheme: () => Promise<ThemePreference>
       getResponseStylePreference: () => Promise<ResponseStylePreference>
+      setResponseStylePreference: (preference: ResponseStylePreference) => Promise<ResponseStylePreference>
       setTheme: (theme: ThemePreference) => Promise<ThemePreference>
       getConnections: () => Promise<ConnectionSummary[]>
       getConnectionSecurityStatus: () => Promise<ConnectionSecurityStatus>
@@ -50,6 +51,7 @@ declare global {
       startDownloadedModel: (repoId: string, filename: string, requireVision?: boolean) => Promise<LlamaRuntimeStatus>
       generateChatTitle: (userMessage: string) => Promise<string>
       checkModelCache: (modelId: string) => Promise<boolean>
+      getDownloadedModels: (repos: string[]) => Promise<string[]>
       downloadModel: (repoId: string, ggufFile: string) => Promise<void>
       cancelDownload: (repoId: string) => Promise<void>
       onDownloadProgress: (callback: (data: { repoId: string; downloaded: number; total: number }) => void) => () => void

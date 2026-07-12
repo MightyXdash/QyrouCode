@@ -6,7 +6,7 @@ import { writeFile } from 'fs/promises'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setTheme } from './settings'
+import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setResponseStylePreference, setTheme } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
@@ -20,7 +20,7 @@ import type { ConnectionInput } from '../shared/connections'
 import { buildConversationExport, exportFilename } from './conversationExport'
 import { validateConversationExportRequest } from '../shared/conversationExport'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../shared/agent'
-import { getReasoningEffortPrompt, getRemoteModel, resolveRemoteReasoningEffort, shouldRetainRawReasoning } from '../shared/remoteModels'
+import { getReasoningEffortPrompt, getRemoteModel, resolveRemoteReasoningEffort, shouldRetainRemoteReasoning } from '../shared/remoteModels'
 import { RemoteCompletionClient } from './remoteCompletionClient'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
@@ -522,6 +522,7 @@ app.whenReady().then(() => {
   ipcMain.handle('get-llama-status', () => llamaRuntime?.getStatus())
   ipcMain.handle('get-theme', () => getTheme())
   ipcMain.handle('get-response-style-preference', () => getResponseStylePreference())
+  ipcMain.handle('set-response-style-preference', (_event, preference: unknown) => setResponseStylePreference(preference))
   ipcMain.handle('set-theme', (_event, theme: unknown) => setTheme(theme))
   ipcMain.handle('get-connections', () => getConnections())
   ipcMain.handle('get-connection-security-status', () => getConnectionSecurityStatus())
@@ -756,7 +757,7 @@ app.whenReady().then(() => {
       ? catalogModel.providerModelIds[connection.kind as keyof typeof catalogModel.providerModelIds]
       : target.modelId
     if (!apiModelId) throw new Error('This model does not have a valid provider model ID')
-    const retainReasoning = catalogModel ? shouldRetainRawReasoning(catalogModel) : false
+    const retainReasoning = shouldRetainRemoteReasoning(connection.kind)
     const client = new RemoteCompletionClient({
       kind: connection.kind,
       baseUrl: connection.baseUrl,

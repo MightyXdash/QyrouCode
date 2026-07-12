@@ -28,6 +28,7 @@ const api = {
     ipcRenderer.invoke('complete-onboarding', preferences),
   getTheme: (): Promise<ThemePreference> => ipcRenderer.invoke('get-theme'),
   getResponseStylePreference: (): Promise<ResponseStylePreference> => ipcRenderer.invoke('get-response-style-preference'),
+  setResponseStylePreference: (preference: ResponseStylePreference): Promise<ResponseStylePreference> => ipcRenderer.invoke('set-response-style-preference', preference),
   setTheme: (theme: ThemePreference): Promise<ThemePreference> => ipcRenderer.invoke('set-theme', theme),
   getConnections: (): Promise<ConnectionSummary[]> => ipcRenderer.invoke('get-connections'),
   getConnectionSecurityStatus: (): Promise<ConnectionSecurityStatus> => ipcRenderer.invoke('get-connection-security-status'),

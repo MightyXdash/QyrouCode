@@ -9,7 +9,7 @@ import {
   getRemoteModelsForConnectionKind,
   groupRemoteModelsByPublisher,
   resolveRemoteReasoningEffort,
-  shouldRetainRawReasoning,
+  shouldRetainRemoteReasoning,
   sortRemoteModels,
   supportsRemoteInputModality
 } from '../src/shared/remoteModels.js'
@@ -139,14 +139,12 @@ test('effort resolution uses native controls and prompt fallbacks at the closest
   assert.equal(promptOnly.usesPromptFallback, true)
 })
 
-test('remote raw reasoning retention is limited to Qwen and DeepSeek', () => {
-  OPENROUTER_MODELS.forEach((model) => {
-    const expected = model.id.startsWith('qwen/') || model.id.startsWith('deepseek/')
-    assert.equal(shouldRetainRawReasoning(model), expected, model.id)
-  })
-  assert.equal(shouldRetainRawReasoning('qwen/custom-model'), true)
-  assert.equal(shouldRetainRawReasoning('openai/unknown-model'), false)
-  assert.equal(shouldRetainRawReasoning('unknown/model'), false)
+test('remote reasoning retention follows the connection route', () => {
+  assert.equal(shouldRetainRemoteReasoning('openrouter'), true)
+  assert.equal(shouldRetainRemoteReasoning('openai-compatible'), true)
+  assert.equal(shouldRetainRemoteReasoning('openai'), false)
+  assert.equal(shouldRetainRemoteReasoning('anthropic'), false)
+  assert.equal(shouldRetainRemoteReasoning('gemini'), false)
 })
 
 test('modality and provider grouping helpers preserve catalog capabilities', () => {

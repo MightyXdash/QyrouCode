@@ -61,7 +61,7 @@ test('exports OpenAI-shaped tool calls and redacts credentials', () => {
   assert.doesNotMatch(result.content, /sk-ant-secret/)
 })
 
-test('fails closed for hosted reasoning outside Qwen and DeepSeek', () => {
+test('retains reasoning from OpenRouter routes regardless of model publisher', () => {
   for (const [provider, modelId] of [
     ['OpenAI', 'openai/gpt-5.6-sol'],
     ['Anthropic', 'anthropic/claude-sonnet-5'],
@@ -69,6 +69,18 @@ test('fails closed for hosted reasoning outside Qwen and DeepSeek', () => {
     ['xAI', 'x-ai/grok-4.5']
   ]) {
     const result = buildConversationExport(baseRequest, threads, { 'thread-1': session(provider, modelId, 'retain') })
+    assert.equal(result.preview.rawReasoningCount, 1)
+    assert.match(result.content, /private analysis/)
+  }
+})
+
+test('discards reasoning from official direct API routes', () => {
+  for (const [provider, modelId] of [
+    ['OpenAI', 'openai/gpt-5.6-sol'],
+    ['Anthropic', 'anthropic/claude-sonnet-5'],
+    ['Google', 'google/gemini-3.5-flash']
+  ]) {
+    const result = buildConversationExport(baseRequest, threads, { 'thread-1': session(provider, modelId, 'discard') })
     assert.equal(result.preview.rawReasoningCount, 0)
     assert.doesNotMatch(result.content, /private analysis/)
   }
