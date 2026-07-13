@@ -360,16 +360,20 @@
 .project-add-menu button:hover, .project-list button:hover { background: var(--surface-hover); color: var(--text-strong); }
 .project-list { display: grid; gap: 11px; margin: 9px -9px 0; }
 .project-group { display: grid; }
-.project-row { display: grid; grid-template-columns: minmax(0, 1fr) var(--project-row-action-size); align-items: center; min-height: var(--project-thread-height); padding: 0 3px 0 9px; border-radius: var(--radius-md); }
+.project-row { display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--project-row-action-size) * 2); align-items: center; min-height: var(--project-thread-height); padding: 0 3px 0 9px; border-radius: var(--radius-md); }
 .project-row:hover, .project-row.selected { background: var(--surface-selected); color: var(--text-strong); }
 .project-row-main { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 8px; overflow: hidden; min-height: var(--project-thread-height); padding: 0; font-size: var(--project-thread-font-size); text-overflow: ellipsis; white-space: nowrap; }
 .project-list .project-row-main { color: var(--text-weak); }
 .project-list .project-row-main:hover { background: transparent; color: var(--text-base); }
 .project-row-main svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.25; stroke-linejoin: round; }
-.project-new-thread { display: grid; place-items: center; width: var(--project-row-action-size) !important; height: var(--project-row-action-size); padding: 0; color: var(--text-weak); opacity: 0; transition: color var(--project-row-action-duration) var(--motion-ease-out), opacity var(--project-row-action-duration) var(--motion-ease-out); }
-.project-row:hover .project-new-thread, .project-new-thread:focus-visible { opacity: 1; }
-.project-new-thread:hover, .project-new-thread:focus-visible { background: transparent !important; color: var(--text-strong); }
-.project-new-thread svg { width: 15px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; }
+.project-row-actions { position: relative; display: flex; }
+.project-row-action { display: grid; place-items: center; width: var(--project-row-action-size) !important; height: var(--project-row-action-size); padding: 0; color: var(--text-weak); opacity: 0; transition: color var(--project-row-action-duration) var(--motion-ease-out), opacity var(--project-row-action-duration) var(--motion-ease-out); }
+.project-row:hover .project-row-action, .project-row-action:focus-visible, .project-row-action[aria-expanded='true'] { opacity: 1; }
+.project-row-action:hover, .project-row-action:focus-visible, .project-row-action[aria-expanded='true'] { background: transparent !important; color: var(--text-strong); }
+.project-row-action svg { width: 15px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; }
+.project-context-menu { position: absolute; z-index: 30; top: calc(100% + 4px); right: 0; width: var(--project-menu-width); padding: 4px; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-lg); background: var(--surface-raised); box-shadow: var(--shadow-menu); animation: menuEnter 140ms var(--motion-ease-out) both; transform-origin: top right; }
+.project-context-menu button { display: flex; align-items: center; gap: 10px; min-height: var(--app-menu-item-height); padding: 0 8px; font-size: 12px; }
+.project-context-menu button svg { flex-shrink: 0; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
 .project-row span, .project-thread { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-threads-shell { display: grid; grid-template-rows: 0fr; margin-top: 0; transition: grid-template-rows var(--project-thread-list-duration) var(--project-thread-list-ease-out), margin-top var(--project-thread-list-duration) var(--project-thread-list-ease-out); }
 .project-group.expanded .project-threads-shell { grid-template-rows: 1fr; margin-top: 3px; }

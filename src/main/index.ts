@@ -6,7 +6,7 @@ import { writeFile } from 'fs/promises'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setResponseStylePreference, setTheme } from './settings'
+import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setResponseStylePreference, setTheme } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
@@ -591,6 +591,14 @@ app.whenReady().then(() => {
     addProject(project)
     return project
   })
+  ipcMain.handle('rename-project', (_event, projectPath: unknown, value: unknown) => {
+    if (typeof projectPath !== 'string' || !projectPath) throw new Error('Invalid project')
+    return renameProject(projectPath, validateProjectName(value))
+  })
+  ipcMain.handle('remove-project', (_event, projectPath: unknown) => {
+    if (typeof projectPath !== 'string' || !projectPath) throw new Error('Invalid project')
+    return removeProject(projectPath)
+  })
   ipcMain.handle('choose-project-folder', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
     const result = await dialog.showOpenDialog(owner ?? undefined, {
@@ -675,6 +683,7 @@ app.whenReady().then(() => {
         send({ requestId, type: 'progress-update', summary: event.summary })
         break
       case 'reasoning-summary':
+        send({ requestId, type: 'reasoning-tokens', tokens: Math.ceil(event.summary.length / 4) })
         void summarizeReasoning(event.summary).then((summary) => {
           if (summary) send({ requestId, type: 'reasoning-summary', summary })
         })

@@ -77,6 +77,7 @@ export type LocalCompletionEvent =
   | { requestId: string; type: 'tool-error'; toolCallId: string; error: string }
   | { requestId: string; type: 'files-changed'; files: import('../shared/chat').FileChangeDisplay[] }
   | { requestId: string; type: 'progress-update'; summary: string }
+  | { requestId: string; type: 'reasoning-tokens'; tokens: number }
   | { requestId: string; type: 'reasoning-summary'; summary: string }
   | { requestId: string; type: 'todos-updated'; todos: import('../shared/chat').TodoDisplay[] }
   | { requestId: string; type: 'complete' }

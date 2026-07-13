@@ -85,6 +85,21 @@ export const addProject = (project: Project): Project[] => {
   return nextProjects
 }
 
+export const renameProject = (projectPath: string, name: string): Project[] => {
+  const projects = getProjects()
+  if (!projects.some((project) => project.path === projectPath)) throw new Error('Project not found')
+  const nextProjects = projects.map((project) => project.path === projectPath ? { ...project, name } : project)
+  settingsStore.set('projects', nextProjects)
+  return nextProjects
+}
+
+export const removeProject = (projectPath: string): Project[] => {
+  const nextProjects = getProjects().filter((project) => project.path !== projectPath)
+  settingsStore.set('projects', nextProjects)
+  settingsStore.set('expandedProjectPaths', getExpandedProjectPaths().filter((path) => path !== projectPath))
+  return nextProjects
+}
+
 export const getExpandedProjectPaths = (): string[] => settingsStore.get('expandedProjectPaths') ?? []
 
 export const setExpandedProjectPaths = (value: unknown): string[] => {

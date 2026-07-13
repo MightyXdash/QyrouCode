@@ -29,6 +29,36 @@ class ScriptedProvider implements AgentCompletionProvider {
   }
 }
 
+test('retries provider errors three times and reports each retry before succeeding', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    let attempts = 0
+    const events: AgentToolEvent[] = []
+    const provider: AgentCompletionProvider = {
+      async complete(): Promise<LocalCompletion> {
+        attempts += 1
+        if (attempts <= 3) throw new Error('Remote completion did not contain assistant text, reasoning, or tool calls')
+        return { text: 'Recovered response.', toolCalls: [] }
+      }
+    }
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-provider-retry',
+      projectPath,
+      messages: [{ role: 'user', content: 'Respond after a transient provider error.' }]
+    }, () => {}, undefined, (event) => events.push(event))
+
+    assert.equal(attempts, 4)
+    assert.deepEqual(events.filter((event) => event.type === 'progress-update'), [
+      { type: 'progress-update', summary: 'Provider returned error, retrying' },
+      { type: 'progress-update', summary: 'Provider returned error, retrying' },
+      { type: 'progress-update', summary: 'Provider returned error, retrying' }
+    ])
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
 test('runs native and healed local-model tools end to end before returning a final answer', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {

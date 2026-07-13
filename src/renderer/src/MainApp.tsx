@@ -8,7 +8,7 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2, Circle } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2, Circle, MoreHorizontal } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
@@ -29,6 +29,7 @@ const PROJECT_THREAD_STAGGER_MS = 45
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 128_000
 const DEFAULT_AGENT_MAX_TOKENS = 8_192
+const ESTIMATED_CHARACTERS_PER_TOKEN = 4
 
 interface ComposerModel {
   id: string
@@ -186,6 +187,26 @@ function activeTodo(todos: readonly TodoDisplay[]): TodoDisplay | undefined {
   return todos.find((todo) => todo.status === 'in_progress') ?? todos.find((todo) => todo.status === 'pending') ?? todos.at(-1)
 }
 
+function estimateTextTokens(value: string): number {
+  return Math.ceil(value.length / ESTIMATED_CHARACTERS_PER_TOKEN)
+}
+
+function estimateStructuredTokens(value: unknown): number {
+  try {
+    return estimateTextTokens(JSON.stringify(value))
+  } catch {
+    return 0
+  }
+}
+
+function estimateMessageTokens(message: ChatMessage): number {
+  const contentTokens = estimateTextTokens(message.content)
+  const toolTokens = (message.toolCalls ?? []).reduce((total, toolCall) =>
+    total + estimateTextTokens(toolCall.name) + estimateStructuredTokens(toolCall.arguments), 0)
+  const errorTokens = message.content ? 0 : (message.toolCalls ?? []).reduce((total, toolCall) => total + estimateTextTokens(toolCall.error ?? ''), 0)
+  return contentTokens + toolTokens + errorTokens
+}
+
 function messageText(content: import('../../main/localCompletionClient').LocalMessageContent): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
@@ -333,6 +354,11 @@ export default function MainApp(): JSX.Element {
   const [projectName, setProjectName] = useState('')
   const [projectError, setProjectError] = useState('')
   const [projectSaving, setProjectSaving] = useState(false)
+  const [projectActionMenu, setProjectActionMenu] = useState<Project | null>(null)
+  const [renamingProject, setRenamingProject] = useState<Project | null>(null)
+  const [deleteConfirmProject, setDeleteConfirmProject] = useState<Project | null>(null)
+  const [projectRemoving, setProjectRemoving] = useState(false)
+  const [projectRemovalError, setProjectRemovalError] = useState('')
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [fullyExpandedProjects, setFullyExpandedProjects] = useState<Set<string>>(new Set())
   const [threads, setThreads] = useState<ChatThread[]>([])
@@ -340,6 +366,7 @@ export default function MainApp(): JSX.Element {
   const [selectedProjectPath, setSelectedProjectPath] = useState('')
   const [threadRuns, setThreadRuns] = useState<Record<string, ThreadRun>>({})
   const [threadErrors, setThreadErrors] = useState<Record<string, string>>({})
+  const [temporaryReasoningTokens, setTemporaryReasoningTokens] = useState<Record<string, number>>({})
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true)
   const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set())
   const [todoCollapsed, setTodoCollapsed] = useState(false)
@@ -354,6 +381,7 @@ export default function MainApp(): JSX.Element {
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null)
   const promptComposerRef = useRef<HTMLFormElement>(null)
   const projectMenuRef = useRef<HTMLDivElement>(null)
+  const projectActionMenuRef = useRef<HTMLDivElement>(null)
   const projectNameRef = useRef<HTMLInputElement>(null)
   const activeThreadRef = useRef<ChatThread | null>(null)
   const threadsRef = useRef<ChatThread[]>([])
@@ -468,12 +496,12 @@ export default function MainApp(): JSX.Element {
   }
 
   const contextTokens = useMemo(() => {
-    if (!activeThread || !selectedModel) return null
-    const totalChars = activeThread.messages.reduce((sum, msg) => sum + msg.content.length, 0)
-    const used = Math.max(Math.round(totalChars / 4), 0)
+    if (!selectedModel) return null
+    const conversationTokens = (activeThread?.messages ?? []).reduce((sum, msg) => sum + estimateMessageTokens(msg), 0)
+    const used = conversationTokens + estimateTextTokens(prompt) + (activeThread ? temporaryReasoningTokens[activeThread.id] ?? 0 : 0)
     const total = selectedModel.context_length
     return { used, total, percent: Math.min(Math.round((used / total) * 100), 100) }
-  }, [activeThread, selectedModel])
+  }, [activeThread, prompt, selectedModel, temporaryReasoningTokens])
 
   const clearHeldActivity = (preserveDisplayedActivity = false): void => {
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
@@ -644,12 +672,15 @@ export default function MainApp(): JSX.Element {
       }
       if (!titlebarMenuRef.current?.contains(event.target as Node)) setOpenTitlebarMenu(null)
       if (!projectMenuRef.current?.contains(event.target as Node)) setProjectMenuOpen(false)
+      if (!projectActionMenuRef.current?.contains(event.target as Node)) setProjectActionMenu(null)
       if (contextMenu && !contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
     }
     const closeOnKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         setContextMenu(null)
         setDeleteConfirmThread(null)
+        setProjectActionMenu(null)
+        setDeleteConfirmProject(null)
       }
     }
     window.addEventListener('mousedown', closeMenus)
@@ -693,6 +724,13 @@ export default function MainApp(): JSX.Element {
       const updated = { ...current, messages, updatedAt: Date.now() }
       replaceThread(updated)
       saveThreadDebounced(updated)
+      return
+    }
+    if (event.type === 'reasoning-tokens') {
+      setTemporaryReasoningTokens((current) => ({
+        ...current,
+        [requestThreadId]: (current[requestThreadId] ?? 0) + event.tokens
+      }))
       return
     }
     if (event.type === 'tool-call') {
@@ -906,6 +944,12 @@ export default function MainApp(): JSX.Element {
       void window.api.saveChatThread(finalThread)
     }
     requestThreadIdsRef.current.delete(event.requestId)
+    setTemporaryReasoningTokens((current) => {
+      if (current[requestThreadId] === undefined) return current
+      const next = { ...current }
+      delete next[requestThreadId]
+      return next
+    })
     setThreadRun(requestThreadId, undefined)
   }), [])
 
@@ -923,14 +967,16 @@ export default function MainApp(): JSX.Element {
   }, [activeThread])
 
   useEffect(() => {
-    if (!projectDialogOpen) return
+    if (!projectDialogOpen && !renamingProject) return
     projectNameRef.current?.focus()
     const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !projectSaving) setProjectDialogOpen(false)
+      if (event.key !== 'Escape' || projectSaving) return
+      setProjectDialogOpen(false)
+      setRenamingProject(null)
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [projectDialogOpen, projectSaving])
+  }, [projectDialogOpen, projectSaving, renamingProject])
 
   useEffect(() => {
     if (!renamingThreadId) return
@@ -1004,6 +1050,59 @@ export default function MainApp(): JSX.Element {
     setProjectName('')
     setProjectError('')
     setProjectDialogOpen(true)
+  }
+
+  const openRenameProjectDialog = (project: Project): void => {
+    setProjectActionMenu(null)
+    setProjectName(project.name)
+    setProjectError('')
+    setRenamingProject(project)
+  }
+
+  const renameProject = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault()
+    if (!renamingProject || !projectName.trim() || projectSaving) return
+    setProjectSaving(true)
+    setProjectError('')
+    try {
+      const nextProjects = await window.api.renameProject(renamingProject.path, projectName)
+      setProjects(nextProjects)
+      setRenamingProject(null)
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not rename the project')
+    } finally {
+      setProjectSaving(false)
+    }
+  }
+
+  const confirmRemoveProject = async (): Promise<void> => {
+    const project = deleteConfirmProject
+    if (!project || projectRemoving) return
+    setProjectRemoving(true)
+    try {
+      const nextProjects = await window.api.removeProject(project.path)
+      setProjects(nextProjects)
+      setExpandedProjects((current) => {
+        const next = new Set(current)
+        next.delete(project.path)
+        return next
+      })
+      setFullyExpandedProjects((current) => {
+        const next = new Set(current)
+        next.delete(project.path)
+        return next
+      })
+      if (selectedProjectPath === project.path) setSelectedProjectPath(nextProjects[0]?.path ?? '')
+      if (activeThreadRef.current?.projectPath === project.path) {
+        activeThreadRef.current = null
+        setActiveThread(null)
+      }
+      setDeleteConfirmProject(null)
+    } catch (error) {
+      setProjectRemovalError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not remove the project from SupraCode')
+    } finally {
+      setProjectRemoving(false)
+    }
   }
 
   const chooseProjectFolder = async (): Promise<void> => {
@@ -1474,7 +1573,16 @@ export default function MainApp(): JSX.Element {
                 <div className={expanded ? 'project-group expanded' : 'project-group'} key={project.path}>
                   <div className={selectedProjectPath === project.path && !activeThread ? 'project-row selected' : 'project-row'}>
                     <button className="project-row-main" type="button" title={project.path} aria-expanded={expanded} onClick={() => toggleProject(project)}><FolderOpen size={14} /><span>{project.name}</span></button>
-                    <button className="project-new-thread" type="button" aria-label={`New thread in ${project.name}`} title={`New thread in ${project.name}`} onClick={() => startProjectThread(project)}><SquarePen size={15} /></button>
+                    <div className="project-row-actions" ref={projectActionMenu?.path === project.path ? projectActionMenuRef : undefined}>
+                      <button className="project-row-action" type="button" aria-label={`Project actions for ${project.name}`} title={`Project actions for ${project.name}`} aria-haspopup="menu" aria-expanded={projectActionMenu?.path === project.path} onClick={() => setProjectActionMenu((current) => current?.path === project.path ? null : project)}><MoreHorizontal size={15} /></button>
+                      {projectActionMenu?.path === project.path && (
+                        <div className="project-context-menu" role="menu">
+                          <button type="button" role="menuitem" onClick={() => openRenameProjectDialog(project)}><PenLine size={14} /><span>Rename</span></button>
+                          <button type="button" role="menuitem" onClick={() => { setProjectRemovalError(''); setDeleteConfirmProject(project); setProjectActionMenu(null) }}><Trash2 size={14} /><span>Delete</span></button>
+                        </div>
+                      )}
+                      <button className="project-row-action" type="button" aria-label={`New thread in ${project.name}`} title={`New thread in ${project.name}`} onClick={() => startProjectThread(project)}><SquarePen size={15} /></button>
+                    </div>
                   </div>
                   <div className="project-threads-shell" aria-hidden={!expanded} inert={!expanded}>
                     <div className="project-threads">
@@ -1941,6 +2049,35 @@ export default function MainApp(): JSX.Element {
                 <button className="primary" type="submit" disabled={!projectName.trim() || projectSaving}>{projectSaving ? 'Saving…' : 'Save'}</button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+      {renamingProject && (
+        <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectSaving) setRenamingProject(null) }}>
+          <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-project-dialog-title">
+            <h2 id="rename-project-dialog-title">Rename project</h2>
+            <p>This changes the project name shown in SupraCode. Its folder stays unchanged.</p>
+            <form onSubmit={(event) => void renameProject(event)}>
+              <input ref={projectNameRef} value={projectName} onChange={(event) => { setProjectName(event.target.value); setProjectError('') }} aria-label="Project name" aria-describedby={projectError ? 'project-name-error' : undefined} disabled={projectSaving} />
+              {projectError && <div className="project-dialog-error" id="project-name-error" role="alert">{projectError}</div>}
+              <div className="project-dialog-actions">
+                <button type="button" onClick={() => setRenamingProject(null)} disabled={projectSaving}>Cancel</button>
+                <button className="primary" type="submit" disabled={!projectName.trim() || projectSaving}>{projectSaving ? 'Saving…' : 'Save'}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+      {deleteConfirmProject && (
+        <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectRemoving) setDeleteConfirmProject(null) }}>
+          <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-project-dialog-title">
+            <h2 id="delete-project-dialog-title">SupraCode will delete this project</h2>
+            <p>Deleting “<strong>{deleteConfirmProject.name}</strong>” won’t delete its project folder from your computer. To completely get rid of it, please delete the folder manually.</p>
+            {projectRemovalError && <div className="project-dialog-error" role="alert">{projectRemovalError}</div>}
+            <div className="project-dialog-actions">
+              <button type="button" onClick={() => setDeleteConfirmProject(null)} disabled={projectRemoving}>Don’t delete</button>
+              <button className="primary delete-confirm" type="button" onClick={() => void confirmRemoveProject()} disabled={projectRemoving}>{projectRemoving ? 'Deleting…' : 'Yes, delete!'}</button>
+            </div>
           </section>
         </div>
       )}

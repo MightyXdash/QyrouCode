@@ -40,6 +40,8 @@ declare global {
       getExpandedProjectPaths: () => Promise<string[]>
       setExpandedProjectPaths: (paths: string[]) => Promise<string[]>
       createProject: (name: string) => Promise<Project>
+      renameProject: (projectPath: string, name: string) => Promise<Project[]>
+      removeProject: (projectPath: string) => Promise<Project[]>
       chooseProjectFolder: () => Promise<Project | null>
       getChatThreads: () => Promise<ChatThread[]>
       saveChatThread: (thread: ChatThread) => Promise<ChatThread[]>
