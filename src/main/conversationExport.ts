@@ -153,12 +153,6 @@ function threadRecord(thread: ChatThread, session: PersistedAgentSession | undef
       title: thread.title,
       project_path: thread.projectPath,
       models,
-      ...(request.includeReasoningSummaries ? {
-        reasoning_summaries: thread.messages.flatMap((message) =>
-          message.role === 'tool' && message.content === '__reasoning__' && message.reasoningSummary
-            ? [message.reasoningSummary]
-            : [])
-      } : {}),
       ...(request.includeTimestamps ? { updated_at: thread.updatedAt, duration_ms: thread.duration } : {})
     }
   }

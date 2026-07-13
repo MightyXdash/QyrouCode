@@ -1,13 +1,11 @@
 import { useEffect, useState, type JSX } from 'react'
-import { MAX_CUSTOM_RESPONSE_STYLE_LENGTH, RESPONSE_STYLES, THEMES, type ResponseStylePreference, type ThemePreference } from '../../../shared/settings'
+import { MAX_CUSTOM_RESPONSE_STYLE_LENGTH, RESPONSE_STYLES, type ResponseStylePreference } from '../../../shared/settings'
 import { REASONING_EFFORTS, type ReasoningEffort } from '../reasoningProfiles'
 import { SettingsGroup, SettingsRow } from './SettingsControls'
 
 interface GeneralSettingsProps {
-  theme: ThemePreference
   reasoningEffort: ReasoningEffort
   responseStyle: ResponseStylePreference
-  onThemeChange: (theme: ThemePreference) => void
   onReasoningEffortChange: (effort: ReasoningEffort) => void
   onResponseStyleChange: (preference: ResponseStylePreference) => Promise<void> | void
 }
@@ -15,10 +13,8 @@ interface GeneralSettingsProps {
 const label = (value: string): string => value.replace('-', ' ').replace(/^./, (character) => character.toUpperCase())
 
 export default function GeneralSettings({
-  theme,
   reasoningEffort,
   responseStyle,
-  onThemeChange,
   onReasoningEffortChange,
   onResponseStyleChange
 }: GeneralSettingsProps): JSX.Element {
@@ -34,14 +30,6 @@ export default function GeneralSettings({
     <>
       <div className="settings-tab-header"><h2>General</h2></div>
       <div className="settings-tab-body">
-        <SettingsGroup title="Appearance">
-          <SettingsRow title="Color scheme" description="Choose how SupraCode follows your desktop theme.">
-            <select value={theme} onChange={(event) => onThemeChange(event.target.value as ThemePreference)}>
-              {THEMES.map((option) => <option value={option} key={option}>{label(option)}</option>)}
-            </select>
-          </SettingsRow>
-        </SettingsGroup>
-
         <SettingsGroup title="Chat defaults">
           <SettingsRow title="Reasoning effort" description="Used for the next request and remembered per workspace.">
             <select value={reasoningEffort} onChange={(event) => onReasoningEffortChange(event.target.value as ReasoningEffort)}>

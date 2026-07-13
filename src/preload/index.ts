@@ -32,6 +32,7 @@ const api = {
   setTheme: (theme: ThemePreference): Promise<ThemePreference> => ipcRenderer.invoke('set-theme', theme),
   getConnections: (): Promise<ConnectionSummary[]> => ipcRenderer.invoke('get-connections'),
   getConnectionSecurityStatus: (): Promise<ConnectionSecurityStatus> => ipcRenderer.invoke('get-connection-security-status'),
+  resolveProviderSiteIcon: (baseUrl: string): Promise<string | undefined> => ipcRenderer.invoke('resolve-provider-site-icon', baseUrl),
   saveConnection: (input: ConnectionInput, connectionId?: string): Promise<ConnectionMutationResult> => ipcRenderer.invoke('save-connection', input, connectionId),
   testConnection: (input: ConnectionInput, connectionId?: string): Promise<ConnectionTestResult> => ipcRenderer.invoke('test-connection', input, connectionId),
   deleteConnection: (connectionId: string): Promise<boolean> => ipcRenderer.invoke('delete-connection', connectionId),

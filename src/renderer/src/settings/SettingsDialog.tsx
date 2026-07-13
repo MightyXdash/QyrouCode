@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import { Bot, Database, Download, Palette, Plug, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, Fragment, useState, type JSX } from 'react'
+import { Bot, Database, Download, Palette, Plug, SlidersHorizontal } from 'lucide-react'
 import { CONNECTION_PROVIDERS, type ConnectionProviderMetadata, type ConnectionSummary } from '../../../shared/connections'
+import AppearanceSettings from './AppearanceSettings'
 import ConnectionEditor from './ConnectionEditor'
 import DataSettings from './DataSettings'
 import GeneralSettings from './GeneralSettings'
@@ -27,30 +28,30 @@ interface ConnectionTarget {
   connection?: ConnectionSummary
 }
 
-const navigation: readonly { section: SettingsSection; label: string; icon: typeof Palette; group: 'App' | 'AI' | 'Storage' }[] = [
-  { section: 'general', label: 'General', icon: Palette, group: 'App' },
-  { section: 'providers', label: 'Providers', icon: Plug, group: 'AI' },
-  { section: 'models', label: 'Models', icon: Bot, group: 'AI' },
-  { section: 'local-models', label: 'Local models', icon: Download, group: 'AI' },
-  { section: 'data', label: 'Data', icon: Database, group: 'Storage' }
+const navigation: readonly { section: SettingsSection; label: string; icon: React.ComponentType }[] = [
+  { section: 'general', label: 'General', icon: SlidersHorizontal },
+  { section: 'appearance', label: 'Appearance', icon: Palette },
+  { section: 'providers', label: 'Providers', icon: Plug },
+  { section: 'models', label: 'Models', icon: Bot },
+  { section: 'local-models', label: 'Local models', icon: Download },
+  { section: 'data', label: 'Data', icon: Database }
 ]
 
 export default function SettingsDialog(props: SettingsDialogProps): JSX.Element {
   const [section, setSection] = useState<SettingsSection>('general')
   const [activeConnectionId, setActiveConnectionId] = useState(props.connections[0]?.id ?? '')
   const [connectionTarget, setConnectionTarget] = useState<ConnectionTarget | null>(null)
-  const closeButtonRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLElement>(null)
   const activeConnection = useMemo(
     () => props.connections.find((connection) => connection.id === activeConnectionId) ?? props.connections[0],
     [activeConnectionId, props.connections]
   )
 
-  useEffect(() => closeButtonRef.current?.focus(), [])
   useEffect(() => {
     if (!activeConnectionId && props.connections[0]) setActiveConnectionId(props.connections[0].id)
     if (activeConnectionId && !props.connections.some((connection) => connection.id === activeConnectionId)) setActiveConnectionId(props.connections[0]?.id ?? '')
   }, [activeConnectionId, props.connections])
+
   useEffect(() => {
     const close = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
@@ -88,46 +89,38 @@ export default function SettingsDialog(props: SettingsDialogProps): JSX.Element 
   return (
     <div className="settings-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose() }}>
       <section className="settings-dialog-shell" ref={dialogRef} role="dialog" aria-modal="true" aria-label="Settings" onKeyDown={keepFocusInside}>
-        <header className="settings-dialog-titlebar">
-          <strong>Settings</strong>
-          <button ref={closeButtonRef} className="settings-icon-button" type="button" aria-label="Close settings" onClick={props.onClose}><X size={15} /></button>
-        </header>
         <div className="settings-dialog-layout">
           <nav className="settings-navigation" aria-label="Settings sections">
-            {(['App', 'AI', 'Storage'] as const).map((group) => (
-              <div className="settings-nav-group" key={group}>
-                <span>{group}</span>
-                {navigation.filter((item) => item.group === group).map((item) => {
-                  const Icon = item.icon
-                  return (
-                    <div key={item.section}>
-                      <button className={section === item.section ? 'active' : ''} type="button" onClick={() => setSection(item.section)}>
-                        <Icon size={14} /><span>{item.label}</span>
-                      </button>
-                      {item.section === 'models' && props.connections.length > 0 && (
-                        <div className="settings-provider-nav">
-                          {props.connections.map((connection) => (
-                            <button
-                              className={section === 'models' && activeConnection?.id === connection.id ? 'active' : ''}
-                              type="button"
-                              title={connection.providerName}
-                              key={connection.id}
-                              onClick={() => { setActiveConnectionId(connection.id); setSection('models') }}
-                            >
-                              <span>{connection.providerName}</span><small>{connection.selectedModelIds.length}</small>
-                            </button>
-                          ))}
-                        </div>
-                      )}
+            {navigation.map((item) => {
+              const Icon = item.icon
+              return (
+                <Fragment key={item.section}>
+                  <button className={section === item.section ? 'active' : ''} type="button" onClick={() => setSection(item.section)}>
+                    <Icon size={14} /><span>{item.label}</span>
+                  </button>
+                  {item.section === 'models' && props.connections.length > 0 && (
+                    <div className="settings-provider-nav">
+                      {props.connections.map((connection) => (
+                        <button
+                          className={section === 'models' && activeConnection?.id === connection.id ? 'active' : ''}
+                          type="button"
+                          title={connection.providerName}
+                          key={connection.id}
+                          onClick={() => { setActiveConnectionId(connection.id); setSection('models') }}
+                        >
+                          <span>{connection.providerName}</span><small>{connection.selectedModelIds.length}</small>
+                        </button>
+                      ))}
                     </div>
-                  )
-                })}
-              </div>
-            ))}
+                  )}
+                </Fragment>
+              )
+            })}
           </nav>
 
           <main className="settings-panel">
-            {section === 'general' && <GeneralSettings theme={props.theme} reasoningEffort={props.reasoningEffort} responseStyle={props.responseStyle} onThemeChange={props.onThemeChange} onReasoningEffortChange={props.onReasoningEffortChange} onResponseStyleChange={props.onResponseStyleChange} />}
+            {section === 'appearance' && <AppearanceSettings theme={props.theme} onThemeChange={props.onThemeChange} />}
+            {section === 'general' && <GeneralSettings reasoningEffort={props.reasoningEffort} responseStyle={props.responseStyle} onReasoningEffortChange={props.onReasoningEffortChange} onResponseStyleChange={props.onResponseStyleChange} />}
             {section === 'providers' && <ProvidersSettings connections={props.connections} onConfigure={configureConnection} />}
             {section === 'models' && <ModelsSettings connection={activeConnection} catalog={props.catalog} onManageConnection={manageConnection} onUpdateSelection={props.onUpdateModelSelection} />}
             {section === 'local-models' && <LocalModelsSettings catalog={props.localCatalog} downloadedModelIds={props.downloadedLocalModelIds} downloads={props.localModelDownloads} onDownload={props.onDownloadLocalModel} onCancel={props.onCancelLocalModelDownload} />}

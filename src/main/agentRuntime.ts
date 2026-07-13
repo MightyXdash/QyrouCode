@@ -28,7 +28,6 @@ export type AgentToolEvent =
   | { type: 'tool-error'; toolCallId: string; error: string }
   | { type: 'files-changed'; files: FileChangeDisplay[] }
   | { type: 'progress-update'; summary: string }
-  | { type: 'reasoning-summary'; summary: string }
   | { type: 'todos-updated'; todos: TodoDisplay[] }
 
 const MAX_AGENT_STEPS = 50
@@ -182,9 +181,6 @@ export class AgentRuntime {
           messages.push({ role: 'user', content: 'Continue now using the available tools. If no tool is needed, provide the completed final answer instead of describing future actions.' })
           continue
         }
-        if (completion.reasoningText && onToolEvent) {
-          onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
-        }
         messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
         onState?.(messages)
         await this.emitStreamedText(finalText, onDelta)
@@ -207,9 +203,6 @@ export class AgentRuntime {
           currentTaskState = visibleTaskStates.at(-1) ?? stateMessage
           onState?.(messages)
         }
-      }
-      if (completion.reasoningText && onToolEvent) {
-        onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
       }
       messages.push({
         role: 'assistant',
@@ -285,9 +278,6 @@ export class AgentRuntime {
       signal: request.signal
     }, onToolEvent)
     const finalText = stripToolCallMarkup(completion.text)
-    if (completion.reasoningText && onToolEvent) {
-      onToolEvent({ type: 'reasoning-summary', summary: completion.reasoningText })
-    }
     messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
     onState?.(messages)
     await this.emitStreamedText(finalText, onDelta)

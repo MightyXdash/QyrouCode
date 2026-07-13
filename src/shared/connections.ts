@@ -23,6 +23,7 @@ export interface ConnectionProviderMetadata {
   requiresBaseUrl: boolean
   supportsCustomModels: boolean
   defaultBaseUrl: string
+  icon?: string
 }
 
 export interface ConnectionInput {
@@ -71,7 +72,8 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProviderMetadata[] = [
     allowsMultiple: false,
     requiresBaseUrl: false,
     supportsCustomModels: false,
-    defaultBaseUrl: 'https://openrouter.ai/api/v1'
+    defaultBaseUrl: 'https://openrouter.ai/api/v1',
+    icon: 'openrouter'
   },
   {
     kind: 'openai',
@@ -80,7 +82,8 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProviderMetadata[] = [
     allowsMultiple: false,
     requiresBaseUrl: false,
     supportsCustomModels: false,
-    defaultBaseUrl: 'https://api.openai.com/v1'
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    icon: 'openai'
   },
   {
     kind: 'gemini',
@@ -89,7 +92,8 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProviderMetadata[] = [
     allowsMultiple: false,
     requiresBaseUrl: false,
     supportsCustomModels: false,
-    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai'
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    icon: 'gemini'
   },
   {
     kind: 'anthropic',
@@ -98,7 +102,8 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProviderMetadata[] = [
     allowsMultiple: false,
     requiresBaseUrl: false,
     supportsCustomModels: false,
-    defaultBaseUrl: 'https://api.anthropic.com/v1'
+    defaultBaseUrl: 'https://api.anthropic.com/v1',
+    icon: 'anthropic'
   },
   {
     kind: 'openai-compatible',
@@ -107,7 +112,8 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProviderMetadata[] = [
     allowsMultiple: true,
     requiresBaseUrl: true,
     supportsCustomModels: true,
-    defaultBaseUrl: ''
+    defaultBaseUrl: '',
+    icon: 'openai-compatible'
   }
 ]
 

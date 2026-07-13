@@ -44,6 +44,19 @@ export interface ConnectionSecurityStatus {
 }
 
 const CONNECTION_TEST_TIMEOUT_MS = 15_000
+const SITE_ICON_TIMEOUT_MS = 4_000
+const MAX_SITE_DOCUMENT_BYTES = 256 * 1024
+const MAX_SITE_ICON_BYTES = 128 * 1024
+const SITE_ICON_MIME_TYPES = new Set([
+  'image/avif',
+  'image/gif',
+  'image/ico',
+  'image/jpeg',
+  'image/png',
+  'image/vnd.microsoft.icon',
+  'image/webp',
+  'image/x-icon'
+])
 const connectionsStore = new Store<ConnectionStoreData>({
   name: 'connections',
   defaults: { connections: [] }
@@ -113,6 +126,68 @@ function summary(connection: StoredConnection): ConnectionSummary {
 
 export function getConnections(): ConnectionSummary[] {
   return connectionsStore.get('connections').map(summary)
+}
+
+function attributeValue(tag: string, name: string): string | undefined {
+  const match = tag.match(new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'))
+  return match?.[1] ?? match?.[2] ?? match?.[3]
+}
+
+async function discoverSiteIconUrl(siteUrl: URL, signal: AbortSignal): Promise<URL | undefined> {
+  try {
+    const response = await fetch(siteUrl, {
+      headers: { accept: 'text/html,application/xhtml+xml' },
+      redirect: 'error',
+      signal
+    })
+    const contentLength = Number(response.headers.get('content-length'))
+    if (!response.ok || !response.headers.get('content-type')?.toLowerCase().includes('text/html') || (Number.isFinite(contentLength) && contentLength > MAX_SITE_DOCUMENT_BYTES)) {
+      return undefined
+    }
+    const document = await response.text()
+    if (Buffer.byteLength(document) > MAX_SITE_DOCUMENT_BYTES) return undefined
+    const iconTag = document.match(/<link\b[^>]*\brel\s*=\s*(?:"[^"]*\bicon\b[^"]*"|'[^']*\bicon\b[^']*'|[^\s>]*\bicon\b[^\s>]*)[^>]*>/i)?.[0]
+    const href = iconTag ? attributeValue(iconTag, 'href') : undefined
+    if (!href) return undefined
+    const iconUrl = new URL(href, siteUrl)
+    return iconUrl.origin === siteUrl.origin && (iconUrl.protocol === 'https:' || iconUrl.protocol === 'http:') ? iconUrl : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function downloadSiteIcon(iconUrl: URL, signal: AbortSignal): Promise<string | undefined> {
+  try {
+    const response = await fetch(iconUrl, { redirect: 'error', signal })
+    const contentLength = Number(response.headers.get('content-length'))
+    const mimeType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase()
+    if (!response.ok || !mimeType || !SITE_ICON_MIME_TYPES.has(mimeType) || (Number.isFinite(contentLength) && contentLength > MAX_SITE_ICON_BYTES)) {
+      return undefined
+    }
+    const image = Buffer.from(await response.arrayBuffer())
+    if (image.byteLength > MAX_SITE_ICON_BYTES) return undefined
+    return `data:${mimeType};base64,${image.toString('base64')}`
+  } catch {
+    return undefined
+  }
+}
+
+export async function resolveProviderSiteIcon(baseUrl: string): Promise<string | undefined> {
+  let normalizedBaseUrl: string
+  try {
+    normalizedBaseUrl = normalizeConnectionBaseUrl(baseUrl)
+  } catch {
+    return undefined
+  }
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), SITE_ICON_TIMEOUT_MS)
+  try {
+    const siteUrl = new URL('/', normalizedBaseUrl)
+    const discoveredIcon = await discoverSiteIconUrl(siteUrl, controller.signal)
+    return await downloadSiteIcon(discoveredIcon ?? new URL('/favicon.ico', siteUrl), controller.signal)
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 function findStoredConnection(connectionId: string): StoredConnection | undefined {

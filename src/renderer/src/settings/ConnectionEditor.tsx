@@ -131,7 +131,7 @@ export default function ConnectionEditor({ provider, connection, connections, on
       <section className="settings-subdialog" role="dialog" aria-modal="true" aria-labelledby="connection-editor-title">
         <header>
           <div><h2 id="connection-editor-title">{connection?.providerName ?? provider.displayName}</h2><p>{connection ? 'Update connection' : 'New connection'}</p></div>
-          <button className="settings-icon-button" type="button" aria-label="Close" disabled={busy} onClick={onClose}><X size={15} /></button>
+          {!provider.allowsMultiple && <button className="settings-icon-button" type="button" aria-label="Close" disabled={busy} onClick={onClose}><X size={15} /></button>}
         </header>
         <form onSubmit={(event) => void save(event)}>
           {provider.allowsMultiple && (
@@ -141,7 +141,7 @@ export default function ConnectionEditor({ provider, connection, connections, on
             <label><span>Base URL</span><input autoFocus={!provider.allowsMultiple} value={baseUrl} disabled={busy} placeholder="https://api.example.com/v1" onChange={(event) => setBaseUrl(event.target.value)} /></label>
           )}
           <label>
-            <span>API key {provider.kind === 'openai-compatible' && <small>Optional</small>}</span>
+            <span>API key</span>
             <div className="settings-secret-field">
               <input autoFocus={!provider.allowsMultiple && !provider.requiresBaseUrl} value={apiKey} type={showKey ? 'text' : 'password'} disabled={busy} placeholder={connection?.hasCredential ? 'Stored key' : 'Paste API key'} onChange={(event) => setApiKey(event.target.value)} />
               <button type="button" aria-label={showKey ? 'Hide key' : 'Show key'} onClick={() => setShowKey((current) => !current)}>{showKey ? <EyeOff size={14} /> : <Eye size={14} />}</button>
@@ -154,6 +154,7 @@ export default function ConnectionEditor({ provider, connection, connections, on
           <footer>
             <div>{connection && <button className="danger" type="button" disabled={busy} onClick={() => void disconnect()}>{confirmDisconnect ? 'Confirm remove' : 'Remove'}</button>}</div>
             <div>
+              {provider.allowsMultiple && <button type="button" disabled={busy} onClick={onClose}>Cancel</button>}
               <button type="button" disabled={busy} onClick={() => void test()}>{operation === 'test' ? <LoaderCircle className="settings-spinner" size={13} /> : null}Test</button>
               <button className="primary" type="submit" disabled={busy}>{operation === 'save' ? 'Saving…' : 'Save'}</button>
             </div>

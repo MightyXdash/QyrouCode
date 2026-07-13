@@ -10,7 +10,6 @@ const baseRequest: ConversationExportRequest = {
   format: 'jsonl',
   includeMessages: true,
   includeToolCalls: true,
-  includeReasoningSummaries: true,
   includeRawReasoning: true,
   includeTimestamps: true,
   attachments: 'none',

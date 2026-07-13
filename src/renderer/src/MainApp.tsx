@@ -8,7 +8,7 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2, Circle, MoreHorizontal } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, ListTodo, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2, Circle, MoreHorizontal } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
@@ -50,7 +50,6 @@ const DEFAULT_EXPORT_OPTIONS: SettingsExportOptions = {
   includeMessages: true,
   includeToolCalls: true,
   includeTimestamps: true,
-  includeReasoningSummaries: true,
   includeRawReasoning: false,
   attachments: 'metadata',
   redactSensitiveData: true
@@ -148,10 +147,6 @@ function durationFromCssVariable(name: string, fallback: number): number {
 
 function activitySweepDurationMs(): number {
   return durationFromCssVariable('--activity-sweep-duration', DEFAULT_ACTIVITY_SWEEP_DURATION_MS)
-}
-
-function isReasoningPlaceholder(summary: string): boolean {
-  return summary.trim().toLowerCase() === 'processing...'
 }
 
 function runningToolLabel(toolCall: ToolCallDisplay): string {
@@ -311,16 +306,6 @@ function normalizeRestoredThread(thread: ChatThread): ChatThread {
         normalized.push({ ...turnMessage, parentAssistantId: assistantId })
         continue
       }
-      if (turnMessage.role === 'assistant' && turnMessage.content && turnMessage.id !== finalAssistant?.id) {
-        normalized.push({
-          id: turnMessage.id,
-          role: 'tool',
-          content: '__reasoning__',
-          reasoningSummary: turnMessage.content,
-          parentAssistantId: assistantId,
-          timestamp: turnMessage.timestamp
-        })
-      }
     }
     if (finalAssistant) {
       normalized.push({ ...finalAssistant, id: assistantId, status: 'completed' })
@@ -366,7 +351,6 @@ export default function MainApp(): JSX.Element {
   const [selectedProjectPath, setSelectedProjectPath] = useState('')
   const [threadRuns, setThreadRuns] = useState<Record<string, ThreadRun>>({})
   const [threadErrors, setThreadErrors] = useState<Record<string, string>>({})
-  const [temporaryReasoningTokens, setTemporaryReasoningTokens] = useState<Record<string, number>>({})
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true)
   const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set())
   const [todoCollapsed, setTodoCollapsed] = useState(false)
@@ -498,10 +482,10 @@ export default function MainApp(): JSX.Element {
   const contextTokens = useMemo(() => {
     if (!selectedModel) return null
     const conversationTokens = (activeThread?.messages ?? []).reduce((sum, msg) => sum + estimateMessageTokens(msg), 0)
-    const used = conversationTokens + estimateTextTokens(prompt) + (activeThread ? temporaryReasoningTokens[activeThread.id] ?? 0 : 0)
+    const used = conversationTokens + estimateTextTokens(prompt)
     const total = selectedModel.context_length
     return { used, total, percent: Math.min(Math.round((used / total) * 100), 100) }
-  }, [activeThread, prompt, selectedModel, temporaryReasoningTokens])
+  }, [activeThread, prompt, selectedModel])
 
   const clearHeldActivity = (preserveDisplayedActivity = false): void => {
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
@@ -726,13 +710,6 @@ export default function MainApp(): JSX.Element {
       saveThreadDebounced(updated)
       return
     }
-    if (event.type === 'reasoning-tokens') {
-      setTemporaryReasoningTokens((current) => ({
-        ...current,
-        [requestThreadId]: (current[requestThreadId] ?? 0) + event.tokens
-      }))
-      return
-    }
     if (event.type === 'tool-call') {
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
@@ -809,7 +786,7 @@ export default function MainApp(): JSX.Element {
       const pendingAssistant = [...current.messages].reverse().find((message) => message.role === 'assistant' && message.status === 'pending')
       if (!pendingAssistant) return
       const lastProgressIndex = current.messages.findLastIndex((message) =>
-        message.role === 'tool' && message.content === '__progress__' && message.parentAssistantId === pendingAssistant.id
+        message.role === 'tool' && !message.toolCalls?.length && message.parentAssistantId === pendingAssistant.id
       )
       const lastToolCallIndex = current.messages.findLastIndex((message) =>
         message.role === 'tool' && message.parentAssistantId === pendingAssistant.id && (message.toolCalls?.length ?? 0) > 0
@@ -817,7 +794,7 @@ export default function MainApp(): JSX.Element {
       const existingProgress = lastProgressIndex > lastToolCallIndex ? current.messages[lastProgressIndex] : undefined
       if (existingProgress) {
         const messages = current.messages.map((message) => message.id === existingProgress.id
-          ? { ...message, reasoningSummary: event.summary }
+          ? { ...message, content: event.summary }
           : message)
         const updated = { ...current, messages, updatedAt: Date.now() }
         replaceThread(updated)
@@ -827,10 +804,9 @@ export default function MainApp(): JSX.Element {
       const progressMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'tool',
-        content: '__progress__',
+        content: event.summary,
         timestamp: Date.now(),
-        parentAssistantId: pendingAssistant.id,
-        reasoningSummary: event.summary
+        parentAssistantId: pendingAssistant.id
       }
       const lastIdx = current.messages.length - 1
       const messages = [...current.messages.slice(0, lastIdx), progressMessage, current.messages[lastIdx]]
@@ -865,35 +841,6 @@ export default function MainApp(): JSX.Element {
       const updated = { ...current, messages, updatedAt: Date.now() }
       replaceThread(updated)
       saveThreadImmediate(updated)
-      return
-    }
-    if (event.type === 'reasoning-summary') {
-      if (isReasoningPlaceholder(event.summary)) return
-      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
-      if (!current) return
-      const pendingAssistant = [...current.messages].reverse().find((message) => message.role === 'assistant' && message.status === 'pending')
-      const existingSummary = current.messages.find((m) => m.role === 'tool' && m.content === '__reasoning__' && m.parentAssistantId === pendingAssistant?.id)
-      if (existingSummary) {
-        const messages = current.messages.map((m) =>
-          m.id === existingSummary.id ? { ...m, content: '__reasoning__', reasoningSummary: event.summary } : m
-        )
-        const updated = { ...current, messages, updatedAt: Date.now() }
-        replaceThread(updated)
-        saveThreadImmediate(updated)
-        return
-      }
-      const firstToolIdx = current.messages.findIndex((m) => m.role === 'tool')
-      const reasoningMsg: ChatMessage = { id: crypto.randomUUID(), role: 'tool', content: '__reasoning__', timestamp: Date.now(), parentAssistantId: pendingAssistant?.id, reasoningSummary: event.summary }
-      let messages: ChatMessage[]
-      if (firstToolIdx >= 0) {
-        messages = [...current.messages.slice(0, firstToolIdx), reasoningMsg, ...current.messages.slice(firstToolIdx)]
-      } else {
-        const lastIdx = current.messages.length - 1
-        messages = [...current.messages.slice(0, lastIdx), reasoningMsg, current.messages[lastIdx]]
-      }
-      const updated = { ...current, messages, updatedAt: Date.now() }
-      replaceThread(updated)
-      saveThreadDebounced(updated)
       return
     }
     if (event.type === 'files-changed') {
@@ -1667,35 +1614,27 @@ export default function MainApp(): JSX.Element {
                   const parentToolCalls = parent
                     ? activeThread.messages.filter((candidate) => candidate.role === 'tool' && candidate.parentAssistantId === parent.id).flatMap((candidate) => candidate.toolCalls ?? [])
                     : []
-                  if (message.content === '__progress__' && message.reasoningSummary) {
+                  if (message.content.startsWith('__reasoning__') || message.content.startsWith('__progress__')) return null
+                  if (!message.toolCalls?.length && message.content) {
                     if (parent?.role === 'assistant' && parent.status !== 'pending' && !expandedWorkIds.has(parent.id)) return null
                     return (
                       <div className="chat-message progress-message" key={message.id}>
-                        <span>{message.reasoningSummary}</span>
+                        <span>{message.content}</span>
                       </div>
                     )
                   }
                   const parentIsFinished = parent?.role === 'assistant' && parent.status !== 'pending'
                   if (parentIsFinished && parent && !expandedWorkIds.has(parent.id)) return null
-                  if (message.content === '__reasoning__' && message.reasoningSummary && !isReasoningPlaceholder(message.reasoningSummary)) {
-                    return (
-                      <div className="chat-message reasoning-message" key={message.id}>
-                        <div className="reasoning-summary">
-                          <span className="reasoning-summary-text">{message.reasoningSummary}</span>
-                        </div>
-                      </div>
-                    )
-                  }
                   if (message.toolCalls?.every((toolCall) => toolCall.result === undefined && !toolCall.error)) return null
                   const hasLaterProgress = activeThread.messages.slice(messageIndex + 1).some((candidate) =>
-                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && candidate.content === '__progress__'
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && !candidate.toolCalls?.length && candidate.content && !candidate.content.startsWith('__progress__') && !candidate.content.startsWith('__reasoning__')
                   )
                   if (!parentIsFinished && !hasLaterProgress) return null
                   const previousProgressOffset = activeThread.messages.slice(0, messageIndex).findLastIndex((candidate) =>
-                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && candidate.content === '__progress__'
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && !candidate.toolCalls?.length && candidate.content && !candidate.content.startsWith('__progress__') && !candidate.content.startsWith('__reasoning__')
                   )
                   const nextProgressOffset = activeThread.messages.slice(messageIndex + 1).findIndex((candidate) =>
-                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && candidate.content === '__progress__'
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && !candidate.toolCalls?.length && candidate.content && !candidate.content.startsWith('__progress__') && !candidate.content.startsWith('__reasoning__')
                   )
                   const phaseStart = previousProgressOffset + 1
                   const phaseEnd = nextProgressOffset >= 0 ? messageIndex + 1 + nextProgressOffset : activeThread.messages.length
@@ -1846,15 +1785,28 @@ export default function MainApp(): JSX.Element {
             return (
               <section className={todoCollapsed ? 'todo-dock collapsed' : 'todo-dock'} aria-label="Task list">
                 <button className="todo-dock-header" type="button" aria-expanded={!todoCollapsed} onClick={() => setTodoCollapsed((collapsed) => !collapsed)}>
-                  <span className="todo-dock-progress">{completed} of {todos.length} tasks</span>
+                  <span className="todo-dock-heading-icon" aria-hidden="true"><ListTodo size={14} /></span>
+                  <span className="todo-dock-progress">
+                    <span className="todo-dock-progress-count">{completed}</span>
+                    <span className="todo-dock-progress-sep">/</span>
+                    <span className="todo-dock-progress-total">{todos.length}</span>
+                  </span>
                   <span className="todo-dock-preview">{preview}</span>
                   <ChevronDown size={15} className="todo-dock-chevron" aria-hidden="true" />
+                  <span className="todo-dock-progress-track" aria-hidden="true">
+                    <span className="todo-dock-progress-fill" style={{ width: `${Math.round((completed / todos.length) * 100)}%` }} />
+                  </span>
                 </button>
                 <div className="todo-dock-list" aria-hidden={todoCollapsed}>
                   {todos.map((todo, index) => {
                     const completedTodo = todo.status === 'completed' || todo.status === 'cancelled'
                     return <div className={`todo-dock-item ${todo.status}`} key={`${index}-${todo.content}`}>
-                      {todo.status === 'in_progress' ? <span className="todo-dock-indicator" aria-label="In progress"><span /></span> : completedTodo ? <Check size={14} aria-hidden="true" /> : <Circle size={14} aria-hidden="true" />}
+                      {todo.status === 'in_progress' ? (
+                        <span className="todo-dock-indicator" aria-label="In progress">
+                          <span className="todo-dock-indicator-track" />
+                          <span className="todo-dock-spinner" />
+                        </span>
+                      ) : completedTodo ? <Check size={15} aria-hidden="true" /> : <Circle size={15} aria-hidden="true" />}
                       <span>{todo.content}</span>
                     </div>
                   })}

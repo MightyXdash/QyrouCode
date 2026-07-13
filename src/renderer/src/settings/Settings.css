@@ -1,30 +1,26 @@
 .settings-overlay {
-  --settings-width: min(900px, calc(100vw - 56px));
-  --settings-height: min(640px, calc(100dvh - var(--app-titlebar-height) - 44px));
-  --settings-nav-width: 184px;
-  --settings-titlebar-height: 44px;
-  --settings-panel-padding: 32px;
+  --settings-width: min(760px, calc(100vw - 56px));
+  --settings-height: min(560px, calc(100dvh - var(--app-titlebar-height) - 24px));
+  --settings-nav-width: 168px;
+  --settings-panel-padding: 28px;
   --settings-section-gap: 28px;
   --settings-row-padding: 15px;
   --settings-control-height: 30px;
   --settings-switch-width: 30px;
   --settings-switch-height: 18px;
   --settings-switch-thumb: 14px;
-  --settings-animation-duration: 150ms;
-  --settings-overlay-color: light-dark(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.48));
   position: fixed;
-  inset: var(--app-titlebar-height) 0 0;
-  z-index: 88;
+  inset: 0;
+  z-index: 95;
   display: grid;
   place-items: center;
-  padding: 22px;
-  background: var(--settings-overlay-color);
-  animation: settingsFade var(--settings-animation-duration) ease-out both;
+  padding: calc(var(--app-titlebar-height) + 22px) 22px 22px;
+  background: var(--surface-scrim);
 }
 
 .settings-dialog-shell {
   display: grid;
-  grid-template-rows: var(--settings-titlebar-height) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   width: var(--settings-width);
   height: var(--settings-height);
   overflow: hidden;
@@ -32,22 +28,6 @@
   border-radius: var(--radius-xl);
   background: var(--background-base);
   box-shadow: var(--shadow-menu);
-  animation: settingsEnter var(--settings-animation-duration) var(--motion-ease-out) both;
-}
-
-.settings-dialog-titlebar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px 0 16px;
-  border-bottom: var(--border-width-hairline) solid var(--border-weak);
-  background: var(--background-base);
-}
-
-.settings-dialog-titlebar strong {
-  color: var(--text-strong);
-  font-size: 13px;
-  font-weight: 600;
 }
 
 .settings-icon-button {
@@ -77,7 +57,7 @@
 .settings-navigation {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 2px;
   min-height: 0;
   padding: 14px 10px;
   overflow-y: auto;
@@ -85,22 +65,7 @@
   background: var(--background-weak);
 }
 
-.settings-nav-group {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.settings-nav-group > span {
-  padding: 0 8px 4px;
-  color: var(--text-weaker);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.settings-nav-group button {
+.settings-navigation button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -116,13 +81,13 @@
   cursor: pointer;
 }
 
-.settings-nav-group button:hover,
-.settings-nav-group button.active {
+.settings-navigation button:hover,
+.settings-navigation button.active {
   background: var(--surface-hover);
   color: var(--text-strong);
 }
 
-.settings-nav-group button.active {
+.settings-navigation button.active {
   background: var(--surface-selected);
 }
 
@@ -134,17 +99,35 @@
 }
 
 .settings-provider-nav button {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   min-height: 26px;
   padding-left: 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
   color: var(--text-weak);
   font-size: 11px;
+  text-align: left;
+  cursor: pointer;
 }
 
 .settings-provider-nav button span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.settings-provider-nav button:hover,
+.settings-provider-nav button.active {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.settings-provider-nav button.active {
+  background: var(--surface-selected);
+  color: var(--text-strong);
 }
 
 .settings-provider-nav small {
@@ -445,6 +428,13 @@
   font-weight: 600;
 }
 
+.settings-provider-icon img {
+  display: block;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
 .settings-provider-copy {
   display: flex;
   min-width: 0;
@@ -670,7 +660,7 @@ button.settings-empty-row {
   z-index: 4;
   display: grid;
   place-items: center;
-  background: var(--settings-overlay-color);
+  background: var(--surface-scrim);
 }
 
 .settings-subdialog {
@@ -793,16 +783,6 @@ button.settings-empty-row {
   clip: rect(0 0 0 0);
   white-space: nowrap;
   clip-path: inset(50%);
-}
-
-@keyframes settingsEnter {
-  from { opacity: 0; transform: scale(1.025); }
-  to { opacity: 1; transform: scale(1); }
-}
-
-@keyframes settingsFade {
-  from { opacity: 0; }
-  to { opacity: 1; }
 }
 
 @keyframes settingsSpin {

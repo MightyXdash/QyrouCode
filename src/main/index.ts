@@ -15,7 +15,7 @@ import { LLAMA_TITLE_SERVER_PORT } from '../shared/llama'
 import type { LocalCompletionEvent, LocalCompletionStart } from './localCompletionClient'
 import { AgentRuntime, type AgentRunRequest, type AgentStateListener, type AgentToolEvent } from './agentRuntime'
 import { CHAT_ATTACHMENT_MIME_TYPES, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatThread } from '../shared/chat'
-import { deleteConnection, getConnections, getConnectionSecurityStatus, resolveConnection, saveConnection, testConnection, updateConnectionModels } from './connectionStore'
+import { deleteConnection, getConnections, getConnectionSecurityStatus, resolveConnection, resolveProviderSiteIcon, saveConnection, testConnection, updateConnectionModels } from './connectionStore'
 import type { ConnectionInput } from '../shared/connections'
 import { buildConversationExport, exportFilename } from './conversationExport'
 import { validateConversationExportRequest } from '../shared/conversationExport'
@@ -37,10 +37,6 @@ const TITLE_MODEL_REPOSITORY = 'SupraLabs/supra-title-50M-pre-gguf'
 const TITLE_MODEL_FILENAME = 'SupraTitle-50M-Q4_K_M.gguf'
 const TITLE_MODEL_CONTEXT_TOKENS = 4096
 const TITLE_MODEL_MAX_INPUT_CHARACTERS = 12000
-const SUMMARIZER_MODEL_REPOSITORY = 'SupraLabs/reasoning-summarizer-800m-pre-gguf'
-const SUMMARIZER_MODEL_FILENAME = 'reasoning-summarizer-800m-pre-Q4_K_M.gguf'
-const SUMMARIZER_MODEL_CONTEXT_TOKENS = 4096
-const SUMMARIZER_SERVER_PORT = 39283
 const MODEL_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const INVALID_PROJECT_NAME_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/
 const WINDOWS_RESERVED_PROJECT_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
@@ -51,7 +47,6 @@ const MODEL_DOWNLOAD_ATTEMPTS = 3
 let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
 let titleRuntime: LlamaRuntime | null = null
-let summarizerRuntime: LlamaRuntime | null = null
 const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController; source: AgentModelSource }>()
 const projectorlessRepositories = new Set<string>()
 
@@ -481,7 +476,6 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.suprarcode')
   llamaRuntime = new LlamaRuntime()
   titleRuntime = new LlamaRuntime(LLAMA_TITLE_SERVER_PORT)
-  summarizerRuntime = new LlamaRuntime(SUMMARIZER_SERVER_PORT)
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -526,6 +520,10 @@ app.whenReady().then(() => {
   ipcMain.handle('set-theme', (_event, theme: unknown) => setTheme(theme))
   ipcMain.handle('get-connections', () => getConnections())
   ipcMain.handle('get-connection-security-status', () => getConnectionSecurityStatus())
+  ipcMain.handle('resolve-provider-site-icon', (_event, baseUrl: unknown) => {
+    if (typeof baseUrl !== 'string') throw new Error('Invalid provider base URL')
+    return resolveProviderSiteIcon(baseUrl)
+  })
   ipcMain.handle('save-connection', (_event, value: unknown, connectionId?: unknown) => {
     if (connectionId !== undefined && typeof connectionId !== 'string') throw new Error('Invalid connection ID')
     return saveConnection(value as ConnectionInput, connectionId)
@@ -644,27 +642,6 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('stop-llama-server', () => llamaRuntime?.stop())
 
-  const summarizeReasoning = async (rawReasoning: string): Promise<string | undefined> => {
-    if (!summarizerRuntime) return undefined
-    try {
-      const modelPath = resolveDownloadedModel(SUMMARIZER_MODEL_REPOSITORY, SUMMARIZER_MODEL_FILENAME)
-      const status = await summarizerRuntime.start(modelPath, SUMMARIZER_MODEL_CONTEXT_TOKENS)
-      if (status.state !== 'ready') return undefined
-      const input = rawReasoning.slice(0, 6000)
-      const response = await summarizerRuntime.completePrompt(`Summarize this reasoning as JSON with a "summary" key:\n\n${input}\n\n{"summary":`)
-      const parsed = JSON.parse(`{"summary":${response}`)
-      return typeof parsed.summary === 'string' && parsed.summary.trim() ? parsed.summary.trim() : undefined
-    } catch {
-      try {
-        const input = rawReasoning.slice(0, 6000)
-        const fallback = await summarizerRuntime.completePrompt(`Summarize this reasoning in one short line:\n\n${input}\n\nSummary:`)
-        return fallback.replace(/[\r\n]+/g, ' ').replace(/^Summary:\s*/i, '').trim() || undefined
-      } catch {
-        return undefined
-      }
-    }
-  }
-
   const sendToolEvent = (send: (event: LocalCompletionEvent) => void, requestId: string, event: AgentToolEvent): void => {
     switch (event.type) {
       case 'tool-call':
@@ -681,12 +658,6 @@ app.whenReady().then(() => {
         break
       case 'progress-update':
         send({ requestId, type: 'progress-update', summary: event.summary })
-        break
-      case 'reasoning-summary':
-        send({ requestId, type: 'reasoning-tokens', tokens: Math.ceil(event.summary.length / 4) })
-        void summarizeReasoning(event.summary).then((summary) => {
-          if (summary) send({ requestId, type: 'reasoning-summary', summary })
-        })
         break
       case 'todos-updated':
         send({ requestId, type: 'todos-updated', todos: event.todos })

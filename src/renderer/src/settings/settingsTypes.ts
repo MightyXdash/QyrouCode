@@ -12,7 +12,7 @@ import type { ResponseStylePreference, ThemePreference } from '../../../shared/s
 import type { CatalogModel } from '../modelCatalog'
 import type { ReasoningEffort } from '../reasoningProfiles'
 
-export type SettingsSection = 'general' | 'providers' | 'models' | 'local-models' | 'data'
+export type SettingsSection = 'appearance' | 'general' | 'providers' | 'models' | 'local-models' | 'data'
 
 export interface SettingsConnectionRequest {
   connectionId?: string

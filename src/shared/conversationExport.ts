@@ -13,7 +13,6 @@ export interface ConversationExportRequest {
   projectPath?: string
   includeMessages: boolean
   includeToolCalls: boolean
-  includeReasoningSummaries: boolean
   includeRawReasoning: boolean
   includeTimestamps: boolean
   attachments: AttachmentExportMode
@@ -44,7 +43,6 @@ export function validateConversationExportRequest(value: unknown): ConversationE
     !includes(ATTACHMENT_EXPORT_MODES, request.attachments) ||
     typeof request.includeMessages !== 'boolean' ||
     typeof request.includeToolCalls !== 'boolean' ||
-    typeof request.includeReasoningSummaries !== 'boolean' ||
     typeof request.includeRawReasoning !== 'boolean' ||
     typeof request.includeTimestamps !== 'boolean' ||
     typeof request.redactSensitiveData !== 'boolean' ||

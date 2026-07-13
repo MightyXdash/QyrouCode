@@ -51,7 +51,6 @@ export interface ChatMessage {
   content: string
   timestamp?: number
   toolCalls?: ToolCallDisplay[]
-  reasoningSummary?: string
   filesChanged?: string[]
   fileChanges?: FileChangeDisplay[]
   attachments?: ChatAttachment[]

@@ -30,6 +30,7 @@ declare global {
       setTheme: (theme: ThemePreference) => Promise<ThemePreference>
       getConnections: () => Promise<ConnectionSummary[]>
       getConnectionSecurityStatus: () => Promise<ConnectionSecurityStatus>
+      resolveProviderSiteIcon: (baseUrl: string) => Promise<string | undefined>
       saveConnection: (input: ConnectionInput, connectionId?: string) => Promise<ConnectionMutationResult>
       testConnection: (input: ConnectionInput, connectionId?: string) => Promise<ConnectionTestResult>
       deleteConnection: (connectionId: string) => Promise<boolean>
