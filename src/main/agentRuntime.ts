@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { isAbsolute, relative, resolve } from 'path'
 import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall, LocalToolDefinition } from './localCompletionClient'
-import type { FileChangeDisplay, ToolUiMessage } from '../shared/chat'
+import type { FileChangeDisplay, TodoDisplay, ToolUiMessage } from '../shared/chat'
 import type { AgentModelProvenance } from '../shared/agent'
 import { COMPACTION_SYSTEM_PROMPT, buildAgentSystemPrompt } from './agentPrompt'
 import { AgentToolbox, type AgentTaskRequest } from './agentTools'
@@ -29,6 +29,7 @@ export type AgentToolEvent =
   | { type: 'files-changed'; files: FileChangeDisplay[] }
   | { type: 'progress-update'; summary: string }
   | { type: 'reasoning-summary'; summary: string }
+  | { type: 'todos-updated'; todos: TodoDisplay[] }
 
 const MAX_AGENT_STEPS = 50
 const MAX_SUBAGENT_DEPTH = 2
@@ -143,7 +144,8 @@ export class AgentRuntime {
       projectPath: request.projectPath,
       signal: request.signal,
       readOnly,
-      runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, originalFiles, onToolEvent, visibleTaskStates) : undefined
+      runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, originalFiles, onToolEvent, visibleTaskStates) : undefined,
+      onTodosChanged: (todos) => onToolEvent?.({ type: 'todos-updated', todos })
     })
     const allowedNames = new Set(toolbox.definitions.map((tool) => tool.name))
 

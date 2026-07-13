@@ -79,6 +79,32 @@ test('runs native and healed local-model tools end to end before returning a fin
   }
 })
 
+test('emits todo updates when the agent replaces its task list', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const todos = [
+      { content: 'Inspect the task surface', status: 'completed' as const, priority: 'medium' as const },
+      { content: 'Implement the todo dock', status: 'in_progress' as const, priority: 'high' as const }
+    ]
+    const provider = new ScriptedProvider([
+      { text: '', toolCalls: [{ id: 'todo_write', name: 'todo_write', arguments: { ui_message: uiMessage('I’m updating the task list', 'Updated the task list'), todos } }] },
+      taskStateCompletion('state_todos'),
+      { text: 'The task list is ready.', toolCalls: [] }
+    ])
+    const events: AgentToolEvent[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-todos',
+      projectPath,
+      messages: [{ role: 'user', content: 'Plan this work.' }]
+    }, () => {}, undefined, (event) => events.push(event))
+
+    assert.deepEqual(events.find((event) => event.type === 'todos-updated'), { type: 'todos-updated', todos })
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
 test('suppresses substantially similar task-state updates across one run', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {

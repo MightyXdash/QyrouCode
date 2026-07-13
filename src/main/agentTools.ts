@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { dirname, isAbsolute, relative, resolve, sep } from 'path'
 import type { LocalToolDefinition } from './localCompletionClient'
+import type { TodoDisplay } from '../shared/chat'
 import { availableSkills } from './agentPrompt'
 import { formatWebSearchResults, NoApiWebClient, type WebFetchFormat } from './webSearch'
 
@@ -17,13 +18,10 @@ export interface AgentToolboxOptions {
   readOnly?: boolean
   runTask?: (request: AgentTaskRequest) => Promise<string>
   webClient?: NoApiWebClient
+  onTodosChanged?: (todos: TodoDisplay[]) => void
 }
 
-interface TodoItem {
-  content: string
-  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-  priority: 'low' | 'medium' | 'high'
-}
+type TodoItem = TodoDisplay
 
 interface PatchOperation {
   type: 'add' | 'delete' | 'update'
@@ -453,6 +451,7 @@ export class AgentToolbox {
     })
     if (todos.filter((todo) => todo.status === 'in_progress').length > 1) throw new Error('Only one todo may be in progress')
     this.todos = todos
+    this.options.onTodosChanged?.(todos)
     return this.readTodos()
   }
 

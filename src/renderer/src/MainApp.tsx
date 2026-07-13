@@ -3,12 +3,12 @@ import { MODEL_LIST } from './modelCatalog'
 import { DEFAULT_RESPONSE_STYLE, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
 import { WINDOW_COMMANDS } from '../../shared/windowCommands'
 import type { Project } from '../../shared/projects'
-import { MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatMessage, type ChatThread, type ToolCallDisplay } from '../../shared/chat'
+import { MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatMessage, type ChatThread, type TodoDisplay, type ToolCallDisplay } from '../../shared/chat'
 import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2 } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2, Circle } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
@@ -23,7 +23,6 @@ import SettingsDialog, {
 import './MainApp.css'
 
 const AUTO_SCROLL_THRESHOLD = 72
-const MAX_ACTIVITY_COMMAND_CHARACTERS = 40
 const WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND = 150
 const DEFAULT_ACTIVITY_SWEEP_DURATION_MS = 1_800
 const PROJECT_THREAD_STAGGER_MS = 45
@@ -87,6 +86,13 @@ type OpenMenu = 'advanced' | 'model' | null
 type TitlebarMenuId = 'file' | 'edit' | 'view' | 'theme' | 'help'
 type TitlebarAction = 'new-thread' | 'close-window' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'select-all' | 'reload' | 'toggle-dev-tools' | 'toggle-fullscreen'
 
+interface ThreadRun {
+  requestId?: string
+  source: AgentModelProvenance['source']
+  startedAt: number
+  state: 'starting' | 'streaming'
+}
+
 interface TitlebarMenuItem {
   action?: TitlebarAction
   disabled?: boolean
@@ -132,32 +138,25 @@ function modelDisplayName(modelName: string): string {
   return modelName.split('/').at(-1) ?? modelName
 }
 
-function truncateCommand(command: string): string {
-  const normalized = command.replace(/\s+/g, ' ').trim()
-  return normalized.length <= MAX_ACTIVITY_COMMAND_CHARACTERS
-    ? normalized
-    : `${normalized.slice(0, MAX_ACTIVITY_COMMAND_CHARACTERS - 1)}…`
+function durationFromCssVariable(name: string, fallback: number): number {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  if (value.endsWith('ms')) return Number.parseFloat(value) || fallback
+  if (value.endsWith('s')) return (Number.parseFloat(value) || fallback / 1_000) * 1_000
+  return fallback
 }
 
 function activitySweepDurationMs(): number {
-  const value = getComputedStyle(document.documentElement).getPropertyValue('--activity-sweep-duration').trim()
-  if (value.endsWith('ms')) return Number.parseFloat(value) || DEFAULT_ACTIVITY_SWEEP_DURATION_MS
-  if (value.endsWith('s')) return (Number.parseFloat(value) || DEFAULT_ACTIVITY_SWEEP_DURATION_MS / 1_000) * 1_000
-  return DEFAULT_ACTIVITY_SWEEP_DURATION_MS
+  return durationFromCssVariable('--activity-sweep-duration', DEFAULT_ACTIVITY_SWEEP_DURATION_MS)
+}
+
+function isReasoningPlaceholder(summary: string): boolean {
+  return summary.trim().toLowerCase() === 'processing...'
 }
 
 function runningToolLabel(toolCall: ToolCallDisplay): string {
   if (toolCall.name === 'cur_task_state') return 'Sharing current task state'
   if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searching the web'
   if (toolCall.uiMessage?.uim_prt) return toolCall.uiMessage.uim_prt
-  if (toolCall.name === 'bash') {
-    const command = typeof toolCall.arguments.command === 'string' ? truncateCommand(toolCall.arguments.command) : 'command'
-    return `Running ${command}`
-  }
-  if (['write', 'edit', 'apply_patch'].includes(toolCall.name)) {
-    const filePath = typeof toolCall.arguments.filePath === 'string' ? toolCall.arguments.filePath : ''
-    return filePath ? `Editing ${filePath}` : 'Editing'
-  }
   return 'Thinking'
 }
 
@@ -181,6 +180,10 @@ function completedToolLabel(toolCall: ToolCallDisplay): string {
 function webSearchDetail(toolCall: ToolCallDisplay): string | undefined {
   if (toolCall.name !== 'web_search') return undefined
   return typeof toolCall.arguments.query === 'string' ? toolCall.arguments.query.trim() || undefined : undefined
+}
+
+function activeTodo(todos: readonly TodoDisplay[]): TodoDisplay | undefined {
+  return todos.find((todo) => todo.status === 'in_progress') ?? todos.find((todo) => todo.status === 'pending') ?? todos.at(-1)
 }
 
 function messageText(content: import('../../main/localCompletionClient').LocalMessageContent): string {
@@ -335,10 +338,11 @@ export default function MainApp(): JSX.Element {
   const [threads, setThreads] = useState<ChatThread[]>([])
   const [activeThread, setActiveThread] = useState<ChatThread | null>(null)
   const [selectedProjectPath, setSelectedProjectPath] = useState('')
-  const [completionState, setCompletionState] = useState<'idle' | 'starting' | 'streaming'>('idle')
-  const [completionError, setCompletionError] = useState('')
+  const [threadRuns, setThreadRuns] = useState<Record<string, ThreadRun>>({})
+  const [threadErrors, setThreadErrors] = useState<Record<string, string>>({})
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true)
   const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set())
+  const [todoCollapsed, setTodoCollapsed] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState('')
   const [heldActivity, setHeldActivity] = useState<{ assistantId: string; toolCallId: string; label: string; until: number } | null>(null)
@@ -352,15 +356,16 @@ export default function MainApp(): JSX.Element {
   const projectMenuRef = useRef<HTMLDivElement>(null)
   const projectNameRef = useRef<HTMLInputElement>(null)
   const activeThreadRef = useRef<ChatThread | null>(null)
-  const activeRequestIdRef = useRef<string | null>(null)
+  const threadsRef = useRef<ChatThread[]>([])
+  const threadRunsRef = useRef<Record<string, ThreadRun>>({})
+  const requestThreadIdsRef = useRef<Map<string, string>>(new Map())
+  const cancelledThreadIdsRef = useRef<Set<string>>(new Set())
   const conversationEndRef = useRef<HTMLDivElement>(null)
   const conversationRef = useRef<HTMLDivElement>(null)
   const projectExpansionLoadedRef = useRef(false)
   const viewStateLoadedRef = useRef(false)
   const modelMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const startTimeRef = useRef(0)
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const activityHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const webSearchRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const toolCallStartedAtRef = useRef<Map<string, number>>(new Map())
   const toolTenseTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
@@ -407,6 +412,60 @@ export default function MainApp(): JSX.Element {
     return [...localModels, ...remoteModels]
   }, [connections, downloadedModels])
   const selectedModel = composerModels.find((model) => model.id === selectedModelId)
+  const completionState = activeThread ? threadRuns[activeThread.id]?.state ?? 'idle' : 'idle'
+  const completionError = activeThread ? threadErrors[activeThread.id] ?? '' : ''
+
+  const setThreadRun = (threadId: string, run: ThreadRun | undefined): void => {
+    const next = { ...threadRunsRef.current }
+    if (run) next[threadId] = run
+    else delete next[threadId]
+    threadRunsRef.current = next
+    setThreadRuns(next)
+  }
+
+  const stopThreadRun = (threadId: string): void => {
+    const run = threadRunsRef.current[threadId]
+    if (!run) return
+    const completedAt = Date.now()
+    cancelledThreadIdsRef.current.add(threadId)
+    if (run.requestId) requestThreadIdsRef.current.delete(run.requestId)
+    setThreadRun(threadId, undefined)
+    const current = threadsRef.current.find((thread) => thread.id === threadId)
+    if (current) {
+      const messages = current.messages.map((message) => message.role === 'assistant' && message.status === 'pending'
+        ? {
+            ...message,
+            status: 'cancelled' as const,
+            completedAt,
+            durationMs: Math.max(0, completedAt - (message.startedAt ?? run.startedAt))
+          }
+        : message)
+      const stoppedThread = { ...current, messages, updatedAt: completedAt }
+      replaceThread(stoppedThread)
+      void window.api.saveChatThread(stoppedThread)
+    }
+    if (run.requestId) void window.api.cancelLocalCompletion(run.requestId)
+    else if (run.source === 'local') void window.api.stopLlamaServer()
+  }
+
+  const setThreadError = (threadId: string, error: string | undefined): void => {
+    setThreadErrors((current) => {
+      const next = { ...current }
+      if (error) next[threadId] = error
+      else delete next[threadId]
+      return next
+    })
+  }
+
+  const replaceThread = (thread: ChatThread): void => {
+    const next = threadsRef.current.map((current) => current.id === thread.id ? thread : current)
+    threadsRef.current = next
+    setThreads(next)
+    if (activeThreadRef.current?.id === thread.id) {
+      activeThreadRef.current = thread
+      setActiveThread(thread)
+    }
+  }
 
   const contextTokens = useMemo(() => {
     if (!activeThread || !selectedModel) return null
@@ -416,13 +475,11 @@ export default function MainApp(): JSX.Element {
     return { used, total, percent: Math.min(Math.round((used / total) * 100), 100) }
   }, [activeThread, selectedModel])
 
-  const clearHeldActivity = (preserveActiveTool = false): void => {
-    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
-    activityHoldTimerRef.current = null
+  const clearHeldActivity = (preserveDisplayedActivity = false): void => {
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
     webSearchRevealTimerRef.current = null
-    setHeldActivity((current) => preserveActiveTool && current?.toolCallId && toolCallStartedAtRef.current.has(current.toolCallId) ? current : null)
-    if (!preserveActiveTool) setWebSearchActivity(null)
+    setHeldActivity((current) => preserveDisplayedActivity && (current?.until ?? 0) > Date.now() ? current : null)
+    if (!preserveDisplayedActivity) setWebSearchActivity(null)
   }
 
   const revealWebSearchDetail = (assistantId: string, text: string): void => {
@@ -441,14 +498,10 @@ export default function MainApp(): JSX.Element {
   }
 
   const holdWebActivity = (assistantId: string, toolCallId: string): void => {
-    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
-    activityHoldTimerRef.current = null
     setHeldActivity({ assistantId, toolCallId, label: 'Searching the web', until: Number.POSITIVE_INFINITY })
   }
 
   const holdCompletedActivity = (assistantId: string, toolCallId: string, label: string): void => {
-    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
-    activityHoldTimerRef.current = null
     setHeldActivity({ assistantId, toolCallId, label, until: Number.POSITIVE_INFINITY })
   }
 
@@ -458,7 +511,7 @@ export default function MainApp(): JSX.Element {
     setDownloadedModelIds(new Set(MODEL_LIST.filter((model) => repoSet.has(model.hf_repo)).map((model) => model.id)))
   }
 
-  const schedulePastTense = (toolCallId: string, assistantId: string, pastLabel: string): void => {
+  const scheduleActivitySweepCompletion = (toolCallId: string, assistantId: string): void => {
     const duration = activitySweepDurationMs()
     const startedAt = toolCallStartedAtRef.current.get(toolCallId) ?? Date.now()
     const elapsed = Math.max(0, Date.now() - startedAt)
@@ -473,7 +526,9 @@ export default function MainApp(): JSX.Element {
         next.delete(toolCallId)
         return next
       })
-      setHeldActivity((current) => current?.assistantId === assistantId && current.toolCallId === toolCallId ? { ...current, label: pastLabel } : current)
+      setHeldActivity((current) => current?.assistantId === assistantId && current.toolCallId === toolCallId
+        ? null
+        : current)
     }, delay)
     toolTenseTimerRefs.current.set(toolCallId, timer)
   }
@@ -553,6 +608,7 @@ export default function MainApp(): JSX.Element {
       const restoredThread = reconciledThreads.find((t) => t.id === storedViewState.activeThreadId) ?? null
       setProjects(storedProjects)
       setThreads(reconciledThreads)
+      threadsRef.current = reconciledThreads
       setSelectedProjectPath(projectPaths.has(storedViewState.selectedProjectPath) ? storedViewState.selectedProjectPath : restoredThread?.projectPath ?? storedProjects[0]?.path ?? '')
       setExpandedProjects(new Set(storedExpandedPaths.filter((path) => projectPaths.has(path))))
       setActiveThread(restoredThread)
@@ -626,26 +682,26 @@ export default function MainApp(): JSX.Element {
   }, [activeThread?.id, expandedWorkIds, prompt, reasoningEffort, selectedModelId, selectedProjectPath, sidebarOpen])
 
   useEffect(() => window.api.onLocalCompletionEvent((event) => {
-    if (event.requestId !== activeRequestIdRef.current) return
+    const requestThreadId = requestThreadIdsRef.current.get(event.requestId)
+    if (!requestThreadId) return
     if (event.type === 'delta') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const messages = current.messages.map((message, index) => index === current.messages.length - 1
         ? { ...message, content: message.content + event.delta }
         : message)
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadDebounced()
+      replaceThread(updated)
+      saveThreadDebounced(updated)
       return
     }
     if (event.type === 'tool-call') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const assistantId = current.messages.at(-1)?.role === 'assistant' ? current.messages.at(-1)?.id : undefined
       toolCallStartedAtRef.current.set(event.toolCallId, Date.now())
       setPresentTenseToolIds((current) => new Set(current).add(event.toolCallId))
-      if (assistantId) {
+      if (assistantId && activeThreadRef.current?.id === requestThreadId) {
         if (WEB_TOOL_NAMES.has(event.name)) {
           holdWebActivity(assistantId, event.toolCallId)
           const detail = webSearchDetail({ id: event.toolCallId, name: event.name, arguments: event.arguments })
@@ -668,22 +724,29 @@ export default function MainApp(): JSX.Element {
         current.messages[lastIdx]
       ]
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadImmediate()
+      replaceThread(updated)
+      saveThreadImmediate(updated)
+      return
+    }
+    if (event.type === 'todos-updated') {
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
+      if (!current) return
+      const updated = { ...current, todos: event.todos, updatedAt: Date.now() }
+      replaceThread(updated)
+      saveThreadImmediate(updated)
       return
     }
     if (event.type === 'tool-result') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const completedToolMessage = current.messages.find((message) => message.role === 'tool' && message.toolCalls?.some((toolCall) => toolCall.id === event.toolCallId))
       const completedToolCall = completedToolMessage?.toolCalls?.find((toolCall) => toolCall.id === event.toolCallId)
-      if (completedToolCall && WEB_TOOL_NAMES.has(completedToolCall.name) && completedToolMessage?.parentAssistantId) {
+      if (activeThreadRef.current?.id === requestThreadId && completedToolCall && WEB_TOOL_NAMES.has(completedToolCall.name) && completedToolMessage?.parentAssistantId) {
         holdWebActivity(completedToolMessage.parentAssistantId, event.toolCallId)
-        schedulePastTense(event.toolCallId, completedToolMessage.parentAssistantId, completedToolLabel(completedToolCall))
-      } else if (completedToolCall && completedToolMessage?.parentAssistantId) {
+        scheduleActivitySweepCompletion(event.toolCallId, completedToolMessage.parentAssistantId)
+      } else if (activeThreadRef.current?.id === requestThreadId && completedToolCall && completedToolMessage?.parentAssistantId) {
         holdCompletedActivity(completedToolMessage.parentAssistantId, event.toolCallId, runningToolLabel(completedToolCall))
-        schedulePastTense(event.toolCallId, completedToolMessage.parentAssistantId, completedToolLabel(completedToolCall))
+        scheduleActivitySweepCompletion(event.toolCallId, completedToolMessage.parentAssistantId)
       }
       const messages = current.messages.map((message) =>
         message.role === 'tool' && message.toolCalls?.some((tc) => tc.id === event.toolCallId)
@@ -697,15 +760,14 @@ export default function MainApp(): JSX.Element {
           : message
       )
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadDebounced()
+      replaceThread(updated)
+      saveThreadDebounced(updated)
       return
     }
     if (event.type === 'progress-update') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
-      clearHeldActivity(true)
+      if (activeThreadRef.current?.id === requestThreadId) clearHeldActivity(true)
       const pendingAssistant = [...current.messages].reverse().find((message) => message.role === 'assistant' && message.status === 'pending')
       if (!pendingAssistant) return
       const lastProgressIndex = current.messages.findLastIndex((message) =>
@@ -720,9 +782,8 @@ export default function MainApp(): JSX.Element {
           ? { ...message, reasoningSummary: event.summary }
           : message)
         const updated = { ...current, messages, updatedAt: Date.now() }
-        activeThreadRef.current = updated
-        setActiveThread(updated)
-        saveThreadDebounced()
+        replaceThread(updated)
+        saveThreadDebounced(updated)
         return
       }
       const progressMessage: ChatMessage = {
@@ -736,22 +797,21 @@ export default function MainApp(): JSX.Element {
       const lastIdx = current.messages.length - 1
       const messages = [...current.messages.slice(0, lastIdx), progressMessage, current.messages[lastIdx]]
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadImmediate()
+      replaceThread(updated)
+      saveThreadImmediate(updated)
       return
     }
     if (event.type === 'tool-error') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const failedToolMessage = current.messages.find((message) => message.role === 'tool' && message.toolCalls?.some((toolCall) => toolCall.id === event.toolCallId))
       const failedToolCall = failedToolMessage?.toolCalls?.find((toolCall) => toolCall.id === event.toolCallId)
-      if (failedToolCall && WEB_TOOL_NAMES.has(failedToolCall.name) && failedToolMessage?.parentAssistantId) {
+      if (activeThreadRef.current?.id === requestThreadId && failedToolCall && WEB_TOOL_NAMES.has(failedToolCall.name) && failedToolMessage?.parentAssistantId) {
         holdWebActivity(failedToolMessage.parentAssistantId, event.toolCallId)
-        schedulePastTense(event.toolCallId, failedToolMessage.parentAssistantId, completedToolLabel(failedToolCall))
-      } else if (failedToolCall && failedToolMessage?.parentAssistantId) {
+        scheduleActivitySweepCompletion(event.toolCallId, failedToolMessage.parentAssistantId)
+      } else if (activeThreadRef.current?.id === requestThreadId && failedToolCall && failedToolMessage?.parentAssistantId) {
         holdCompletedActivity(failedToolMessage.parentAssistantId, event.toolCallId, runningToolLabel(failedToolCall))
-        schedulePastTense(event.toolCallId, failedToolMessage.parentAssistantId, completedToolLabel(failedToolCall))
+        scheduleActivitySweepCompletion(event.toolCallId, failedToolMessage.parentAssistantId)
       }
       const messages = current.messages.map((message) =>
         message.role === 'tool' && message.toolCalls?.some((tc) => tc.id === event.toolCallId)
@@ -765,13 +825,13 @@ export default function MainApp(): JSX.Element {
           : message
       )
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadImmediate()
+      replaceThread(updated)
+      saveThreadImmediate(updated)
       return
     }
     if (event.type === 'reasoning-summary') {
-      const current = activeThreadRef.current
+      if (isReasoningPlaceholder(event.summary)) return
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const pendingAssistant = [...current.messages].reverse().find((message) => message.role === 'assistant' && message.status === 'pending')
       const existingSummary = current.messages.find((m) => m.role === 'tool' && m.content === '__reasoning__' && m.parentAssistantId === pendingAssistant?.id)
@@ -780,9 +840,8 @@ export default function MainApp(): JSX.Element {
           m.id === existingSummary.id ? { ...m, content: '__reasoning__', reasoningSummary: event.summary } : m
         )
         const updated = { ...current, messages, updatedAt: Date.now() }
-        activeThreadRef.current = updated
-        setActiveThread(updated)
-        saveThreadImmediate()
+        replaceThread(updated)
+        saveThreadImmediate(updated)
         return
       }
       const firstToolIdx = current.messages.findIndex((m) => m.role === 'tool')
@@ -795,13 +854,12 @@ export default function MainApp(): JSX.Element {
         messages = [...current.messages.slice(0, lastIdx), reasoningMsg, current.messages[lastIdx]]
       }
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadDebounced()
+      replaceThread(updated)
+      saveThreadDebounced(updated)
       return
     }
     if (event.type === 'files-changed') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const messages = current.messages.map((message, index) =>
         index === current.messages.length - 1 && message.role === 'assistant'
@@ -809,33 +867,32 @@ export default function MainApp(): JSX.Element {
           : message
       )
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadImmediate()
+      replaceThread(updated)
+      saveThreadImmediate(updated)
       return
     }
     if (event.type === 'error') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (current) {
         const messages = current.messages.map((message, index) => index === current.messages.length - 1 && !message.content
           ? { ...message, status: 'error' as const }
           : message)
         const updated = { ...current, messages, updatedAt: Date.now() }
-        activeThreadRef.current = updated
-        setActiveThread(updated)
+        replaceThread(updated)
       }
-      setCompletionError(event.message)
+      setThreadError(requestThreadId, event.message)
     }
-    const completed = activeThreadRef.current
+    const completed = threadsRef.current.find((thread) => thread.id === requestThreadId)
     if (completed) {
       const completedAt = Date.now()
+      const run = threadRunsRef.current[requestThreadId]
       const status = event.type === 'cancelled' ? 'cancelled' as const : event.type === 'error' ? 'error' as const : 'completed' as const
       const messages = completed.messages.map((message, index) => index === completed.messages.length - 1 && message.role === 'assistant'
         ? {
             ...message,
             status,
             completedAt,
-            durationMs: Math.max(0, completedAt - (message.startedAt ?? startTimeRef.current ?? completedAt))
+            durationMs: Math.max(0, completedAt - (message.startedAt ?? run?.startedAt ?? completedAt))
           }
         : message)
       const finalThread = { ...completed, messages, updatedAt: completedAt }
@@ -845,19 +902,17 @@ export default function MainApp(): JSX.Element {
         next.delete(completedAssistantId)
         return next
       })
-      activeThreadRef.current = finalThread
-      setActiveThread(finalThread)
-      setThreads((current) => [finalThread, ...current.filter((thread) => thread.id !== finalThread.id)])
+      replaceThread(finalThread)
       void window.api.saveChatThread(finalThread)
     }
-    activeRequestIdRef.current = null
-    setCompletionState('idle')
+    requestThreadIdsRef.current.delete(event.requestId)
+    setThreadRun(requestThreadId, undefined)
   }), [])
 
   useEffect(() => () => {
-    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
     for (const timer of toolTenseTimerRefs.current.values()) clearTimeout(timer)
+    for (const timer of saveTimerRefs.current.values()) clearTimeout(timer)
   }, [])
 
   useLayoutEffect(() => {
@@ -982,15 +1037,10 @@ export default function MainApp(): JSX.Element {
 
   const startNewThread = (): void => {
     setSettingsOpen(false)
-    if (activeRequestIdRef.current) void window.api.cancelLocalCompletion(activeRequestIdRef.current)
-    activeRequestIdRef.current = null
     activeThreadRef.current = null
     setActiveThread(null)
-    setCompletionState('idle')
-    setCompletionError('')
     setPendingAttachments([])
     setAttachmentError('')
-    clearHeldActivity()
     setPrompt('')
     setAutoScrollEnabled(true)
     promptTextareaRef.current?.focus()
@@ -1009,11 +1059,7 @@ export default function MainApp(): JSX.Element {
       return
     }
     const updated = { ...thread, title, updatedAt: Date.now() }
-    if (activeThreadRef.current?.id === thread.id) {
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-    }
-    setThreads((items) => [updated, ...items.filter((item) => item.id !== updated.id)])
+    replaceThread(updated)
     setRenamingThreadId(null)
     void window.api.saveChatThread(updated)
   }
@@ -1027,11 +1073,7 @@ export default function MainApp(): JSX.Element {
       const title = await window.api.generateChatTitle(firstUserMsg.content)
       if (!title) return
       const updated = { ...thread, title, updatedAt: Date.now() }
-      if (activeThreadRef.current?.id === thread.id) {
-        activeThreadRef.current = updated
-        setActiveThread(updated)
-      }
-      setThreads((items) => [updated, ...items.filter((item) => item.id !== updated.id)])
+      replaceThread(updated)
       void window.api.saveChatThread(updated)
     } finally {
       setRegeneratingThreadId(null)
@@ -1043,12 +1085,15 @@ export default function MainApp(): JSX.Element {
     if (!thread) return
     setDeleteConfirmThread(null)
     setContextMenu(null)
+    const run = threadRunsRef.current[thread.id]
+    if (run?.requestId) void window.api.cancelLocalCompletion(run.requestId)
     if (activeThreadRef.current?.id === thread.id) {
       activeThreadRef.current = null
       setActiveThread(null)
-      setCompletionError('')
+      setThreadError(thread.id, undefined)
     }
-    setThreads((items) => items.filter((item) => item.id !== thread.id))
+    threadsRef.current = threadsRef.current.filter((item) => item.id !== thread.id)
+    setThreads(threadsRef.current)
     void window.api.deleteChatThread(thread.id)
   }
 
@@ -1069,24 +1114,20 @@ export default function MainApp(): JSX.Element {
   }
 
   const openThread = (thread: ChatThread): void => {
-    if (activeRequestIdRef.current) return
     setSettingsOpen(false)
     activeThreadRef.current = thread
     setActiveThread(thread)
     setSelectedProjectPath(thread.projectPath)
-    setCompletionError('')
     setAutoScrollEnabled(true)
   }
 
   const updateThreadTitle = async (threadId: string, userMessage: string): Promise<void> => {
     try {
       const title = await window.api.generateChatTitle(userMessage)
-      const current = activeThreadRef.current
-      if (!current || current.id !== threadId || !title) return
+      const current = threadsRef.current.find((thread) => thread.id === threadId)
+      if (!current || !title) return
       const updated = { ...current, title, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      setThreads((items) => [updated, ...items.filter((item) => item.id !== updated.id)])
+      replaceThread(updated)
       await window.api.saveChatThread(updated)
     } catch {
       return
@@ -1124,22 +1165,23 @@ export default function MainApp(): JSX.Element {
     }
   }
 
-  const saveThreadDebounced = (): void => {
-    if (saveTimerRef.current) return
-    saveTimerRef.current = setTimeout(() => {
-      saveTimerRef.current = null
-      const current = activeThreadRef.current
+  const saveThreadDebounced = (thread: ChatThread): void => {
+    if (saveTimerRefs.current.has(thread.id)) return
+    const timer = setTimeout(() => {
+      saveTimerRefs.current.delete(thread.id)
+      const current = threadsRef.current.find((item) => item.id === thread.id)
       if (current) void window.api.saveChatThread(current)
     }, 400)
+    saveTimerRefs.current.set(thread.id, timer)
   }
 
-  const saveThreadImmediate = (): void => {
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current)
-      saveTimerRef.current = null
+  const saveThreadImmediate = (thread: ChatThread): void => {
+    const timer = saveTimerRefs.current.get(thread.id)
+    if (timer) {
+      window.clearTimeout(timer)
+      saveTimerRefs.current.delete(thread.id)
     }
-    const current = activeThreadRef.current
-    if (current) void window.api.saveChatThread(current)
+    void window.api.saveChatThread(thread)
   }
 
   const exportRequest = (options: SettingsExportOptions): SettingsExportOptions => ({
@@ -1229,6 +1271,11 @@ export default function MainApp(): JSX.Element {
     }
     const isNewThread = !activeThreadRef.current
     const threadId = activeThreadRef.current?.id ?? crypto.randomUUID()
+    cancelledThreadIdsRef.current.delete(threadId)
+    if (selectedModel.source === 'local' && Object.values(threadRunsRef.current).some((run) => run.source === 'local')) {
+      setAttachmentError('A local model is already running in another thread')
+      return
+    }
     const projectPath = activeThreadRef.current?.projectPath ?? selectedProjectPath ?? projects[0]?.path ?? ''
     const now = Date.now()
     const modelProvenance: AgentModelProvenance = selectedModel.source === 'local'
@@ -1258,22 +1305,23 @@ export default function MainApp(): JSX.Element {
     }
     activeThreadRef.current = thread
     setActiveThread(thread)
-    setThreads((current) => [thread, ...current.filter((item) => item.id !== thread.id)])
+    threadsRef.current = [thread, ...threadsRef.current.filter((item) => item.id !== thread.id)]
+    setThreads(threadsRef.current)
     if (projectPath) setExpandedProjects((current) => new Set(current).add(projectPath))
     setPrompt('')
     setPendingAttachments([])
     setAttachmentError('')
-    setCompletionError('')
-    setCompletionState('starting')
+    setThreadError(threadId, undefined)
+    setThreadRun(threadId, { source: modelProvenance.source, startedAt: now, state: 'starting' })
     setAutoScrollEnabled(true)
     void window.api.saveChatThread(thread)
     if (isNewThread && content) void updateThreadTitle(threadId, content)
-    startTimeRef.current = Date.now()
     try {
       if (selectedModel.source === 'local') {
         const localModel = selectedModel.localModel
         if (!localModel) throw new Error('The selected local model is unavailable')
         const status = await window.api.startDownloadedModel(localModel.hf_repo, localModel.gguf_file, pendingAttachments.length > 0)
+        if (cancelledThreadIdsRef.current.has(threadId)) return
         if (status.state !== 'ready') throw new Error(status.message ?? 'The local model could not start')
       }
       const messages = thread.messages.flatMap((message) => {
@@ -1312,23 +1360,25 @@ export default function MainApp(): JSX.Element {
         repetitionPenalty: localProfile?.repetitionPenalty,
         maxTokens: DEFAULT_AGENT_MAX_TOKENS
       })
-      activeRequestIdRef.current = start.requestId
-      setCompletionState('streaming')
+      if (cancelledThreadIdsRef.current.has(threadId)) {
+        void window.api.cancelLocalCompletion(start.requestId)
+        return
+      }
+      requestThreadIdsRef.current.set(start.requestId, threadId)
+      setThreadRun(threadId, { requestId: start.requestId, source: modelProvenance.source, startedAt: now, state: 'streaming' })
     } catch (error) {
-      setCompletionError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'The selected model could not start')
-      const current = activeThreadRef.current
+      setThreadError(threadId, error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'The selected model could not start')
+      const current = threadsRef.current.find((item) => item.id === threadId)
       if (current) {
         const completedAt = Date.now()
         const messages = current.messages.map((message) => message.id === assistantMessage.id
           ? { ...message, status: 'error' as const, completedAt, durationMs: completedAt - now }
           : message)
         const failedThread = { ...current, messages, updatedAt: completedAt }
-        activeThreadRef.current = failedThread
-        setActiveThread(failedThread)
-        setThreads((items) => [failedThread, ...items.filter((item) => item.id !== failedThread.id)])
+        replaceThread(failedThread)
         void window.api.saveChatThread(failedThread)
       }
-      setCompletionState('idle')
+      setThreadRun(threadId, undefined)
     }
   }
 
@@ -1519,7 +1569,7 @@ export default function MainApp(): JSX.Element {
                   }
                   const parentIsFinished = parent?.role === 'assistant' && parent.status !== 'pending'
                   if (parentIsFinished && parent && !expandedWorkIds.has(parent.id)) return null
-                  if (message.content === '__reasoning__' && message.reasoningSummary) {
+                  if (message.content === '__reasoning__' && message.reasoningSummary && !isReasoningPlaceholder(message.reasoningSummary)) {
                     return (
                       <div className="chat-message reasoning-message" key={message.id}>
                         <div className="reasoning-summary">
@@ -1680,6 +1730,30 @@ export default function MainApp(): JSX.Element {
           </button>
         )}
 
+        <div className={activeThread ? 'composer-stack' : 'composer-stack new-thread'}>
+          {activeThread && (activeThread.todos?.length ?? 0) > 0 && (() => {
+            const todos = activeThread.todos ?? []
+            const completed = todos.filter((todo) => todo.status === 'completed').length
+            const preview = activeTodo(todos)?.content ?? ''
+            return (
+              <section className={todoCollapsed ? 'todo-dock collapsed' : 'todo-dock'} aria-label="Task list">
+                <button className="todo-dock-header" type="button" aria-expanded={!todoCollapsed} onClick={() => setTodoCollapsed((collapsed) => !collapsed)}>
+                  <span className="todo-dock-progress">{completed} of {todos.length} tasks</span>
+                  <span className="todo-dock-preview">{preview}</span>
+                  <ChevronDown size={15} className="todo-dock-chevron" aria-hidden="true" />
+                </button>
+                <div className="todo-dock-list" aria-hidden={todoCollapsed}>
+                  {todos.map((todo, index) => {
+                    const completedTodo = todo.status === 'completed' || todo.status === 'cancelled'
+                    return <div className={`todo-dock-item ${todo.status}`} key={`${index}-${todo.content}`}>
+                      {todo.status === 'in_progress' ? <span className="todo-dock-indicator" aria-label="In progress"><span /></span> : completedTodo ? <Check size={14} aria-hidden="true" /> : <Circle size={14} aria-hidden="true" />}
+                      <span>{todo.content}</span>
+                    </div>
+                  })}
+                </div>
+              </section>
+            )
+          })()}
         <form className={activeThread ? 'prompt-composer' : 'prompt-composer new-thread-composer'} ref={promptComposerRef} onSubmit={(event) => void submitPrompt(event)}>
           <div className="composer-shape" aria-hidden="true" />
           {pendingAttachments.length > 0 && (
@@ -1807,7 +1881,9 @@ export default function MainApp(): JSX.Element {
               </div>
               {completionState === 'idle'
                 ? <button className="send-button" type="submit" disabled={(!prompt.trim() && pendingAttachments.length === 0) || !selectedModel} aria-label="Send prompt"><ArrowUp size={16} /></button>
-                : <button className="send-button stop-button" type="button" aria-label="Stop response" onClick={() => { if (activeRequestIdRef.current) void window.api.cancelLocalCompletion(activeRequestIdRef.current) }}><Square size={14} /></button>}
+                : <button className="send-button stop-button" type="button" aria-label="Stop response" onClick={() => {
+                  if (activeThread) stopThreadRun(activeThread.id)
+                }}><Square size={14} /></button>}
             </div>
           </div>
           {!activeThread && (
@@ -1823,6 +1899,7 @@ export default function MainApp(): JSX.Element {
             </div>
           )}
         </form>
+        </div>
         </section>
       </main>
       {settingsOpen && (

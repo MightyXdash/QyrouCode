@@ -19,7 +19,7 @@ import { deleteConnection, getConnections, getConnectionSecurityStatus, resolveC
 import type { ConnectionInput } from '../shared/connections'
 import { buildConversationExport, exportFilename } from './conversationExport'
 import { validateConversationExportRequest } from '../shared/conversationExport'
-import type { AgentExecutionTarget, AgentModelProvenance } from '../shared/agent'
+import type { AgentExecutionTarget, AgentModelProvenance, AgentModelSource } from '../shared/agent'
 import { getReasoningEffortPrompt, getRemoteModel, resolveRemoteReasoningEffort, shouldRetainRemoteReasoning } from '../shared/remoteModels'
 import { RemoteCompletionClient } from './remoteCompletionClient'
 
@@ -52,7 +52,7 @@ let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
 let titleRuntime: LlamaRuntime | null = null
 let summarizerRuntime: LlamaRuntime | null = null
-const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController }>()
+const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController; source: AgentModelSource }>()
 const projectorlessRepositories = new Set<string>()
 
 function appIconPath(): string {
@@ -612,6 +612,9 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('start-downloaded-model', async (_event, repoId: unknown, filename: unknown, requireVision: unknown = false) => {
     if (!llamaRuntime) throw new Error('llama-server is not available')
+    if ([...activeCompletionRequests.values()].some((request) => request.source === 'local')) {
+      throw new Error('A local model is already running in another thread')
+    }
     if (typeof requireVision !== 'boolean') throw new Error('Invalid vision mode')
     const modelPath = resolveDownloadedModel(repoId, filename)
     const projectorPath = requireVision ? await ensureModelProjector(repoId as string, modelPath) : findProjector(modelPath)
@@ -633,23 +636,23 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('stop-llama-server', () => llamaRuntime?.stop())
 
-  const summarizeReasoning = async (rawReasoning: string): Promise<string> => {
-    if (!summarizerRuntime) return 'Processing...'
+  const summarizeReasoning = async (rawReasoning: string): Promise<string | undefined> => {
+    if (!summarizerRuntime) return undefined
     try {
       const modelPath = resolveDownloadedModel(SUMMARIZER_MODEL_REPOSITORY, SUMMARIZER_MODEL_FILENAME)
       const status = await summarizerRuntime.start(modelPath, SUMMARIZER_MODEL_CONTEXT_TOKENS)
-      if (status.state !== 'ready') return 'Processing...'
+      if (status.state !== 'ready') return undefined
       const input = rawReasoning.slice(0, 6000)
       const response = await summarizerRuntime.completePrompt(`Summarize this reasoning as JSON with a "summary" key:\n\n${input}\n\n{"summary":`)
       const parsed = JSON.parse(`{"summary":${response}`)
-      return (typeof parsed.summary === 'string' && parsed.summary.trim()) || 'Processing...'
+      return typeof parsed.summary === 'string' && parsed.summary.trim() ? parsed.summary.trim() : undefined
     } catch {
       try {
         const input = rawReasoning.slice(0, 6000)
         const fallback = await summarizerRuntime.completePrompt(`Summarize this reasoning in one short line:\n\n${input}\n\nSummary:`)
-        return fallback.replace(/[\r\n]+/g, ' ').replace(/^Summary:\s*/i, '').trim() || 'Processing...'
+        return fallback.replace(/[\r\n]+/g, ' ').replace(/^Summary:\s*/i, '').trim() || undefined
       } catch {
-        return 'Processing...'
+        return undefined
       }
     }
   }
@@ -673,10 +676,11 @@ app.whenReady().then(() => {
         break
       case 'reasoning-summary':
         void summarizeReasoning(event.summary).then((summary) => {
-          send({ requestId, type: 'reasoning-summary', summary })
-        }).catch(() => {
-          send({ requestId, type: 'reasoning-summary', summary: 'Processing...' })
+          if (summary) send({ requestId, type: 'reasoning-summary', summary })
         })
+        break
+      case 'todos-updated':
+        send({ requestId, type: 'todos-updated', todos: event.todos })
         break
     }
   }
@@ -696,9 +700,12 @@ app.whenReady().then(() => {
     if (!request || typeof request.threadId !== 'string' || !request.threadId) throw new Error('A chat thread is required for the agent')
     const project = getProjects().find((item) => item.path === request.projectPath)
     if (!project || !existsSync(project.path) || !statSync(project.path).isDirectory()) throw new Error('Select a valid project before running an agent')
+    if (model.source === 'local' && [...activeCompletionRequests.values()].some((request) => request.source === 'local')) {
+      throw new Error('A local model is already running in another thread')
+    }
     const requestId = randomUUID()
     const controller = new AbortController()
-    activeCompletionRequests.set(requestId, { senderId: event.sender.id, controller })
+    activeCompletionRequests.set(requestId, { senderId: event.sender.id, controller, source: model.source })
     const send = (completionEvent: LocalCompletionEvent): void => event.sender.send('local-completion-event', completionEvent)
     const persisted = getAgentSession(request.threadId, project.path)
     const systemMessages = request.messages.filter((message) => message.role === 'system')

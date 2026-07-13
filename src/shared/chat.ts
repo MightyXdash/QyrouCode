@@ -26,6 +26,15 @@ export interface ToolUiMessage {
   uim_pat: string
 }
 
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+export type TodoPriority = 'low' | 'medium' | 'high'
+
+export interface TodoDisplay {
+  content: string
+  status: TodoStatus
+  priority: TodoPriority
+}
+
 export interface ToolCallDisplay {
   id: string
   name: string
@@ -61,4 +70,5 @@ export interface ChatThread {
   messages: ChatMessage[]
   updatedAt: number
   duration?: number
+  todos?: TodoDisplay[]
 }
