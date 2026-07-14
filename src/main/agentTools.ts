@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { dirname, isAbsolute, relative, resolve, sep } from 'path'
 import type { LocalToolDefinition } from './localCompletionClient'
+import type { TodoDisplay } from '../shared/chat'
 import { availableSkills } from './agentPrompt'
 import { formatWebSearchResults, NoApiWebClient, type WebFetchFormat } from './webSearch'
 
@@ -17,13 +18,10 @@ export interface AgentToolboxOptions {
   readOnly?: boolean
   runTask?: (request: AgentTaskRequest) => Promise<string>
   webClient?: NoApiWebClient
+  onTodosChanged?: (todos: TodoDisplay[]) => void
 }
 
-interface TodoItem {
-  content: string
-  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-  priority: 'low' | 'medium' | 'high'
-}
+type TodoItem = TodoDisplay
 
 interface PatchOperation {
   type: 'add' | 'delete' | 'update'
@@ -44,10 +42,16 @@ const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules', 'dist', 'out', 'bui
 const DANGEROUS_COMMAND = /(?:\brm\s+-rf\s+(?:\/|~)|\bRemove-Item\b[^\r\n]*-Recurse[^\r\n]*(?:[A-Za-z]:\\|\s\/)|\b(?:shutdown|reboot|format)\b|\bgit\s+(?:reset\s+--hard|clean\s+-[^\s]*f))/i
 const READ_ONLY_COMMAND = /^\s*(?:git\s+(?:status|diff|log|show|branch|rev-parse|ls-files)\b|rg\b|grep\b|find\b|ls\b|pwd\b|cat\b|head\b|tail\b|wc\b|Get-ChildItem\b|Get-Content\b|Select-String\b)/i
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
-const TASK_STATE_TOOL_NAME = 'cur_task_state'
+export const TASK_STATE_TOOL_NAME = 'cur_task_state'
 const UI_MESSAGE_PROPERTY = {
-  type: 'string',
-  description: 'Required user-facing activity label. Write in first person, describe the current action naturally, and stay under six words by all means.'
+  type: 'object',
+  description: 'Required user-facing activity labels for this tool. Do not place a message directly under ui_message.',
+  properties: {
+    uim_prt: { type: 'string', description: 'Present-continuous first-person label describing the action in progress, such as “I’m reading the file”. Stay under six words.' },
+    uim_pat: { type: 'string', description: 'Past-tense label describing the completed action. Stay under six words.' }
+  },
+  required: ['uim_prt', 'uim_pat'],
+  additionalProperties: false
 }
 
 const definition = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []): LocalToolDefinition => {
@@ -65,8 +69,8 @@ const definition = (name: string, description: string, properties: Record<string
 }
 
 const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
-  definition(TASK_STATE_TOOL_NAME, 'Share a user-visible update after thinking and before a tool-based substep. Call this periodically as the task state changes. The message should naturally explain what you will do, what you are doing, or what you just established.', {
-    message: { type: 'string', description: 'A natural roughly 60–65-word user-facing task-state update. This is guidance, not a strict measured limit.' }
+  definition(TASK_STATE_TOOL_NAME, 'Share a user-visible task-state update before agentic work begins and at later material milestones. This is control-plane status, not an ordinary assistant response.', {
+    message: { type: 'string', description: 'One natural 60–65-word paragraph, written mostly in first person, describing the immediate next substep, why it matters, and what follows. Later updates must contain unique information the user should know.' }
   }, ['message']),
   definition('read', 'Read a UTF-8 text file with line numbers. Use this before editing an existing file.', {
     filePath: { type: 'string', description: 'Workspace-relative or absolute file path' },
@@ -277,7 +281,7 @@ export class AgentToolbox {
   async execute(name: string, args: Record<string, unknown>): Promise<string> {
     this.options.signal?.throwIfAborted()
     switch (name) {
-      case TASK_STATE_TOOL_NAME: return 'Current task state shared with the user.'
+      case TASK_STATE_TOOL_NAME: return 'Task state accepted. Continue the agentic loop without an ordinary assistant response.'
       case 'read': return this.read(args)
       case 'list': return this.list(args)
       case 'glob': return this.glob(args)
@@ -447,6 +451,7 @@ export class AgentToolbox {
     })
     if (todos.filter((todo) => todo.status === 'in_progress').length > 1) throw new Error('Only one todo may be in progress')
     this.todos = todos
+    this.options.onTodosChanged?.(todos)
     return this.readTodos()
   }
 

@@ -21,11 +21,25 @@ export interface FileChangeDisplay {
   deletions: number
 }
 
+export interface ToolUiMessage {
+  uim_prt: string
+  uim_pat: string
+}
+
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+export type TodoPriority = 'low' | 'medium' | 'high'
+
+export interface TodoDisplay {
+  content: string
+  status: TodoStatus
+  priority: TodoPriority
+}
+
 export interface ToolCallDisplay {
   id: string
   name: string
   arguments: Record<string, unknown>
-  uiMessage?: string
+  uiMessage?: ToolUiMessage
   result?: string
   filePath?: string
   error?: string
@@ -37,7 +51,6 @@ export interface ChatMessage {
   content: string
   timestamp?: number
   toolCalls?: ToolCallDisplay[]
-  reasoningSummary?: string
   filesChanged?: string[]
   fileChanges?: FileChangeDisplay[]
   attachments?: ChatAttachment[]
@@ -46,6 +59,7 @@ export interface ChatMessage {
   startedAt?: number
   completedAt?: number
   durationMs?: number
+  model?: import('./agent').AgentModelProvenance
 }
 
 export interface ChatThread {
@@ -55,4 +69,5 @@ export interface ChatThread {
   messages: ChatMessage[]
   updatedAt: number
   duration?: number
+  todos?: TodoDisplay[]
 }

@@ -2,18 +2,26 @@ import { app, shell, BrowserWindow, Menu, dialog, ipcMain, nativeImage, net } fr
 import { randomUUID } from 'crypto'
 import { basename, dirname, extname, join } from 'path'
 import { existsSync, readdirSync, createWriteStream, mkdirSync, unlinkSync, renameSync, statSync } from 'fs'
+import { writeFile } from 'fs/promises'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setTheme } from './settings'
+import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setResponseStylePreference, setTheme } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
 import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManifest'
 import { LLAMA_TITLE_SERVER_PORT } from '../shared/llama'
 import type { LocalCompletionEvent, LocalCompletionStart } from './localCompletionClient'
-import type { AgentRunRequest, AgentToolEvent } from './agentRuntime'
+import { AgentRuntime, type AgentRunRequest, type AgentStateListener, type AgentToolEvent } from './agentRuntime'
 import { CHAT_ATTACHMENT_MIME_TYPES, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatThread } from '../shared/chat'
+import { deleteConnection, getConnections, getConnectionSecurityStatus, resolveConnection, resolveProviderSiteIcon, saveConnection, testConnection, updateConnectionModels } from './connectionStore'
+import type { ConnectionInput } from '../shared/connections'
+import { buildConversationExport, exportFilename } from './conversationExport'
+import { validateConversationExportRequest } from '../shared/conversationExport'
+import type { AgentExecutionTarget, AgentModelProvenance, AgentModelSource } from '../shared/agent'
+import { getReasoningEffortPrompt, getRemoteModel, resolveRemoteReasoningEffort, shouldRetainRemoteReasoning } from '../shared/remoteModels'
+import { RemoteCompletionClient } from './remoteCompletionClient'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -29,10 +37,6 @@ const TITLE_MODEL_REPOSITORY = 'SupraLabs/supra-title-50M-pre-gguf'
 const TITLE_MODEL_FILENAME = 'SupraTitle-50M-Q4_K_M.gguf'
 const TITLE_MODEL_CONTEXT_TOKENS = 4096
 const TITLE_MODEL_MAX_INPUT_CHARACTERS = 12000
-const SUMMARIZER_MODEL_REPOSITORY = 'SupraLabs/reasoning-summarizer-800m-pre-gguf'
-const SUMMARIZER_MODEL_FILENAME = 'reasoning-summarizer-800m-pre-Q4_K_M.gguf'
-const SUMMARIZER_MODEL_CONTEXT_TOKENS = 4096
-const SUMMARIZER_SERVER_PORT = 39283
 const MODEL_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const INVALID_PROJECT_NAME_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/
 const WINDOWS_RESERVED_PROJECT_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
@@ -43,8 +47,7 @@ const MODEL_DOWNLOAD_ATTEMPTS = 3
 let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
 let titleRuntime: LlamaRuntime | null = null
-let summarizerRuntime: LlamaRuntime | null = null
-const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController }>()
+const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController; source: AgentModelSource }>()
 const projectorlessRepositories = new Set<string>()
 
 function appIconPath(): string {
@@ -354,8 +357,23 @@ function createMainAppWindow(): BrowserWindow {
   return targetWindow
 }
 
+function createMacApplicationMenu(): void {
+  if (process.platform !== 'darwin') return
+  const sendCommand = (command: string) => {
+    if (mainAppWindow && !mainAppWindow.isDestroyed()) mainAppWindow.webContents.send('native-menu-command', command)
+  }
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { label: 'File', submenu: [{ label: 'New Thread', accelerator: 'CmdOrCtrl+N', click: () => sendCommand('new-thread') }, { type: 'separator' }, { role: 'close' }] },
+    { role: 'editMenu' },
+    { label: 'View', submenu: [{ label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => sendCommand('reload') }, { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => sendCommand('toggle-dev-tools') }, { type: 'separator' }, { role: 'togglefullscreen' }] },
+    { label: 'Theme', submenu: [{ label: 'System', click: () => { setTheme('system'); sendCommand('theme:system') } }, { label: 'Dark', click: () => { setTheme('dark'); sendCommand('theme:dark') } }, { label: 'Light', click: () => { setTheme('light'); sendCommand('theme:light') } }] },
+    { label: 'Help', submenu: [{ label: 'SupraCode', enabled: false }, { label: 'Local coding model runner', enabled: false }] }
+  ]))
+}
+
 function createWindow(): void {
-  Menu.setApplicationMenu(null)
+  if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -473,7 +491,7 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.suprarcode')
   llamaRuntime = new LlamaRuntime()
   titleRuntime = new LlamaRuntime(LLAMA_TITLE_SERVER_PORT)
-  summarizerRuntime = new LlamaRuntime(SUMMARIZER_SERVER_PORT)
+  createMacApplicationMenu()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -514,7 +532,46 @@ app.whenReady().then(() => {
   ipcMain.handle('get-llama-status', () => llamaRuntime?.getStatus())
   ipcMain.handle('get-theme', () => getTheme())
   ipcMain.handle('get-response-style-preference', () => getResponseStylePreference())
+  ipcMain.handle('set-response-style-preference', (_event, preference: unknown) => setResponseStylePreference(preference))
   ipcMain.handle('set-theme', (_event, theme: unknown) => setTheme(theme))
+  ipcMain.handle('get-connections', () => getConnections())
+  ipcMain.handle('get-connection-security-status', () => getConnectionSecurityStatus())
+  ipcMain.handle('resolve-provider-site-icon', (_event, baseUrl: unknown) => {
+    if (typeof baseUrl !== 'string') throw new Error('Invalid provider base URL')
+    return resolveProviderSiteIcon(baseUrl)
+  })
+  ipcMain.handle('save-connection', (_event, value: unknown, connectionId?: unknown) => {
+    if (connectionId !== undefined && typeof connectionId !== 'string') throw new Error('Invalid connection ID')
+    return saveConnection(value as ConnectionInput, connectionId)
+  })
+  ipcMain.handle('test-connection', (_event, value: unknown, connectionId?: unknown) => {
+    if (connectionId !== undefined && typeof connectionId !== 'string') throw new Error('Invalid connection ID')
+    return testConnection(value as ConnectionInput, connectionId)
+  })
+  ipcMain.handle('delete-connection', (_event, connectionId: unknown) => {
+    if (typeof connectionId !== 'string' || !connectionId) throw new Error('Invalid connection ID')
+    return deleteConnection(connectionId)
+  })
+  ipcMain.handle('update-connection-models', (_event, connectionId: unknown, selectedModelIds: unknown) => {
+    if (typeof connectionId !== 'string' || !connectionId || !Array.isArray(selectedModelIds)) throw new Error('Invalid model selection')
+    return updateConnectionModels(connectionId, selectedModelIds)
+  })
+  ipcMain.handle('preview-conversation-export', (_event, value: unknown) => {
+    const request = validateConversationExportRequest(value)
+    return buildConversationExport(request, getChatThreads(), getAgentSessions()).preview
+  })
+  ipcMain.handle('export-conversations', async (event, value: unknown) => {
+    const request = validateConversationExportRequest(value)
+    const built = buildConversationExport(request, getChatThreads(), getAgentSessions())
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showSaveDialog(owner ?? undefined, {
+      defaultPath: exportFilename(request),
+      filters: [{ name: request.format === 'jsonl' ? 'JSON Lines' : 'JSON', extensions: [request.format] }]
+    })
+    if (result.canceled || !result.filePath) return { saved: false, ...built.preview }
+    await writeFile(result.filePath, built.content, 'utf8')
+    return { saved: true, filePath: result.filePath, ...built.preview }
+  })
   ipcMain.handle('get-projects', () => getProjects())
   ipcMain.handle('get-expanded-project-paths', () => getExpandedProjectPaths())
   ipcMain.handle('set-expanded-project-paths', (_event, paths: unknown) => setExpandedProjectPaths(paths))
@@ -548,6 +605,14 @@ app.whenReady().then(() => {
     addProject(project)
     return project
   })
+  ipcMain.handle('rename-project', (_event, projectPath: unknown, value: unknown) => {
+    if (typeof projectPath !== 'string' || !projectPath) throw new Error('Invalid project')
+    return renameProject(projectPath, validateProjectName(value))
+  })
+  ipcMain.handle('remove-project', (_event, projectPath: unknown) => {
+    if (typeof projectPath !== 'string' || !projectPath) throw new Error('Invalid project')
+    return removeProject(projectPath)
+  })
   ipcMain.handle('choose-project-folder', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
     const result = await dialog.showOpenDialog(owner ?? undefined, {
@@ -569,6 +634,9 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('start-downloaded-model', async (_event, repoId: unknown, filename: unknown, requireVision: unknown = false) => {
     if (!llamaRuntime) throw new Error('llama-server is not available')
+    if ([...activeCompletionRequests.values()].some((request) => request.source === 'local')) {
+      throw new Error('A local model is already running in another thread')
+    }
     if (typeof requireVision !== 'boolean') throw new Error('Invalid vision mode')
     const modelPath = resolveDownloadedModel(repoId, filename)
     const projectorPath = requireVision ? await ensureModelProjector(repoId as string, modelPath) : findProjector(modelPath)
@@ -590,27 +658,6 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('stop-llama-server', () => llamaRuntime?.stop())
 
-  const summarizeReasoning = async (rawReasoning: string): Promise<string> => {
-    if (!summarizerRuntime) return 'Processing...'
-    try {
-      const modelPath = resolveDownloadedModel(SUMMARIZER_MODEL_REPOSITORY, SUMMARIZER_MODEL_FILENAME)
-      const status = await summarizerRuntime.start(modelPath, SUMMARIZER_MODEL_CONTEXT_TOKENS)
-      if (status.state !== 'ready') return 'Processing...'
-      const input = rawReasoning.slice(0, 6000)
-      const response = await summarizerRuntime.completePrompt(`Summarize this reasoning as JSON with a "summary" key:\n\n${input}\n\n{"summary":`)
-      const parsed = JSON.parse(`{"summary":${response}`)
-      return (typeof parsed.summary === 'string' && parsed.summary.trim()) || 'Processing...'
-    } catch {
-      try {
-        const input = rawReasoning.slice(0, 6000)
-        const fallback = await summarizerRuntime.completePrompt(`Summarize this reasoning in one short line:\n\n${input}\n\nSummary:`)
-        return fallback.replace(/[\r\n]+/g, ' ').replace(/^Summary:\s*/i, '').trim() || 'Processing...'
-      } catch {
-        return 'Processing...'
-      }
-    }
-  }
-
   const sendToolEvent = (send: (event: LocalCompletionEvent) => void, requestId: string, event: AgentToolEvent): void => {
     switch (event.type) {
       case 'tool-call':
@@ -628,24 +675,37 @@ app.whenReady().then(() => {
       case 'progress-update':
         send({ requestId, type: 'progress-update', summary: event.summary })
         break
-      case 'reasoning-summary':
-        void summarizeReasoning(event.summary).then((summary) => {
-          send({ requestId, type: 'reasoning-summary', summary })
-        }).catch(() => {
-          send({ requestId, type: 'reasoning-summary', summary: 'Processing...' })
-        })
+      case 'todos-updated':
+        send({ requestId, type: 'todos-updated', todos: event.todos })
         break
     }
   }
-  ipcMain.handle('start-local-completion', (event, request: AgentRunRequest): LocalCompletionStart => {
+  type AgentRunner = (
+    request: AgentRunRequest,
+    onDelta: (delta: string) => void,
+    onState?: AgentStateListener,
+    onToolEvent?: (event: AgentToolEvent) => void
+  ) => Promise<void>
+
+  const startAgentRun = (
+    event: Electron.IpcMainInvokeEvent,
+    request: AgentRunRequest,
+    model: AgentModelProvenance,
+    runner: AgentRunner
+  ): LocalCompletionStart => {
     if (!request || typeof request.threadId !== 'string' || !request.threadId) throw new Error('A chat thread is required for the agent')
-    if (!llamaRuntime) throw new Error('llama-server is not available')
     const project = getProjects().find((item) => item.path === request.projectPath)
     if (!project || !existsSync(project.path) || !statSync(project.path).isDirectory()) throw new Error('Select a valid project before running an agent')
+    if (model.source === 'local' && [...activeCompletionRequests.values()].some((request) => request.source === 'local')) {
+      throw new Error('A local model is already running in another thread')
+    }
     const requestId = randomUUID()
     const controller = new AbortController()
-    activeCompletionRequests.set(requestId, { senderId: event.sender.id, controller })
-    const send = (completionEvent: LocalCompletionEvent): void => event.sender.send('local-completion-event', completionEvent)
+    activeCompletionRequests.set(requestId, { senderId: event.sender.id, controller, source: model.source })
+    const send = (completionEvent: LocalCompletionEvent): void => event.sender.send('local-completion-event', {
+      ...completionEvent,
+      threadId: request.threadId
+    })
     const persisted = getAgentSession(request.threadId, project.path)
     const systemMessages = request.messages.filter((message) => message.role === 'system')
     const latestUserMessage = [...request.messages].reverse().find((message) => message.role === 'user')
@@ -654,8 +714,8 @@ app.whenReady().then(() => {
     const resumedMessages = persisted
       ? [...systemMessages, ...persisted.messages, ...(latestUserMessage && (persistedFinished || !messageContentEquals(latestUserMessage.content, persistedLastUser?.content)) ? [latestUserMessage] : [])]
       : request.messages
-    const agentRequest = { ...request, messages: resumedMessages, projectPath: project.path, signal: controller.signal }
-    void llamaRuntime.runAgent(
+    const agentRequest = { ...request, messages: resumedMessages, projectPath: project.path, signal: controller.signal, model }
+    void runner(
       agentRequest,
       (delta) => send({ requestId, type: 'delta', delta }),
       (messages) => saveAgentSession({
@@ -664,14 +724,93 @@ app.whenReady().then(() => {
         messages: messages.filter((message) => message.role !== 'system'),
         updatedAt: Date.now()
       }),
-      (event) => sendToolEvent(send, requestId, event)
+      (toolEvent) => sendToolEvent(send, requestId, toolEvent)
     )
       .then(() => send({ requestId, type: controller.signal.aborted ? 'cancelled' : 'complete' }))
       .catch((error) => send(controller.signal.aborted
         ? { requestId, type: 'cancelled' }
-        : { requestId, type: 'error', message: error instanceof Error ? error.message : 'Local completion failed' }))
+        : { requestId, type: 'error', message: error instanceof Error ? error.message : 'Agent completion failed' }))
       .finally(() => activeCompletionRequests.delete(requestId))
     return { requestId }
+  }
+
+  const localTargetModel = (target: Extract<AgentExecutionTarget, { source: 'local' }>): AgentModelProvenance => ({
+    source: 'local',
+    provider: 'Local',
+    modelId: target.modelId,
+    displayName: target.displayName,
+    reasoningRetention: 'retain'
+  })
+
+  const remoteRunner = (target: Extract<AgentExecutionTarget, { source: 'remote' }>): { model: AgentModelProvenance; runner: AgentRunner } => {
+    const connection = resolveConnection(target.connectionId)
+    if (!connection.selectedModelIds.includes(target.modelId)) throw new Error('Select this model in Settings before using it')
+    const catalogModel = getRemoteModel(target.modelId)
+    if (connection.kind !== 'openai-compatible' && (!catalogModel || !catalogModel.availableOn.includes(connection.kind))) {
+      throw new Error('This model is not available from the selected connection')
+    }
+    if (connection.kind === 'openai-compatible' && !connection.modelIds.includes(target.modelId)) {
+      throw new Error('This model is not configured for the selected connection')
+    }
+    const reasoning = catalogModel
+      ? resolveRemoteReasoningEffort(catalogModel, target.reasoningEffort)
+      : {
+          enabled: target.reasoningEffort !== 'Instant',
+          nativeEffort: null,
+          systemPrompt: getReasoningEffortPrompt(target.reasoningEffort)
+        }
+    const apiModelId = catalogModel
+      ? catalogModel.providerModelIds[connection.kind as keyof typeof catalogModel.providerModelIds]
+      : target.modelId
+    if (!apiModelId) throw new Error('This model does not have a valid provider model ID')
+    const retainReasoning = shouldRetainRemoteReasoning(connection.kind)
+    const client = new RemoteCompletionClient({
+      kind: connection.kind,
+      baseUrl: connection.baseUrl,
+      apiKey: connection.apiKey,
+      modelId: apiModelId,
+      retainReasoning,
+      reasoning: {
+        enabled: reasoning.enabled,
+        nativeEffort: reasoning.nativeEffort ?? undefined,
+        fallbackPrompt: reasoning.systemPrompt ?? undefined
+      }
+    })
+    const runtime = new AgentRuntime(client)
+    return {
+      model: {
+        source: 'remote',
+        connectionId: connection.id,
+        provider: connection.providerName,
+        modelId: target.modelId,
+        displayName: catalogModel?.displayName ?? target.modelId,
+        reasoningRetention: retainReasoning ? 'retain' : 'discard'
+      },
+      runner: runtime.run.bind(runtime)
+    }
+  }
+
+  ipcMain.handle('start-agent-completion', (event, target: AgentExecutionTarget, request: AgentRunRequest): LocalCompletionStart => {
+    if (!target || !['local', 'remote'].includes(target.source)) throw new Error('Choose a valid model')
+    if (target.source === 'local') {
+      if (!llamaRuntime) throw new Error('llama-server is not available')
+      if (typeof target.modelId !== 'string' || !target.modelId || typeof target.displayName !== 'string' || !target.displayName) throw new Error('Choose a valid local model')
+      return startAgentRun(event, request, localTargetModel(target), llamaRuntime.runAgent.bind(llamaRuntime))
+    }
+    if (typeof target.connectionId !== 'string' || !target.connectionId || typeof target.modelId !== 'string' || !target.modelId) throw new Error('Choose a valid remote model')
+    const remote = remoteRunner(target)
+    return startAgentRun(event, request, remote.model, remote.runner)
+  })
+
+  ipcMain.handle('start-local-completion', (event, request: AgentRunRequest): LocalCompletionStart => {
+    if (!llamaRuntime) throw new Error('llama-server is not available')
+    const requested = request.model?.source === 'local' ? request.model : undefined
+    const target: Extract<AgentExecutionTarget, { source: 'local' }> = {
+      source: 'local',
+      modelId: requested?.modelId ?? 'local-model',
+      displayName: requested?.displayName ?? 'Local model'
+    }
+    return startAgentRun(event, request, localTargetModel(target), llamaRuntime.runAgent.bind(llamaRuntime))
   })
   ipcMain.handle('cancel-local-completion', (event, requestId: string): boolean => {
     const request = activeCompletionRequests.get(requestId)

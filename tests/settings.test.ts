@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   MAX_CUSTOM_RESPONSE_STYLE_LENGTH,
   validateOnboardingPreferences,
+  validateResponseStylePreference,
   validateThemePreference
 } from '../src/shared/settings.js'
 
@@ -59,4 +60,10 @@ test('rejects unsupported preference values and oversized custom instructions', 
 test('validates supported standalone theme preferences', () => {
   assert.equal(validateThemePreference('dark'), 'dark')
   assert.throws(() => validateThemePreference('midnight'), /Invalid theme preference/)
+})
+
+test('validates response style updates from settings', () => {
+  assert.deepEqual(validateResponseStylePreference({ style: 'warm', customInstruction: 'ignored' }), { style: 'warm', customInstruction: '' })
+  assert.deepEqual(validateResponseStylePreference({ style: 'custom', customInstruction: '  Keep it direct.  ' }), { style: 'custom', customInstruction: 'Keep it direct.' })
+  assert.throws(() => validateResponseStylePreference({ style: 'custom', customInstruction: '' }), /Invalid custom response instruction/)
 })

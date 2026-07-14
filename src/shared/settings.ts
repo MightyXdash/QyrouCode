@@ -55,6 +55,19 @@ export const validateThemePreference = (value: unknown): ThemePreference => {
   return value
 }
 
+export const validateResponseStylePreference = (value: unknown): ResponseStylePreference => {
+  if (!isRecord(value) || !includes(RESPONSE_STYLES, value.style)) throw new Error('Invalid response style preference')
+  const customInstruction = typeof value.customInstruction === 'string' ? value.customInstruction.trim() : ''
+  if (
+    customInstruction.length > MAX_CUSTOM_RESPONSE_STYLE_LENGTH ||
+    (value.style === 'custom' && customInstruction.length === 0)
+  ) throw new Error('Invalid custom response instruction')
+  return {
+    style: value.style,
+    customInstruction: value.style === 'custom' ? customInstruction : ''
+  }
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 

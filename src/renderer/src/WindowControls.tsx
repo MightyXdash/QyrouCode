@@ -7,7 +7,10 @@ import type { LocalCompletionEvent, LocalCompletionStart } from '../../main/loca
 import type { AgentRunRequest } from '../../main/agentRuntime'
 import type { Project } from '../../shared/projects'
 import type { ChatAttachment, ChatThread } from '../../shared/chat'
-import type { PersistedAgentSession, WorkspaceViewState } from '../../shared/agent'
+import type { AgentExecutionTarget, PersistedAgentSession, WorkspaceViewState } from '../../shared/agent'
+import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, ConnectionTestResult } from '../../shared/connections'
+import type { ConnectionSecurityStatus } from '../../main/connectionStore'
+import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../../shared/conversationExport'
 
 declare global {
   interface Window {
@@ -15,6 +18,7 @@ declare global {
       minimize: () => void
       toggleMaximize: () => void
       runWindowCommand: (command: WindowCommand) => void
+      onNativeMenuCommand: (callback: (command: string) => void) => () => void
       close: () => void
       openMainWindow: () => Promise<void>
       rendererReady: () => void
@@ -23,11 +27,23 @@ declare global {
       completeOnboarding: (preferences: OnboardingPreferences) => Promise<void>
       getTheme: () => Promise<ThemePreference>
       getResponseStylePreference: () => Promise<ResponseStylePreference>
+      setResponseStylePreference: (preference: ResponseStylePreference) => Promise<ResponseStylePreference>
       setTheme: (theme: ThemePreference) => Promise<ThemePreference>
+      getConnections: () => Promise<ConnectionSummary[]>
+      getConnectionSecurityStatus: () => Promise<ConnectionSecurityStatus>
+      resolveProviderSiteIcon: (baseUrl: string) => Promise<string | undefined>
+      saveConnection: (input: ConnectionInput, connectionId?: string) => Promise<ConnectionMutationResult>
+      testConnection: (input: ConnectionInput, connectionId?: string) => Promise<ConnectionTestResult>
+      deleteConnection: (connectionId: string) => Promise<boolean>
+      updateConnectionModels: (connectionId: string, selectedModelIds: string[]) => Promise<ConnectionMutationResult>
+      previewConversationExport: (request: ConversationExportRequest) => Promise<ConversationExportPreview>
+      exportConversations: (request: ConversationExportRequest) => Promise<ConversationExportResult>
       getProjects: () => Promise<Project[]>
       getExpandedProjectPaths: () => Promise<string[]>
       setExpandedProjectPaths: (paths: string[]) => Promise<string[]>
       createProject: (name: string) => Promise<Project>
+      renameProject: (projectPath: string, name: string) => Promise<Project[]>
+      removeProject: (projectPath: string) => Promise<Project[]>
       chooseProjectFolder: () => Promise<Project | null>
       getChatThreads: () => Promise<ChatThread[]>
       saveChatThread: (thread: ChatThread) => Promise<ChatThread[]>
@@ -39,12 +55,14 @@ declare global {
       startDownloadedModel: (repoId: string, filename: string, requireVision?: boolean) => Promise<LlamaRuntimeStatus>
       generateChatTitle: (userMessage: string) => Promise<string>
       checkModelCache: (modelId: string) => Promise<boolean>
+      getDownloadedModels: (repos: string[]) => Promise<string[]>
       downloadModel: (repoId: string, ggufFile: string) => Promise<void>
       cancelDownload: (repoId: string) => Promise<void>
       onDownloadProgress: (callback: (data: { repoId: string; downloaded: number; total: number }) => void) => () => void
       getLlamaStatus: () => Promise<LlamaRuntimeStatus>
       startLocalModel: (modelId: string) => Promise<LlamaRuntimeStatus>
       startLocalCompletion: (request: AgentRunRequest) => Promise<LocalCompletionStart>
+      startAgentCompletion: (target: AgentExecutionTarget, request: AgentRunRequest) => Promise<LocalCompletionStart>
       cancelLocalCompletion: (requestId: string) => Promise<boolean>
       onLocalCompletionEvent: (callback: (event: LocalCompletionEvent) => void) => () => void
       startLlamaServer: (modelPath: string, contextTokens: number) => Promise<LlamaRuntimeStatus>

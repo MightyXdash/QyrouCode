@@ -16,7 +16,6 @@ import { MAX_CUSTOM_RESPONSE_STYLE_LENGTH } from '../../shared/settings'
 import './WelcomeScreen.css'
 
 const ESSENTIAL_MODELS: { id: string; hf_repo: string; label: string; gguf_file: string }[] = [
-  { id: 'supra-reasoning-summarizer', hf_repo: 'SupraLabs/reasoning-summarizer-800m-pre-gguf', label: 'Reasoning Summarizer', gguf_file: 'reasoning-summarizer-800m-pre-Q4_K_M.gguf' },
   { id: 'supra-title', hf_repo: 'SupraLabs/supra-title-50M-pre-gguf', label: 'Title Generator', gguf_file: 'SupraTitle-50M-Q4_K_M.gguf' },
   { id: 'supra-router', hf_repo: 'SupraLabs/Supra-Router-51M-gguf', label: 'Model Router', gguf_file: 'Supra-Router-51M-Q4_K_M.gguf' },
 ]

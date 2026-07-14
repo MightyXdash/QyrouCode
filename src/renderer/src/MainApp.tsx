@@ -3,20 +3,59 @@ import { MODEL_LIST } from './modelCatalog'
 import { DEFAULT_RESPONSE_STYLE, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
 import { WINDOW_COMMANDS } from '../../shared/windowCommands'
 import type { Project } from '../../shared/projects'
-import { MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatMessage, type ChatThread, type ToolCallDisplay } from '../../shared/chat'
+import { MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatMessage, type ChatThread, type TodoDisplay, type ToolCallDisplay } from '../../shared/chat'
 import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, ListTodo, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
+import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
+import type { ConnectionSummary } from '../../shared/connections'
+import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
+import type { ConversationExportRequest } from '../../shared/conversationExport'
+import SettingsDialog, {
+  type LocalModelDownloadState,
+  type SettingsConnectionRequest,
+  type SettingsConnectionTestResult,
+  type SettingsExportOptions,
+  type SettingsExportState
+} from './settings/SettingsDialog'
 import './MainApp.css'
 
 const AUTO_SCROLL_THRESHOLD = 72
-const MAX_ACTIVITY_COMMAND_CHARACTERS = 40
-const WEB_ACTIVITY_HOLD_MS = 2_500
 const WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND = 150
+const DEFAULT_ACTIVITY_SWEEP_DURATION_MS = 1_800
 const PROJECT_THREAD_STAGGER_MS = 45
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
+const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 128_000
+const DEFAULT_AGENT_MAX_TOKENS = 8_192
+const ESTIMATED_CHARACTERS_PER_TOKEN = 4
+
+interface ComposerModel {
+  id: string
+  source: 'local' | 'remote'
+  modelId: string
+  displayName: string
+  providerName: string
+  context_length: number
+  vision: boolean
+  connectionId?: string
+  localModel?: (typeof MODEL_LIST)[number]
+  remoteModel?: RemoteModel
+}
+
+const DEFAULT_EXPORT_OPTIONS: SettingsExportOptions = {
+  scope: 'thread',
+  format: 'jsonl',
+  includeMessages: true,
+  includeToolCalls: true,
+  includeTimestamps: true,
+  includeRawReasoning: false,
+  attachments: 'metadata',
+  redactSensitiveData: true
+}
+
+const DEFAULT_EXPORT_STATE: SettingsExportState = { busy: false }
 
 type ProjectThreadAnimationStyle = CSSProperties & {
   '--thread-collapse-delay': string
@@ -29,7 +68,6 @@ const projectThreadAnimationStyle = (index: number, count: number): ProjectThrea
 })
 
 const toolIconMap: Record<string, typeof Terminal> = {
-  cur_task_state: Clock,
   bash: Terminal,
   write: FilePlus,
   edit: FileEdit,
@@ -46,6 +84,13 @@ const toolIconMap: Record<string, typeof Terminal> = {
 type OpenMenu = 'advanced' | 'model' | null
 type TitlebarMenuId = 'file' | 'edit' | 'view' | 'theme' | 'help'
 type TitlebarAction = 'new-thread' | 'close-window' | 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'select-all' | 'reload' | 'toggle-dev-tools' | 'toggle-fullscreen'
+
+interface ThreadRun {
+  requestId?: string
+  source: AgentModelProvenance['source']
+  startedAt: number
+  state: 'starting' | 'streaming'
+}
 
 interface TitlebarMenuItem {
   action?: TitlebarAction
@@ -92,31 +137,26 @@ function modelDisplayName(modelName: string): string {
   return modelName.split('/').at(-1) ?? modelName
 }
 
-function truncateCommand(command: string): string {
-  const normalized = command.replace(/\s+/g, ' ').trim()
-  return normalized.length <= MAX_ACTIVITY_COMMAND_CHARACTERS
-    ? normalized
-    : `${normalized.slice(0, MAX_ACTIVITY_COMMAND_CHARACTERS - 1)}…`
+function durationFromCssVariable(name: string, fallback: number): number {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  if (value.endsWith('ms')) return Number.parseFloat(value) || fallback
+  if (value.endsWith('s')) return (Number.parseFloat(value) || fallback / 1_000) * 1_000
+  return fallback
+}
+
+function activitySweepDurationMs(): number {
+  return durationFromCssVariable('--activity-sweep-duration', DEFAULT_ACTIVITY_SWEEP_DURATION_MS)
 }
 
 function runningToolLabel(toolCall: ToolCallDisplay): string {
-  if (toolCall.name === 'cur_task_state') return 'Sharing current task state'
   if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searching the web'
-  if (toolCall.uiMessage) return toolCall.uiMessage.split(/\s+/).slice(0, 5).join(' ')
-  if (toolCall.name === 'bash') {
-    const command = typeof toolCall.arguments.command === 'string' ? truncateCommand(toolCall.arguments.command) : 'command'
-    return `Running ${command}`
-  }
-  if (['write', 'edit', 'apply_patch'].includes(toolCall.name)) {
-    const filePath = typeof toolCall.arguments.filePath === 'string' ? toolCall.arguments.filePath : ''
-    return filePath ? `Editing ${filePath}` : 'Editing'
-  }
+  if (toolCall.uiMessage?.uim_prt) return toolCall.uiMessage.uim_prt
   return 'Thinking'
 }
 
 function completedToolLabel(toolCall: ToolCallDisplay): string {
-  if (toolCall.name === 'cur_task_state') return 'Shared current task state'
   if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searched the web'
+  if (toolCall.uiMessage?.uim_pat) return toolCall.uiMessage.uim_pat
   if (toolCall.name === 'read') return 'Viewed a file'
   if (toolCall.name === 'grep' || toolCall.name === 'glob' || toolCall.name === 'list') return 'Looked through the project'
   if (toolCall.name === 'write' || toolCall.name === 'edit') return 'Edited one file'
@@ -133,6 +173,30 @@ function completedToolLabel(toolCall: ToolCallDisplay): string {
 function webSearchDetail(toolCall: ToolCallDisplay): string | undefined {
   if (toolCall.name !== 'web_search') return undefined
   return typeof toolCall.arguments.query === 'string' ? toolCall.arguments.query.trim() || undefined : undefined
+}
+
+function activeTodo(todos: readonly TodoDisplay[]): TodoDisplay | undefined {
+  return todos.find((todo) => todo.status === 'in_progress') ?? todos.find((todo) => todo.status === 'pending') ?? todos.at(-1)
+}
+
+function estimateTextTokens(value: string): number {
+  return Math.ceil(value.length / ESTIMATED_CHARACTERS_PER_TOKEN)
+}
+
+function estimateStructuredTokens(value: unknown): number {
+  try {
+    return estimateTextTokens(JSON.stringify(value))
+  } catch {
+    return 0
+  }
+}
+
+function estimateMessageTokens(message: ChatMessage): number {
+  const contentTokens = estimateTextTokens(message.content)
+  const toolTokens = (message.toolCalls ?? []).reduce((total, toolCall) =>
+    total + estimateTextTokens(toolCall.name) + estimateStructuredTokens(toolCall.arguments), 0)
+  const errorTokens = message.content ? 0 : (message.toolCalls ?? []).reduce((total, toolCall) => total + estimateTextTokens(toolCall.error ?? ''), 0)
+  return contentTokens + toolTokens + errorTokens
 }
 
 function messageText(content: import('../../main/localCompletionClient').LocalMessageContent): string {
@@ -239,16 +303,6 @@ function normalizeRestoredThread(thread: ChatThread): ChatThread {
         normalized.push({ ...turnMessage, parentAssistantId: assistantId })
         continue
       }
-      if (turnMessage.role === 'assistant' && turnMessage.content && turnMessage.id !== finalAssistant?.id) {
-        normalized.push({
-          id: turnMessage.id,
-          role: 'tool',
-          content: '__reasoning__',
-          reasoningSummary: turnMessage.content,
-          parentAssistantId: assistantId,
-          timestamp: turnMessage.timestamp
-        })
-      }
     }
     if (finalAssistant) {
       normalized.push({ ...finalAssistant, id: assistantId, status: 'completed' })
@@ -265,9 +319,11 @@ function normalizeRestoredThread(thread: ChatThread): ChatThread {
 }
 
 export default function MainApp(): JSX.Element {
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [selectedModelId, setSelectedModelId] = useState('')
   const [downloadedModelIds, setDownloadedModelIds] = useState<Set<string> | null>(null)
+  const [localModelDownloads, setLocalModelDownloads] = useState<Record<string, LocalModelDownloadState>>({})
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('Medium')
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
   const [openTitlebarMenu, setOpenTitlebarMenu] = useState<TitlebarMenuId | null>(null)
@@ -280,18 +336,25 @@ export default function MainApp(): JSX.Element {
   const [projectName, setProjectName] = useState('')
   const [projectError, setProjectError] = useState('')
   const [projectSaving, setProjectSaving] = useState(false)
+  const [projectActionMenu, setProjectActionMenu] = useState<Project | null>(null)
+  const [renamingProject, setRenamingProject] = useState<Project | null>(null)
+  const [deleteConfirmProject, setDeleteConfirmProject] = useState<Project | null>(null)
+  const [projectRemoving, setProjectRemoving] = useState(false)
+  const [projectRemovalError, setProjectRemovalError] = useState('')
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [fullyExpandedProjects, setFullyExpandedProjects] = useState<Set<string>>(new Set())
   const [threads, setThreads] = useState<ChatThread[]>([])
   const [activeThread, setActiveThread] = useState<ChatThread | null>(null)
   const [selectedProjectPath, setSelectedProjectPath] = useState('')
-  const [completionState, setCompletionState] = useState<'idle' | 'starting' | 'streaming'>('idle')
-  const [completionError, setCompletionError] = useState('')
+  const [threadRuns, setThreadRuns] = useState<Record<string, ThreadRun>>({})
+  const [threadErrors, setThreadErrors] = useState<Record<string, string>>({})
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true)
   const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set())
+  const [todoCollapsed, setTodoCollapsed] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState('')
-  const [heldActivity, setHeldActivity] = useState<{ assistantId: string; label: string; until: number } | null>(null)
+  const [heldActivity, setHeldActivity] = useState<{ assistantId: string; toolCallId: string; label: string; until: number } | null>(null)
+  const [presentTenseToolIds, setPresentTenseToolIds] = useState<Set<string>>(new Set())
   const [webSearchActivity, setWebSearchActivity] = useState<{ assistantId: string; text: string; revealedCharacters: number } | null>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
   const titlebarMenuRef = useRef<HTMLElement>(null)
@@ -299,18 +362,23 @@ export default function MainApp(): JSX.Element {
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null)
   const promptComposerRef = useRef<HTMLFormElement>(null)
   const projectMenuRef = useRef<HTMLDivElement>(null)
+  const projectActionMenuRef = useRef<HTMLDivElement>(null)
   const projectNameRef = useRef<HTMLInputElement>(null)
   const activeThreadRef = useRef<ChatThread | null>(null)
-  const activeRequestIdRef = useRef<string | null>(null)
+  const threadsRef = useRef<ChatThread[]>([])
+  const threadRunsRef = useRef<Record<string, ThreadRun>>({})
+  const requestThreadIdsRef = useRef<Map<string, string>>(new Map())
+  const settledCompletionRequestIdsRef = useRef<Set<string>>(new Set())
+  const cancelledThreadIdsRef = useRef<Set<string>>(new Set())
   const conversationEndRef = useRef<HTMLDivElement>(null)
   const conversationRef = useRef<HTMLDivElement>(null)
   const projectExpansionLoadedRef = useRef(false)
   const viewStateLoadedRef = useRef(false)
   const modelMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const startTimeRef = useRef(0)
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const activityHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const webSearchRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const toolCallStartedAtRef = useRef<Map<string, number>>(new Map())
+  const toolTenseTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const renameInputRef = useRef<HTMLInputElement>(null)
   const [contextMenu, setContextMenu] = useState<{ thread: ChatThread; x: number; y: number } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -318,26 +386,110 @@ export default function MainApp(): JSX.Element {
   const [renameValue, setRenameValue] = useState('')
   const [deleteConfirmThread, setDeleteConfirmThread] = useState<ChatThread | null>(null)
   const [regeneratingThreadId, setRegeneratingThreadId] = useState<string | null>(null)
+  const [connections, setConnections] = useState<ConnectionSummary[] | null>(null)
+  const [exportOptions, setExportOptions] = useState<SettingsExportOptions>(DEFAULT_EXPORT_OPTIONS)
+  const [exportState, setExportState] = useState<SettingsExportState>(DEFAULT_EXPORT_STATE)
   const downloadedModels = downloadedModelIds
     ? MODEL_LIST.filter((model) => downloadedModelIds.has(model.id))
     : []
-  const selectedModel = downloadedModels.find((model) => model.id === selectedModelId)
+  const composerModels = useMemo<ComposerModel[]>(() => {
+    const localModels = downloadedModels.map((model): ComposerModel => ({
+      id: model.id,
+      source: 'local',
+      modelId: model.id,
+      displayName: modelDisplayName(model.base_model),
+      providerName: 'Local',
+      context_length: model.context_length,
+      vision: model.vision,
+      localModel: model
+    }))
+    const remoteModels = (connections ?? []).flatMap((connection): ComposerModel[] =>
+      connection.selectedModelIds.flatMap((modelId) => {
+        const remoteModel = getRemoteModel(modelId)
+        if (connection.kind !== 'openai-compatible' && (!remoteModel || !remoteModel.availableOn.includes(connection.kind))) return []
+        return [{
+          id: `remote:${connection.id}:${modelId}`,
+          source: 'remote',
+          connectionId: connection.id,
+          modelId,
+          displayName: remoteModel?.displayName ?? modelDisplayName(modelId),
+          providerName: connection.providerName,
+          context_length: remoteModel?.contextWindow ?? DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW,
+          vision: remoteModel?.inputModalities.includes('image') ?? false,
+          remoteModel
+        }]
+      }))
+    return [...localModels, ...remoteModels]
+  }, [connections, downloadedModels])
+  const selectedModel = composerModels.find((model) => model.id === selectedModelId)
+  const completionState = activeThread ? threadRuns[activeThread.id]?.state ?? 'idle' : 'idle'
+  const completionError = activeThread ? threadErrors[activeThread.id] ?? '' : ''
+
+  const setThreadRun = (threadId: string, run: ThreadRun | undefined): void => {
+    const next = { ...threadRunsRef.current }
+    if (run) next[threadId] = run
+    else delete next[threadId]
+    threadRunsRef.current = next
+    setThreadRuns(next)
+  }
+
+  const stopThreadRun = (threadId: string): void => {
+    const run = threadRunsRef.current[threadId]
+    if (!run) return
+    const completedAt = Date.now()
+    cancelledThreadIdsRef.current.add(threadId)
+    if (run.requestId) requestThreadIdsRef.current.delete(run.requestId)
+    setThreadRun(threadId, undefined)
+    const current = threadsRef.current.find((thread) => thread.id === threadId)
+    if (current) {
+      const messages = current.messages.map((message) => message.role === 'assistant' && message.status === 'pending'
+        ? {
+            ...message,
+            status: 'cancelled' as const,
+            completedAt,
+            durationMs: Math.max(0, completedAt - (message.startedAt ?? run.startedAt))
+          }
+        : message)
+      const stoppedThread = { ...current, messages, updatedAt: completedAt }
+      replaceThread(stoppedThread)
+      void window.api.saveChatThread(stoppedThread)
+    }
+    if (run.requestId) void window.api.cancelLocalCompletion(run.requestId)
+    else if (run.source === 'local') void window.api.stopLlamaServer()
+  }
+
+  const setThreadError = (threadId: string, error: string | undefined): void => {
+    setThreadErrors((current) => {
+      const next = { ...current }
+      if (error) next[threadId] = error
+      else delete next[threadId]
+      return next
+    })
+  }
+
+  const replaceThread = (thread: ChatThread): void => {
+    const next = threadsRef.current.map((current) => current.id === thread.id ? thread : current)
+    threadsRef.current = next
+    setThreads(next)
+    if (activeThreadRef.current?.id === thread.id) {
+      activeThreadRef.current = thread
+      setActiveThread(thread)
+    }
+  }
 
   const contextTokens = useMemo(() => {
-    if (!activeThread || !selectedModel) return null
-    const totalChars = activeThread.messages.reduce((sum, msg) => sum + msg.content.length, 0)
-    const used = Math.max(Math.round(totalChars / 4), 0)
+    if (!selectedModel) return null
+    const conversationTokens = (activeThread?.messages ?? []).reduce((sum, msg) => sum + estimateMessageTokens(msg), 0)
+    const used = conversationTokens + estimateTextTokens(prompt)
     const total = selectedModel.context_length
     return { used, total, percent: Math.min(Math.round((used / total) * 100), 100) }
-  }, [activeThread, selectedModel])
+  }, [activeThread, prompt, selectedModel])
 
-  const clearHeldActivity = (): void => {
-    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
-    activityHoldTimerRef.current = null
+  const clearHeldActivity = (preserveDisplayedActivity = false): void => {
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
     webSearchRevealTimerRef.current = null
-    setHeldActivity(null)
-    setWebSearchActivity(null)
+    setHeldActivity((current) => preserveDisplayedActivity && (current?.until ?? 0) > Date.now() ? current : null)
+    if (!preserveDisplayedActivity) setWebSearchActivity(null)
   }
 
   const revealWebSearchDetail = (assistantId: string, text: string): void => {
@@ -355,33 +507,46 @@ export default function MainApp(): JSX.Element {
     webSearchRevealTimerRef.current = setInterval(update, 16)
   }
 
-  const holdWebActivity = (assistantId: string, running: boolean): void => {
-    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
-    activityHoldTimerRef.current = null
-    const until = running ? Number.POSITIVE_INFINITY : Date.now() + WEB_ACTIVITY_HOLD_MS
-    setHeldActivity({ assistantId, label: 'Searching the web', until })
-    if (!running) {
-      activityHoldTimerRef.current = setTimeout(() => {
-        activityHoldTimerRef.current = null
-        setHeldActivity((current) => current?.assistantId === assistantId && current.until <= Date.now() ? null : current)
-        setWebSearchActivity((current) => current?.assistantId === assistantId ? null : current)
-      }, WEB_ACTIVITY_HOLD_MS)
-    }
+  const holdWebActivity = (assistantId: string, toolCallId: string): void => {
+    setHeldActivity({ assistantId, toolCallId, label: 'Searching the web', until: Number.POSITIVE_INFINITY })
   }
 
-  const holdCompletedActivity = (assistantId: string, label: string): void => {
-    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
-    const until = Date.now() + WEB_ACTIVITY_HOLD_MS
-    setHeldActivity({ assistantId, label, until })
-    activityHoldTimerRef.current = setTimeout(() => {
-      activityHoldTimerRef.current = null
-      setHeldActivity((current) => current?.assistantId === assistantId && current.until <= Date.now() ? null : current)
-    }, WEB_ACTIVITY_HOLD_MS)
+  const holdCompletedActivity = (assistantId: string, toolCallId: string, label: string): void => {
+    setHeldActivity({ assistantId, toolCallId, label, until: Number.POSITIVE_INFINITY })
+  }
+
+  const refreshDownloadedModels = async (): Promise<void> => {
+    const downloadedRepos = await window.api.getDownloadedModels(MODEL_LIST.map((model) => model.hf_repo))
+    const repoSet = new Set(downloadedRepos)
+    setDownloadedModelIds(new Set(MODEL_LIST.filter((model) => repoSet.has(model.hf_repo)).map((model) => model.id)))
+  }
+
+  const scheduleActivitySweepCompletion = (toolCallId: string, assistantId: string): void => {
+    const duration = activitySweepDurationMs()
+    const startedAt = toolCallStartedAtRef.current.get(toolCallId) ?? Date.now()
+    const elapsed = Math.max(0, Date.now() - startedAt)
+    const delay = duration - (elapsed % duration)
+    const existingTimer = toolTenseTimerRefs.current.get(toolCallId)
+    if (existingTimer) clearTimeout(existingTimer)
+    const timer = setTimeout(() => {
+      toolTenseTimerRefs.current.delete(toolCallId)
+      toolCallStartedAtRef.current.delete(toolCallId)
+      setPresentTenseToolIds((current) => {
+        const next = new Set(current)
+        next.delete(toolCallId)
+        return next
+      })
+      setHeldActivity((current) => current?.assistantId === assistantId && current.toolCallId === toolCallId
+        ? null
+        : current)
+    }, delay)
+    toolTenseTimerRefs.current.set(toolCallId, timer)
   }
 
   useEffect(() => {
     void window.api.getTheme().then(setTheme)
     void window.api.getResponseStylePreference().then(setResponseStylePreference)
+    void window.api.getConnections().then(setConnections).catch(() => setConnections([]))
     void Promise.all([window.api.getProjects(), window.api.getExpandedProjectPaths(), window.api.getChatThreads(), window.api.getWorkspaceViewState()]).then(async ([storedProjects, storedExpandedPaths, storedThreads, storedViewState]) => {
       const projectPaths = new Set(storedProjects.map((project) => project.path))
       const reconciledThreads = await Promise.all(storedThreads.map(async (thread) => {
@@ -406,7 +571,14 @@ export default function MainApp(): JSX.Element {
                 id: tc.id,
                 name: tc.name,
                 arguments: tc.arguments,
-                uiMessage: typeof tc.arguments.ui_message === 'string' ? tc.arguments.ui_message : undefined,
+                uiMessage: (() => {
+                  const value = tc.arguments.ui_message
+                  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+                  const candidate = value as { uim_prt?: unknown; uim_pat?: unknown }
+                  return typeof candidate.uim_prt === 'string' && typeof candidate.uim_pat === 'string'
+                    ? { uim_prt: candidate.uim_prt, uim_pat: candidate.uim_pat }
+                    : undefined
+                })(),
                 result: undefined,
                 filePath: undefined
               }))
@@ -446,6 +618,7 @@ export default function MainApp(): JSX.Element {
       const restoredThread = reconciledThreads.find((t) => t.id === storedViewState.activeThreadId) ?? null
       setProjects(storedProjects)
       setThreads(reconciledThreads)
+      threadsRef.current = reconciledThreads
       setSelectedProjectPath(projectPaths.has(storedViewState.selectedProjectPath) ? storedViewState.selectedProjectPath : restoredThread?.projectPath ?? storedProjects[0]?.path ?? '')
       setExpandedProjects(new Set(storedExpandedPaths.filter((path) => projectPaths.has(path))))
       setActiveThread(restoredThread)
@@ -458,16 +631,20 @@ export default function MainApp(): JSX.Element {
       projectExpansionLoadedRef.current = true
       viewStateLoadedRef.current = true
     })
-    void window.api.getDownloadedModels(MODEL_LIST.map((model) => model.hf_repo)).then((downloadedRepos) => {
-      const repoSet = new Set(downloadedRepos)
-      setDownloadedModelIds(new Set(MODEL_LIST.filter((model) => repoSet.has(model.hf_repo)).map((model) => model.id)))
-    }).catch(() => setDownloadedModelIds(new Set()))
+    void refreshDownloadedModels().catch(() => setDownloadedModelIds(new Set()))
   }, [])
 
+  useEffect(() => window.api.onDownloadProgress((progress) => {
+    setLocalModelDownloads((current) => ({
+      ...current,
+      [progress.repoId]: { downloaded: progress.downloaded, total: progress.total }
+    }))
+  }), [])
+
   useEffect(() => {
-    if (!downloadedModelIds || downloadedModels.some((model) => model.id === selectedModelId)) return
-    setSelectedModelId(downloadedModels[0]?.id ?? '')
-  }, [downloadedModelIds, downloadedModels, selectedModelId])
+    if (!downloadedModelIds || connections === null || composerModels.some((model) => model.id === selectedModelId)) return
+    setSelectedModelId(composerModels[0]?.id ?? '')
+  }, [composerModels, connections, downloadedModelIds, selectedModelId])
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent): void => {
@@ -477,12 +654,15 @@ export default function MainApp(): JSX.Element {
       }
       if (!titlebarMenuRef.current?.contains(event.target as Node)) setOpenTitlebarMenu(null)
       if (!projectMenuRef.current?.contains(event.target as Node)) setProjectMenuOpen(false)
+      if (!projectActionMenuRef.current?.contains(event.target as Node)) setProjectActionMenu(null)
       if (contextMenu && !contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
     }
     const closeOnKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         setContextMenu(null)
         setDeleteConfirmThread(null)
+        setProjectActionMenu(null)
+        setDeleteConfirmProject(null)
       }
     }
     window.addEventListener('mousedown', closeMenus)
@@ -515,26 +695,28 @@ export default function MainApp(): JSX.Element {
   }, [activeThread?.id, expandedWorkIds, prompt, reasoningEffort, selectedModelId, selectedProjectPath, sidebarOpen])
 
   useEffect(() => window.api.onLocalCompletionEvent((event) => {
-    if (event.requestId !== activeRequestIdRef.current) return
+    const requestThreadId = requestThreadIdsRef.current.get(event.requestId) ?? event.threadId
+    if (!requestThreadId) return
     if (event.type === 'delta') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const messages = current.messages.map((message, index) => index === current.messages.length - 1
         ? { ...message, content: message.content + event.delta }
         : message)
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadDebounced()
+      replaceThread(updated)
+      saveThreadDebounced(updated)
       return
     }
     if (event.type === 'tool-call') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const assistantId = current.messages.at(-1)?.role === 'assistant' ? current.messages.at(-1)?.id : undefined
-      if (assistantId) {
+      toolCallStartedAtRef.current.set(event.toolCallId, Date.now())
+      setPresentTenseToolIds((current) => new Set(current).add(event.toolCallId))
+      if (assistantId && activeThreadRef.current?.id === requestThreadId) {
         if (WEB_TOOL_NAMES.has(event.name)) {
-          holdWebActivity(assistantId, true)
+          holdWebActivity(assistantId, event.toolCallId)
           const detail = webSearchDetail({ id: event.toolCallId, name: event.name, arguments: event.arguments })
           if (detail) revealWebSearchDetail(assistantId, detail)
         }
@@ -555,20 +737,29 @@ export default function MainApp(): JSX.Element {
         current.messages[lastIdx]
       ]
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadImmediate()
+      replaceThread(updated)
+      saveThreadImmediate(updated)
+      return
+    }
+    if (event.type === 'todos-updated') {
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
+      if (!current) return
+      const updated = { ...current, todos: event.todos, updatedAt: Date.now() }
+      replaceThread(updated)
+      saveThreadImmediate(updated)
       return
     }
     if (event.type === 'tool-result') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const completedToolMessage = current.messages.find((message) => message.role === 'tool' && message.toolCalls?.some((toolCall) => toolCall.id === event.toolCallId))
       const completedToolCall = completedToolMessage?.toolCalls?.find((toolCall) => toolCall.id === event.toolCallId)
-      if (completedToolCall && WEB_TOOL_NAMES.has(completedToolCall.name) && completedToolMessage?.parentAssistantId) {
-        holdWebActivity(completedToolMessage.parentAssistantId, false)
-      } else if (completedToolCall && completedToolMessage?.parentAssistantId) {
-        holdCompletedActivity(completedToolMessage.parentAssistantId, completedToolLabel(completedToolCall))
+      if (activeThreadRef.current?.id === requestThreadId && completedToolCall && WEB_TOOL_NAMES.has(completedToolCall.name) && completedToolMessage?.parentAssistantId) {
+        holdWebActivity(completedToolMessage.parentAssistantId, event.toolCallId)
+        scheduleActivitySweepCompletion(event.toolCallId, completedToolMessage.parentAssistantId)
+      } else if (activeThreadRef.current?.id === requestThreadId && completedToolCall && completedToolMessage?.parentAssistantId) {
+        holdCompletedActivity(completedToolMessage.parentAssistantId, event.toolCallId, runningToolLabel(completedToolCall))
+        scheduleActivitySweepCompletion(event.toolCallId, completedToolMessage.parentAssistantId)
       }
       const messages = current.messages.map((message) =>
         message.role === 'tool' && message.toolCalls?.some((tc) => tc.id === event.toolCallId)
@@ -582,18 +773,18 @@ export default function MainApp(): JSX.Element {
           : message
       )
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadDebounced()
+      replaceThread(updated)
+      saveThreadDebounced(updated)
       return
     }
     if (event.type === 'progress-update') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
+      if (activeThreadRef.current?.id === requestThreadId) clearHeldActivity(true)
       const pendingAssistant = [...current.messages].reverse().find((message) => message.role === 'assistant' && message.status === 'pending')
       if (!pendingAssistant) return
       const lastProgressIndex = current.messages.findLastIndex((message) =>
-        message.role === 'tool' && message.content === '__progress__' && message.parentAssistantId === pendingAssistant.id
+        message.role === 'tool' && !message.toolCalls?.length && message.parentAssistantId === pendingAssistant.id
       )
       const lastToolCallIndex = current.messages.findLastIndex((message) =>
         message.role === 'tool' && message.parentAssistantId === pendingAssistant.id && (message.toolCalls?.length ?? 0) > 0
@@ -601,37 +792,38 @@ export default function MainApp(): JSX.Element {
       const existingProgress = lastProgressIndex > lastToolCallIndex ? current.messages[lastProgressIndex] : undefined
       if (existingProgress) {
         const messages = current.messages.map((message) => message.id === existingProgress.id
-          ? { ...message, reasoningSummary: event.summary }
+          ? { ...message, content: event.summary }
           : message)
         const updated = { ...current, messages, updatedAt: Date.now() }
-        activeThreadRef.current = updated
-        setActiveThread(updated)
-        saveThreadDebounced()
+        replaceThread(updated)
+        saveThreadDebounced(updated)
         return
       }
       const progressMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'tool',
-        content: '__progress__',
+        content: event.summary,
         timestamp: Date.now(),
-        parentAssistantId: pendingAssistant.id,
-        reasoningSummary: event.summary
+        parentAssistantId: pendingAssistant.id
       }
       const lastIdx = current.messages.length - 1
       const messages = [...current.messages.slice(0, lastIdx), progressMessage, current.messages[lastIdx]]
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadImmediate()
+      replaceThread(updated)
+      saveThreadImmediate(updated)
       return
     }
     if (event.type === 'tool-error') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const failedToolMessage = current.messages.find((message) => message.role === 'tool' && message.toolCalls?.some((toolCall) => toolCall.id === event.toolCallId))
       const failedToolCall = failedToolMessage?.toolCalls?.find((toolCall) => toolCall.id === event.toolCallId)
-      if (failedToolCall && WEB_TOOL_NAMES.has(failedToolCall.name) && failedToolMessage?.parentAssistantId) {
-        holdWebActivity(failedToolMessage.parentAssistantId, false)
+      if (activeThreadRef.current?.id === requestThreadId && failedToolCall && WEB_TOOL_NAMES.has(failedToolCall.name) && failedToolMessage?.parentAssistantId) {
+        holdWebActivity(failedToolMessage.parentAssistantId, event.toolCallId)
+        scheduleActivitySweepCompletion(event.toolCallId, failedToolMessage.parentAssistantId)
+      } else if (activeThreadRef.current?.id === requestThreadId && failedToolCall && failedToolMessage?.parentAssistantId) {
+        holdCompletedActivity(failedToolMessage.parentAssistantId, event.toolCallId, runningToolLabel(failedToolCall))
+        scheduleActivitySweepCompletion(event.toolCallId, failedToolMessage.parentAssistantId)
       }
       const messages = current.messages.map((message) =>
         message.role === 'tool' && message.toolCalls?.some((tc) => tc.id === event.toolCallId)
@@ -645,43 +837,12 @@ export default function MainApp(): JSX.Element {
           : message
       )
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadImmediate()
-      return
-    }
-    if (event.type === 'reasoning-summary') {
-      const current = activeThreadRef.current
-      if (!current) return
-      const pendingAssistant = [...current.messages].reverse().find((message) => message.role === 'assistant' && message.status === 'pending')
-      const existingSummary = current.messages.find((m) => m.role === 'tool' && m.content === '__reasoning__' && m.parentAssistantId === pendingAssistant?.id)
-      if (existingSummary) {
-        const messages = current.messages.map((m) =>
-          m.id === existingSummary.id ? { ...m, content: '__reasoning__', reasoningSummary: event.summary } : m
-        )
-        const updated = { ...current, messages, updatedAt: Date.now() }
-        activeThreadRef.current = updated
-        setActiveThread(updated)
-        saveThreadImmediate()
-        return
-      }
-      const firstToolIdx = current.messages.findIndex((m) => m.role === 'tool')
-      const reasoningMsg: ChatMessage = { id: crypto.randomUUID(), role: 'tool', content: '__reasoning__', timestamp: Date.now(), parentAssistantId: pendingAssistant?.id, reasoningSummary: event.summary }
-      let messages: ChatMessage[]
-      if (firstToolIdx >= 0) {
-        messages = [...current.messages.slice(0, firstToolIdx), reasoningMsg, ...current.messages.slice(firstToolIdx)]
-      } else {
-        const lastIdx = current.messages.length - 1
-        messages = [...current.messages.slice(0, lastIdx), reasoningMsg, current.messages[lastIdx]]
-      }
-      const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadDebounced()
+      replaceThread(updated)
+      saveThreadImmediate(updated)
       return
     }
     if (event.type === 'files-changed') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const messages = current.messages.map((message, index) =>
         index === current.messages.length - 1 && message.role === 'assistant'
@@ -689,48 +850,59 @@ export default function MainApp(): JSX.Element {
           : message
       )
       const updated = { ...current, messages, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      saveThreadImmediate()
+      replaceThread(updated)
+      saveThreadImmediate(updated)
       return
     }
+    if (!requestThreadIdsRef.current.has(event.requestId)) settledCompletionRequestIdsRef.current.add(event.requestId)
     if (event.type === 'error') {
-      const current = activeThreadRef.current
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (current) {
         const messages = current.messages.map((message, index) => index === current.messages.length - 1 && !message.content
           ? { ...message, status: 'error' as const }
           : message)
         const updated = { ...current, messages, updatedAt: Date.now() }
-        activeThreadRef.current = updated
-        setActiveThread(updated)
+        replaceThread(updated)
       }
-      setCompletionError(event.message)
+      setThreadError(requestThreadId, event.message)
     }
-    const completed = activeThreadRef.current
+    const completed = threadsRef.current.find((thread) => thread.id === requestThreadId)
     if (completed) {
       const completedAt = Date.now()
+      const run = threadRunsRef.current[requestThreadId]
       const status = event.type === 'cancelled' ? 'cancelled' as const : event.type === 'error' ? 'error' as const : 'completed' as const
       const messages = completed.messages.map((message, index) => index === completed.messages.length - 1 && message.role === 'assistant'
         ? {
             ...message,
             status,
             completedAt,
-            durationMs: Math.max(0, completedAt - (message.startedAt ?? startTimeRef.current ?? completedAt))
+            durationMs: Math.max(0, completedAt - (message.startedAt ?? run?.startedAt ?? completedAt))
           }
         : message)
       const finalThread = { ...completed, messages, updatedAt: completedAt }
-      activeThreadRef.current = finalThread
-      setActiveThread(finalThread)
-      setThreads((current) => [finalThread, ...current.filter((thread) => thread.id !== finalThread.id)])
+      const completedAssistantId = completed.messages.at(-1)?.role === 'assistant' ? completed.messages.at(-1)?.id : undefined
+      if (completedAssistantId) setExpandedWorkIds((current) => {
+        const next = new Set(current)
+        next.delete(completedAssistantId)
+        return next
+      })
+      replaceThread(finalThread)
       void window.api.saveChatThread(finalThread)
     }
-    activeRequestIdRef.current = null
-    setCompletionState('idle')
+    requestThreadIdsRef.current.delete(event.requestId)
+    setTemporaryReasoningTokens((current) => {
+      if (current[requestThreadId] === undefined) return current
+      const next = { ...current }
+      delete next[requestThreadId]
+      return next
+    })
+    setThreadRun(requestThreadId, undefined)
   }), [])
 
   useEffect(() => () => {
-    if (activityHoldTimerRef.current) clearTimeout(activityHoldTimerRef.current)
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
+    for (const timer of toolTenseTimerRefs.current.values()) clearTimeout(timer)
+    for (const timer of saveTimerRefs.current.values()) clearTimeout(timer)
   }, [])
 
   useLayoutEffect(() => {
@@ -741,14 +913,16 @@ export default function MainApp(): JSX.Element {
   }, [activeThread])
 
   useEffect(() => {
-    if (!projectDialogOpen) return
+    if (!projectDialogOpen && !renamingProject) return
     projectNameRef.current?.focus()
     const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !projectSaving) setProjectDialogOpen(false)
+      if (event.key !== 'Escape' || projectSaving) return
+      setProjectDialogOpen(false)
+      setRenamingProject(null)
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [projectDialogOpen, projectSaving])
+  }, [projectDialogOpen, projectSaving, renamingProject])
 
   useEffect(() => {
     if (!renamingThreadId) return
@@ -809,6 +983,13 @@ export default function MainApp(): JSX.Element {
     document.execCommand(editCommand)
   }
 
+  useEffect(() => window.api.onNativeMenuCommand((command) => {
+    if (command === 'new-thread') startNewThread()
+    else if (command === 'reload') window.api.runWindowCommand(WINDOW_COMMANDS.reload)
+    else if (command === 'toggle-dev-tools') window.api.runWindowCommand(WINDOW_COMMANDS.toggleDevTools)
+    else if (command.startsWith('theme:')) selectTheme(command.slice(6) as ThemePreference)
+  }), [])
+
   const selectTheme = (nextTheme: ThemePreference): void => {
     setTheme(nextTheme)
     setOpenTitlebarMenu(null)
@@ -822,6 +1003,59 @@ export default function MainApp(): JSX.Element {
     setProjectName('')
     setProjectError('')
     setProjectDialogOpen(true)
+  }
+
+  const openRenameProjectDialog = (project: Project): void => {
+    setProjectActionMenu(null)
+    setProjectName(project.name)
+    setProjectError('')
+    setRenamingProject(project)
+  }
+
+  const renameProject = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault()
+    if (!renamingProject || !projectName.trim() || projectSaving) return
+    setProjectSaving(true)
+    setProjectError('')
+    try {
+      const nextProjects = await window.api.renameProject(renamingProject.path, projectName)
+      setProjects(nextProjects)
+      setRenamingProject(null)
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not rename the project')
+    } finally {
+      setProjectSaving(false)
+    }
+  }
+
+  const confirmRemoveProject = async (): Promise<void> => {
+    const project = deleteConfirmProject
+    if (!project || projectRemoving) return
+    setProjectRemoving(true)
+    try {
+      const nextProjects = await window.api.removeProject(project.path)
+      setProjects(nextProjects)
+      setExpandedProjects((current) => {
+        const next = new Set(current)
+        next.delete(project.path)
+        return next
+      })
+      setFullyExpandedProjects((current) => {
+        const next = new Set(current)
+        next.delete(project.path)
+        return next
+      })
+      if (selectedProjectPath === project.path) setSelectedProjectPath(nextProjects[0]?.path ?? '')
+      if (activeThreadRef.current?.projectPath === project.path) {
+        activeThreadRef.current = null
+        setActiveThread(null)
+      }
+      setDeleteConfirmProject(null)
+    } catch (error) {
+      setProjectRemovalError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not remove the project from SupraCode')
+    } finally {
+      setProjectRemoving(false)
+    }
   }
 
   const chooseProjectFolder = async (): Promise<void> => {
@@ -854,15 +1088,11 @@ export default function MainApp(): JSX.Element {
   }
 
   const startNewThread = (): void => {
-    if (activeRequestIdRef.current) void window.api.cancelLocalCompletion(activeRequestIdRef.current)
-    activeRequestIdRef.current = null
+    setSettingsOpen(false)
     activeThreadRef.current = null
     setActiveThread(null)
-    setCompletionState('idle')
-    setCompletionError('')
     setPendingAttachments([])
     setAttachmentError('')
-    clearHeldActivity()
     setPrompt('')
     setAutoScrollEnabled(true)
     promptTextareaRef.current?.focus()
@@ -881,11 +1111,7 @@ export default function MainApp(): JSX.Element {
       return
     }
     const updated = { ...thread, title, updatedAt: Date.now() }
-    if (activeThreadRef.current?.id === thread.id) {
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-    }
-    setThreads((items) => [updated, ...items.filter((item) => item.id !== updated.id)])
+    replaceThread(updated)
     setRenamingThreadId(null)
     void window.api.saveChatThread(updated)
   }
@@ -899,11 +1125,7 @@ export default function MainApp(): JSX.Element {
       const title = await window.api.generateChatTitle(firstUserMsg.content)
       if (!title) return
       const updated = { ...thread, title, updatedAt: Date.now() }
-      if (activeThreadRef.current?.id === thread.id) {
-        activeThreadRef.current = updated
-        setActiveThread(updated)
-      }
-      setThreads((items) => [updated, ...items.filter((item) => item.id !== updated.id)])
+      replaceThread(updated)
       void window.api.saveChatThread(updated)
     } finally {
       setRegeneratingThreadId(null)
@@ -915,12 +1137,15 @@ export default function MainApp(): JSX.Element {
     if (!thread) return
     setDeleteConfirmThread(null)
     setContextMenu(null)
+    const run = threadRunsRef.current[thread.id]
+    if (run?.requestId) void window.api.cancelLocalCompletion(run.requestId)
     if (activeThreadRef.current?.id === thread.id) {
       activeThreadRef.current = null
       setActiveThread(null)
-      setCompletionError('')
+      setThreadError(thread.id, undefined)
     }
-    setThreads((items) => items.filter((item) => item.id !== thread.id))
+    threadsRef.current = threadsRef.current.filter((item) => item.id !== thread.id)
+    setThreads(threadsRef.current)
     void window.api.deleteChatThread(thread.id)
   }
 
@@ -941,23 +1166,20 @@ export default function MainApp(): JSX.Element {
   }
 
   const openThread = (thread: ChatThread): void => {
-    if (activeRequestIdRef.current) return
+    setSettingsOpen(false)
     activeThreadRef.current = thread
     setActiveThread(thread)
     setSelectedProjectPath(thread.projectPath)
-    setCompletionError('')
     setAutoScrollEnabled(true)
   }
 
   const updateThreadTitle = async (threadId: string, userMessage: string): Promise<void> => {
     try {
       const title = await window.api.generateChatTitle(userMessage)
-      const current = activeThreadRef.current
-      if (!current || current.id !== threadId || !title) return
+      const current = threadsRef.current.find((thread) => thread.id === threadId)
+      if (!current || !title) return
       const updated = { ...current, title, updatedAt: Date.now() }
-      activeThreadRef.current = updated
-      setActiveThread(updated)
-      setThreads((items) => [updated, ...items.filter((item) => item.id !== updated.id)])
+      replaceThread(updated)
       await window.api.saveChatThread(updated)
     } catch {
       return
@@ -995,22 +1217,100 @@ export default function MainApp(): JSX.Element {
     }
   }
 
-  const saveThreadDebounced = (): void => {
-    if (saveTimerRef.current) return
-    saveTimerRef.current = setTimeout(() => {
-      saveTimerRef.current = null
-      const current = activeThreadRef.current
+  const saveThreadDebounced = (thread: ChatThread): void => {
+    if (saveTimerRefs.current.has(thread.id)) return
+    const timer = setTimeout(() => {
+      saveTimerRefs.current.delete(thread.id)
+      const current = threadsRef.current.find((item) => item.id === thread.id)
       if (current) void window.api.saveChatThread(current)
     }, 400)
+    saveTimerRefs.current.set(thread.id, timer)
   }
 
-  const saveThreadImmediate = (): void => {
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current)
-      saveTimerRef.current = null
+  const saveThreadImmediate = (thread: ChatThread): void => {
+    const timer = saveTimerRefs.current.get(thread.id)
+    if (timer) {
+      window.clearTimeout(timer)
+      saveTimerRefs.current.delete(thread.id)
     }
-    const current = activeThreadRef.current
-    if (current) void window.api.saveChatThread(current)
+    void window.api.saveChatThread(thread)
+  }
+
+  const exportRequest = (options: SettingsExportOptions): SettingsExportOptions => ({
+    ...options,
+    threadId: options.scope === 'thread' ? activeThread?.id : undefined,
+    projectPath: options.scope === 'project' ? selectedProjectPath : undefined
+  })
+
+  const saveProviderConnection = async ({ input, connectionId }: SettingsConnectionRequest): Promise<void> => {
+    const result = await window.api.saveConnection(input, connectionId)
+    if (!result.ok) throw new Error(result.error)
+    setConnections((current) => [...(current ?? []).filter((connection) => connection.id !== result.connection.id), result.connection])
+  }
+
+  const testProviderConnection = ({ input, connectionId }: SettingsConnectionRequest): Promise<SettingsConnectionTestResult> =>
+    window.api.testConnection(input, connectionId)
+
+  const disconnectProvider = async (connectionId: string): Promise<void> => {
+    await window.api.deleteConnection(connectionId)
+    setConnections((current) => (current ?? []).filter((connection) => connection.id !== connectionId))
+  }
+
+  const updateProviderModels = async (connectionId: string, selectedModelIds: readonly string[]): Promise<void> => {
+    const result = await window.api.updateConnectionModels(connectionId, [...selectedModelIds])
+    if (!result.ok) throw new Error(result.error)
+    setConnections((current) => [...(current ?? []).filter((connection) => connection.id !== connectionId), result.connection])
+  }
+
+  const downloadLocalModel = async (model: (typeof MODEL_LIST)[number]): Promise<void> => {
+    setLocalModelDownloads((current) => ({ ...current, [model.hf_repo]: { downloaded: 0, total: 0 } }))
+    try {
+      await window.api.downloadModel(model.hf_repo, model.gguf_file)
+      await refreshDownloadedModels()
+      setLocalModelDownloads((current) => {
+        const next = { ...current }
+        delete next[model.hf_repo]
+        return next
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Download failed.'
+      setLocalModelDownloads((current) => ({ ...current, [model.hf_repo]: { ...(current[model.hf_repo] ?? { downloaded: 0, total: 0 }), error: message } }))
+    }
+  }
+
+  const cancelLocalModelDownload = async (model: (typeof MODEL_LIST)[number]): Promise<void> => {
+    await window.api.cancelDownload(model.hf_repo)
+    setLocalModelDownloads((current) => {
+      const next = { ...current }
+      delete next[model.hf_repo]
+      return next
+    })
+  }
+
+  const changeResponseStyle = async (preference: ResponseStylePreference): Promise<void> => {
+    const previous = responseStylePreference
+    setResponseStylePreference(preference)
+    try {
+      setResponseStylePreference(await window.api.setResponseStylePreference(preference))
+    } catch {
+      setResponseStylePreference(previous)
+    }
+  }
+
+  const updateExportOptions = (options: SettingsExportOptions): void => {
+    const request = exportRequest(options)
+    setExportOptions(request)
+    void window.api.previewConversationExport(request).then((preview) => setExportState((current) => ({ ...current, preview, error: undefined }))).catch((error) => setExportState((current) => ({ ...current, error: error instanceof Error ? error.message : 'Could not preview export' })))
+  }
+
+  const runExport = async (options: SettingsExportOptions): Promise<void> => {
+    setExportState((current) => ({ ...current, busy: true, error: undefined }))
+    try {
+      const result = await window.api.exportConversations(exportRequest(options))
+      setExportState((current) => ({ ...current, busy: false, result }))
+    } catch (error) {
+      setExportState((current) => ({ ...current, busy: false, error: error instanceof Error ? error.message : 'Could not export conversations' }))
+    }
   }
 
   const submitPrompt = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
@@ -1023,10 +1323,31 @@ export default function MainApp(): JSX.Element {
     }
     const isNewThread = !activeThreadRef.current
     const threadId = activeThreadRef.current?.id ?? crypto.randomUUID()
+    cancelledThreadIdsRef.current.delete(threadId)
+    if (selectedModel.source === 'local' && Object.values(threadRunsRef.current).some((run) => run.source === 'local')) {
+      setAttachmentError('A local model is already running in another thread')
+      return
+    }
     const projectPath = activeThreadRef.current?.projectPath ?? selectedProjectPath ?? projects[0]?.path ?? ''
     const now = Date.now()
+    const modelProvenance: AgentModelProvenance = selectedModel.source === 'local'
+      ? {
+          source: 'local',
+          provider: selectedModel.providerName,
+          modelId: selectedModel.modelId,
+          displayName: selectedModel.displayName,
+          reasoningRetention: 'retain'
+        }
+      : {
+          source: 'remote',
+          connectionId: selectedModel.connectionId,
+          provider: selectedModel.providerName,
+          modelId: selectedModel.modelId,
+          displayName: selectedModel.displayName,
+          reasoningRetention: shouldRetainRemoteReasoning(connections?.find((connection) => connection.id === selectedModel.connectionId)?.kind ?? 'openai') ? 'retain' : 'discard'
+        }
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content, attachments: pendingAttachments, timestamp: now }
-    const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '', timestamp: now, startedAt: now, status: 'pending' }
+    const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '', timestamp: now, startedAt: now, status: 'pending', model: modelProvenance }
     const thread: ChatThread = {
       id: threadId,
       projectPath,
@@ -1036,20 +1357,25 @@ export default function MainApp(): JSX.Element {
     }
     activeThreadRef.current = thread
     setActiveThread(thread)
-    setThreads((current) => [thread, ...current.filter((item) => item.id !== thread.id)])
+    threadsRef.current = [thread, ...threadsRef.current.filter((item) => item.id !== thread.id)]
+    setThreads(threadsRef.current)
     if (projectPath) setExpandedProjects((current) => new Set(current).add(projectPath))
     setPrompt('')
     setPendingAttachments([])
     setAttachmentError('')
-    setCompletionError('')
-    setCompletionState('starting')
+    setThreadError(threadId, undefined)
+    setThreadRun(threadId, { source: modelProvenance.source, startedAt: now, state: 'starting' })
     setAutoScrollEnabled(true)
     void window.api.saveChatThread(thread)
     if (isNewThread && content) void updateThreadTitle(threadId, content)
-    startTimeRef.current = Date.now()
     try {
-      const status = await window.api.startDownloadedModel(selectedModel.hf_repo, selectedModel.gguf_file, pendingAttachments.length > 0)
-      if (status.state !== 'ready') throw new Error(status.message ?? 'The local model could not start')
+      if (selectedModel.source === 'local') {
+        const localModel = selectedModel.localModel
+        if (!localModel) throw new Error('The selected local model is unavailable')
+        const status = await window.api.startDownloadedModel(localModel.hf_repo, localModel.gguf_file, pendingAttachments.length > 0)
+        if (cancelledThreadIdsRef.current.has(threadId)) return
+        if (status.state !== 'ready') throw new Error(status.message ?? 'The local model could not start')
+      }
       const messages = thread.messages.flatMap((message) => {
         if (message.role === 'tool' || (message.role === 'assistant' && !message.content)) return []
         if (message.role === 'user' && message.attachments?.length) {
@@ -1063,41 +1389,49 @@ export default function MainApp(): JSX.Element {
         }
         return message.content ? [{ role: message.role as 'user' | 'assistant', content: message.content }] : []
       })
-      const profile = reasoningProfile(selectedModel, reasoningEffort)
-      const systemPrompt = `${profile.systemPrompt}\n\n${responseStylePrompt(responseStylePreference)}`
-      const start = await window.api.startLocalCompletion({
+      const localProfile = selectedModel.localModel ? reasoningProfile(selectedModel.localModel, reasoningEffort) : undefined
+      const systemPrompt = localProfile
+        ? `${localProfile.systemPrompt}\n\n${responseStylePrompt(responseStylePreference)}`
+        : responseStylePrompt(responseStylePreference)
+      const target: AgentExecutionTarget = selectedModel.source === 'local'
+        ? { source: 'local', modelId: selectedModel.modelId, displayName: selectedModel.displayName }
+        : { source: 'remote', connectionId: selectedModel.connectionId ?? '', modelId: selectedModel.modelId, reasoningEffort }
+      const start = await window.api.startAgentCompletion(target, {
         threadId,
         projectPath,
         messages: [
           { role: 'system', content: systemPrompt },
           ...messages
         ],
-        enableThinking: profile.enableThinking,
-        temperature: profile.temperature,
-        topP: profile.topP,
-        topK: profile.topK,
-        minP: profile.minP,
-        presencePenalty: profile.presencePenalty,
-        repetitionPenalty: profile.repetitionPenalty,
-        maxTokens: 8192
+        enableThinking: localProfile?.enableThinking ?? reasoningEffort !== 'Instant',
+        temperature: localProfile?.temperature,
+        topP: localProfile?.topP,
+        topK: localProfile?.topK,
+        minP: localProfile?.minP,
+        presencePenalty: localProfile?.presencePenalty,
+        repetitionPenalty: localProfile?.repetitionPenalty,
+        maxTokens: DEFAULT_AGENT_MAX_TOKENS
       })
-      activeRequestIdRef.current = start.requestId
-      setCompletionState('streaming')
+      if (cancelledThreadIdsRef.current.has(threadId)) {
+        void window.api.cancelLocalCompletion(start.requestId)
+        return
+      }
+      if (settledCompletionRequestIdsRef.current.delete(start.requestId)) return
+      requestThreadIdsRef.current.set(start.requestId, threadId)
+      setThreadRun(threadId, { requestId: start.requestId, source: modelProvenance.source, startedAt: now, state: 'streaming' })
     } catch (error) {
-      setCompletionError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'The local model could not start')
-      const current = activeThreadRef.current
+      setThreadError(threadId, error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'The selected model could not start')
+      const current = threadsRef.current.find((item) => item.id === threadId)
       if (current) {
         const completedAt = Date.now()
         const messages = current.messages.map((message) => message.id === assistantMessage.id
           ? { ...message, status: 'error' as const, completedAt, durationMs: completedAt - now }
           : message)
         const failedThread = { ...current, messages, updatedAt: completedAt }
-        activeThreadRef.current = failedThread
-        setActiveThread(failedThread)
-        setThreads((items) => [failedThread, ...items.filter((item) => item.id !== failedThread.id)])
+        replaceThread(failedThread)
         void window.api.saveChatThread(failedThread)
       }
-      setCompletionState('idle')
+      setThreadRun(threadId, undefined)
     }
   }
 
@@ -1108,7 +1442,7 @@ export default function MainApp(): JSX.Element {
           <button className="titlebar-icon-button" type="button" aria-label="Toggle sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((current) => !current)}><PanelLeft size={16} /></button>
           <button className="titlebar-icon-button" type="button" aria-label="Go back" disabled><ChevronLeft size={16} /></button>
           <button className="titlebar-icon-button" type="button" aria-label="Go forward" disabled><ChevronRight size={16} /></button>
-          <nav className="titlebar-menu" aria-label="Application menu" ref={titlebarMenuRef}>
+          {!navigator.userAgent.includes('Mac OS X') && <nav className="titlebar-menu" aria-label="Application menu" ref={titlebarMenuRef}>
             {(Object.keys(TITLEBAR_MENUS) as TitlebarMenuId[]).map((menuId) => (
               <div className="titlebar-menu-group" key={menuId}>
                 <button
@@ -1144,7 +1478,7 @@ export default function MainApp(): JSX.Element {
                 )}
               </div>
             ))}
-          </nav>
+          </nav>}
         </div>
         <div className="titlebar-drag-region" aria-hidden="true" />
       </header>
@@ -1161,6 +1495,10 @@ export default function MainApp(): JSX.Element {
             <Search size={16} />
             <span>Search</span>
             <kbd>Ctrl K</kbd>
+          </button>
+          <button className={settingsOpen ? 'sidebar-action active' : 'sidebar-action'} type="button" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(true)}>
+            <Settings size={16} />
+            <span>Settings</span>
           </button>
         </nav>
         <div className="sidebar-section">
@@ -1189,7 +1527,16 @@ export default function MainApp(): JSX.Element {
                 <div className={expanded ? 'project-group expanded' : 'project-group'} key={project.path}>
                   <div className={selectedProjectPath === project.path && !activeThread ? 'project-row selected' : 'project-row'}>
                     <button className="project-row-main" type="button" title={project.path} aria-expanded={expanded} onClick={() => toggleProject(project)}><FolderOpen size={14} /><span>{project.name}</span></button>
-                    <button className="project-new-thread" type="button" aria-label={`New thread in ${project.name}`} title={`New thread in ${project.name}`} onClick={() => startProjectThread(project)}><SquarePen size={15} /></button>
+                    <div className="project-row-actions" ref={projectActionMenu?.path === project.path ? projectActionMenuRef : undefined}>
+                      <button className="project-row-action" type="button" aria-label={`Project actions for ${project.name}`} title={`Project actions for ${project.name}`} aria-haspopup="menu" aria-expanded={projectActionMenu?.path === project.path} onClick={() => setProjectActionMenu((current) => current?.path === project.path ? null : project)}><MoreHorizontal size={15} /></button>
+                      {projectActionMenu?.path === project.path && (
+                        <div className="project-context-menu" role="menu">
+                          <button type="button" role="menuitem" onClick={() => openRenameProjectDialog(project)}><PenLine size={14} /><span>Rename</span></button>
+                          <button type="button" role="menuitem" onClick={() => { setProjectRemovalError(''); setDeleteConfirmProject(project); setProjectActionMenu(null) }}><Trash2 size={14} /><span>Delete</span></button>
+                        </div>
+                      )}
+                      <button className="project-row-action" type="button" aria-label={`New thread in ${project.name}`} title={`New thread in ${project.name}`} onClick={() => startProjectThread(project)}><SquarePen size={15} /></button>
+                    </div>
                   </div>
                   <div className="project-threads-shell" aria-hidden={!expanded} inert={!expanded}>
                     <div className="project-threads">
@@ -1274,43 +1621,70 @@ export default function MainApp(): JSX.Element {
                   const parentToolCalls = parent
                     ? activeThread.messages.filter((candidate) => candidate.role === 'tool' && candidate.parentAssistantId === parent.id).flatMap((candidate) => candidate.toolCalls ?? [])
                     : []
-                  if (message.content === '__progress__' && message.reasoningSummary) {
+                  if (message.content.startsWith('__reasoning__') || message.content.startsWith('__progress__')) return null
+                  if (!message.toolCalls?.length && message.content) {
                     if (parent?.role === 'assistant' && parent.status !== 'pending' && !expandedWorkIds.has(parent.id)) return null
                     return (
                       <div className="chat-message progress-message" key={message.id}>
-                        <span>{message.reasoningSummary}</span>
+                        <span>{message.content}</span>
                       </div>
                     )
                   }
-                  if (parent && !expandedWorkIds.has(parent.id)) return null
-                  if (message.content === '__reasoning__' && message.reasoningSummary) {
-                    return (
-                      <div className="chat-message reasoning-message" key={message.id}>
-                        <div className="reasoning-summary">
-                          <span className="reasoning-summary-text">{message.reasoningSummary}</span>
-                        </div>
-                      </div>
-                    )
-                  }
+                  const parentIsFinished = parent?.role === 'assistant' && parent.status !== 'pending'
+                  if (parentIsFinished && parent && !expandedWorkIds.has(parent.id)) return null
+                  if (message.toolCalls?.every((toolCall) => toolCall.result === undefined && !toolCall.error)) return null
+                  const hasLaterProgress = activeThread.messages.slice(messageIndex + 1).some((candidate) =>
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && !candidate.toolCalls?.length && candidate.content && !candidate.content.startsWith('__progress__') && !candidate.content.startsWith('__reasoning__')
+                  )
+                  if (!parentIsFinished && !hasLaterProgress) return null
+                  const previousProgressOffset = activeThread.messages.slice(0, messageIndex).findLastIndex((candidate) =>
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && !candidate.toolCalls?.length && candidate.content && !candidate.content.startsWith('__progress__') && !candidate.content.startsWith('__reasoning__')
+                  )
+                  const nextProgressOffset = activeThread.messages.slice(messageIndex + 1).findIndex((candidate) =>
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && !candidate.toolCalls?.length && candidate.content && !candidate.content.startsWith('__progress__') && !candidate.content.startsWith('__reasoning__')
+                  )
+                  const phaseStart = previousProgressOffset + 1
+                  const phaseEnd = nextProgressOffset >= 0 ? messageIndex + 1 + nextProgressOffset : activeThread.messages.length
+                  const phaseToolMessages = activeThread.messages.slice(phaseStart, phaseEnd).filter((candidate) =>
+                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && (candidate.toolCalls?.length ?? 0) > 0
+                  )
+                  if (phaseToolMessages.at(-1)?.id !== message.id) return null
+                  const phaseToolCalls = phaseToolMessages.flatMap((candidate) => candidate.toolCalls ?? [])
+                  const bundleCall = phaseToolCalls.at(-1)
+                  if (!bundleCall) return null
+                  const bundleRunning = bundleCall.result === undefined && !bundleCall.error
+                  const bundleUsesPresentTense = bundleRunning || presentTenseToolIds.has(bundleCall.id)
+                  const BundleIcon = toolIconMap[bundleCall.name] ?? toolIconMap.default
+                  const bundleLabel = bundleUsesPresentTense ? runningToolLabel(bundleCall) : completedToolLabel(bundleCall)
                   return (
                     <div className="chat-message tool-message" key={message.id}>
-                      {message.toolCalls?.map((tc) => {
-                        const hasResult = tc.result !== undefined && !tc.error
-                        const hasError = !!tc.error
-                        const running = !hasResult && !hasError
-                        return (
-                          <details className={hasResult ? 'tool-call completed' : hasError ? 'tool-call error' : 'tool-call running'} key={tc.id}>
-                            <summary className="tool-call-summary">
-                            <span className="tool-call-icon">{(() => {
-                              const Icon = toolIconMap[tc.name] ?? toolIconMap.default
-                              return <Icon size={12} className={hasError ? 'tool-call-icon-error' : 'tool-call-icon-check'} />
-                            })()}</span>
-                            <span className="tool-call-name">{tc.uiMessage ?? (running ? runningToolLabel(tc) : completedToolLabel(tc))}</span>
-                            </summary>
-                            {(tc.result || tc.error) && <pre className="tool-call-preview">{tc.error ?? tc.result}</pre>}
-                          </details>
-                        )
-                      })}
+                      <details className="tool-bundle">
+                        <summary className="tool-bundle-summary">
+                          <span className="tool-call-icon"><BundleIcon size={12} className={bundleCall.error ? 'tool-call-icon-error' : 'tool-call-icon-check'} /></span>
+                          <span className="tool-bundle-label">{bundleLabel}</span>
+                          <ChevronDown size={12} className="tool-bundle-chevron" />
+                        </summary>
+                        <div className="tool-bundle-list">
+                          {phaseToolCalls.map((tc) => {
+                            const hasResult = tc.result !== undefined && !tc.error
+                            const hasError = !!tc.error
+                            const running = !hasResult && !hasError
+                            const usesPresentTense = running || presentTenseToolIds.has(tc.id)
+                            return (
+                              <details className={hasResult ? 'tool-call completed' : hasError ? 'tool-call error' : 'tool-call running'} key={tc.id}>
+                                <summary className="tool-call-summary">
+                                  <span className="tool-call-icon">{(() => {
+                                    const Icon = toolIconMap[tc.name] ?? toolIconMap.default
+                                    return <Icon size={12} className={hasError ? 'tool-call-icon-error' : 'tool-call-icon-check'} />
+                                  })()}</span>
+                                  <span className="tool-call-name">{usesPresentTense ? runningToolLabel(tc) : completedToolLabel(tc)}</span>
+                                </summary>
+                                {(tc.result || tc.error) && <pre className="tool-call-preview">{tc.error ?? tc.result}</pre>}
+                              </details>
+                            )
+                          })}
+                        </div>
+                      </details>
                     </div>
                   )
                 }
@@ -1329,6 +1703,7 @@ export default function MainApp(): JSX.Element {
                   const heldActivityLabel = heldActivity?.assistantId === message.id && heldActivity.until > Date.now() ? heldActivity.label : undefined
                   const activeLabel = runningToolCall ? runningToolLabel(runningToolCall) : heldActivityLabel ?? 'Thinking'
                   const activityToolCall = runningToolCall ?? (heldActivityLabel ? turnToolCalls.at(-1) : undefined)
+                  const activityIsAnimating = !activityToolCall || !!runningToolCall || presentTenseToolIds.has(activityToolCall.id)
                   const mostRecentSearch = [...turnToolCalls].reverse().find((toolCall) => toolCall.name === 'web_search')
                   const streamedSearchDetail = webSearchActivity?.assistantId === message.id
                     ? webSearchActivity.text.slice(0, webSearchActivity.revealedCharacters)
@@ -1340,15 +1715,17 @@ export default function MainApp(): JSX.Element {
                   return (
                     <div key={message.id}>
                       {showDuration && (
-                        <button className="work-duration" type="button" aria-expanded={expanded} onClick={() => setExpandedWorkIds((current) => {
-                          const next = new Set(current)
-                          if (next.has(message.id)) next.delete(message.id)
-                          else next.add(message.id)
-                          return next
-                        })}>
-                          <span className="work-duration-text">Worked for {formatDurationShort(message.durationMs ?? 0)}</span>
-                          <ChevronRight size={12} className={expanded ? 'work-duration-chevron expanded' : 'work-duration-chevron'} />
-                        </button>
+                        <div className="work-duration-row">
+                          <button className="work-duration" type="button" aria-expanded={expanded} onClick={() => setExpandedWorkIds((current) => {
+                            const next = new Set(current)
+                            if (next.has(message.id)) next.delete(message.id)
+                            else next.add(message.id)
+                            return next
+                          })}>
+                            <span className="work-duration-text">Worked for {formatDurationShort(message.durationMs ?? 0)}</span>
+                            <ChevronRight size={12} className={expanded ? 'work-duration-chevron expanded' : 'work-duration-chevron'} />
+                          </button>
+                        </div>
                       )}
                       <div className={message.content ? 'chat-message assistant-message' : 'chat-message assistant-message pending'}>
                         {message.content
@@ -1357,15 +1734,12 @@ export default function MainApp(): JSX.Element {
                             ? <span className="terminal-activity-label">Stopped</span>
                             : message.status === 'error'
                               ? <span className="terminal-activity-label error">Failed</span>
-                            : <button className="assistant-activity" type="button" aria-expanded={expanded} onClick={() => setExpandedWorkIds((current) => {
-                                const next = new Set(current)
-                                if (next.has(message.id)) next.delete(message.id)
-                                else next.add(message.id)
-                                return next
-                              })}>{activityToolCall && <span className="activity-tool-icon">{(() => {
+                            : <span className={activityToolCall ? 'assistant-activity tool-active' : 'assistant-activity'}>{activityToolCall && <span className="activity-tool-icon">{(() => {
                                 const Icon = toolIconMap[activityToolCall.name] ?? toolIconMap.default
                                 return <Icon size={13} />
-                              })()}</span>}<span className="activity-label" data-text={activeLabel}>{activeLabel}</span>{visibleSearchDetail && <span className="web-search-detail">{visibleSearchDetail}</span>}<ChevronRight size={12} className={expanded ? 'work-duration-chevron expanded' : 'work-duration-chevron'} /></button>}
+                              })()}</span>}{activityIsAnimating
+                                ? <span className="activity-label" data-text={activeLabel}>{activeLabel}</span>
+                                : <span className="activity-label-static">{activeLabel}</span>}{visibleSearchDetail && <span className="web-search-detail">{visibleSearchDetail}</span>}</span>}
                         {message.status !== 'pending' && displayedFileChanges.length > 0 && (
                           <div className="files-changed">
                             <div className="files-changed-summary">
@@ -1412,6 +1786,43 @@ export default function MainApp(): JSX.Element {
           </button>
         )}
 
+        <div className={activeThread ? 'composer-stack' : 'composer-stack new-thread'}>
+          {activeThread && (activeThread.todos?.length ?? 0) > 0 && (() => {
+            const todos = activeThread.todos ?? []
+            const completed = todos.filter((todo) => todo.status === 'completed').length
+            const preview = activeTodo(todos)?.content ?? ''
+            return (
+              <section className={todoCollapsed ? 'todo-dock collapsed' : 'todo-dock'} aria-label="Task list">
+                <button className="todo-dock-header" type="button" aria-expanded={!todoCollapsed} onClick={() => setTodoCollapsed((collapsed) => !collapsed)}>
+                  <span className="todo-dock-heading-icon" aria-hidden="true"><ListTodo size={14} /></span>
+                  <span className="todo-dock-progress">
+                    <span className="todo-dock-progress-count">{completed}</span>
+                    <span className="todo-dock-progress-sep">/</span>
+                    <span className="todo-dock-progress-total">{todos.length}</span>
+                  </span>
+                  <span className="todo-dock-preview">{preview}</span>
+                  <ChevronDown size={15} className="todo-dock-chevron" aria-hidden="true" />
+                  <span className="todo-dock-progress-track" aria-hidden="true">
+                    <span className="todo-dock-progress-fill" style={{ width: `${Math.round((completed / todos.length) * 100)}%` }} />
+                  </span>
+                </button>
+                <div className="todo-dock-list" aria-hidden={todoCollapsed}>
+                  {todos.map((todo, index) => {
+                    const completedTodo = todo.status === 'completed' || todo.status === 'cancelled'
+                    return <div className={`todo-dock-item ${todo.status}`} key={`${index}-${todo.content}`}>
+                      {todo.status === 'in_progress' ? (
+                        <span className="todo-dock-indicator" aria-label="In progress">
+                          <span className="todo-dock-indicator-track" />
+                          <span className="todo-dock-spinner" />
+                        </span>
+                      ) : completedTodo ? <Check size={15} aria-hidden="true" /> : <Circle size={15} aria-hidden="true" />}
+                      <span>{todo.content}</span>
+                    </div>
+                  })}
+                </div>
+              </section>
+            )
+          })()}
         <form className={activeThread ? 'prompt-composer' : 'prompt-composer new-thread-composer'} ref={promptComposerRef} onSubmit={(event) => void submitPrompt(event)}>
           <div className="composer-shape" aria-hidden="true" />
           {pendingAttachments.length > 0 && (
@@ -1478,7 +1889,7 @@ export default function MainApp(): JSX.Element {
                       onClick={() => { if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current); setOpenMenu('model') }}
                     >
                       <span>Model</span>
-                      <span className="advanced-value">{selectedModel ? modelDisplayName(selectedModel.base_model) : 'None'}</span>
+                      <span className="advanced-value">{selectedModel?.displayName ?? 'None'}</span>
                       <ChevronDown size={12} />
                     </button>
                   </div>
@@ -1494,20 +1905,20 @@ export default function MainApp(): JSX.Element {
                   >
                     <div className="menu-heading">Model</div>
                     {downloadedModelIds === null && <div className="menu-message">Checking downloaded models…</div>}
-                    {downloadedModelIds !== null && downloadedModels.length === 0 && (
+                    {downloadedModelIds !== null && composerModels.length === 0 && (
                       <div className="menu-message">
                         <strong>No downloaded models</strong>
                         <span>Download a supported model to use it here.</span>
                       </div>
                     )}
-                    {downloadedModels.map((model) => (
+                    {composerModels.map((model) => (
                       <button
                         className={model.id === selectedModelId ? 'menu-option selected' : 'menu-option'}
                         key={model.id}
                         type="button"
                         onClick={() => { setSelectedModelId(model.id); setOpenMenu(null) }}
                       >
-                        <span className="menu-option-copy"><strong>{modelDisplayName(model.base_model)}</strong></span>
+                        <span className="menu-option-copy"><strong>{model.displayName}</strong><small>{model.providerName}</small></span>
                       </button>
                     ))}
                   </div>
@@ -1532,14 +1943,16 @@ export default function MainApp(): JSX.Element {
                   </div>
                 )}
                 <button className="composer-select model-select" type="button" disabled={completionState !== 'idle'} onClick={() => setOpenMenu(openMenu === null ? 'advanced' : null)}>
-                  <span>{selectedModel ? modelDisplayName(selectedModel.base_model) : (downloadedModelIds === null ? 'Checking models…' : 'No models')}</span>
+                  <span>{selectedModel?.displayName ?? (downloadedModelIds === null ? 'Checking models…' : 'No models')}</span>
                   <span className="combined-effort">{reasoningEffort}</span>
                   <ChevronDown size={12} />
                 </button>
               </div>
               {completionState === 'idle'
                 ? <button className="send-button" type="submit" disabled={(!prompt.trim() && pendingAttachments.length === 0) || !selectedModel} aria-label="Send prompt"><ArrowUp size={16} /></button>
-                : <button className="send-button stop-button" type="button" aria-label="Stop response" onClick={() => { if (activeRequestIdRef.current) void window.api.cancelLocalCompletion(activeRequestIdRef.current) }}><Square size={14} /></button>}
+                : <button className="send-button stop-button" type="button" aria-label="Stop response" onClick={() => {
+                  if (activeThread) stopThreadRun(activeThread.id)
+                }}><Square size={14} /></button>}
             </div>
           </div>
           {!activeThread && (
@@ -1555,8 +1968,35 @@ export default function MainApp(): JSX.Element {
             </div>
           )}
         </form>
+        </div>
         </section>
       </main>
+      {settingsOpen && (
+        <SettingsDialog
+          connections={connections ?? []}
+          catalog={REMOTE_MODEL_CATALOG}
+          localCatalog={MODEL_LIST}
+          downloadedLocalModelIds={downloadedModelIds ?? new Set()}
+          localModelDownloads={localModelDownloads}
+          theme={theme}
+          reasoningEffort={reasoningEffort}
+          responseStyle={responseStylePreference}
+          exportOptions={exportRequest(exportOptions)}
+          exportState={exportState}
+          onThemeChange={selectTheme}
+          onReasoningEffortChange={setReasoningEffort}
+          onResponseStyleChange={changeResponseStyle}
+          onSaveConnection={saveProviderConnection}
+          onTestConnection={testProviderConnection}
+          onDisconnectConnection={disconnectProvider}
+          onUpdateModelSelection={updateProviderModels}
+          onDownloadLocalModel={downloadLocalModel}
+          onCancelLocalModelDownload={cancelLocalModelDownload}
+          onExportOptionsChange={updateExportOptions}
+          onExport={runExport}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
       {projectDialogOpen && (
         <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectSaving) setProjectDialogOpen(false) }}>
           <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
@@ -1570,6 +2010,35 @@ export default function MainApp(): JSX.Element {
                 <button className="primary" type="submit" disabled={!projectName.trim() || projectSaving}>{projectSaving ? 'Saving…' : 'Save'}</button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+      {renamingProject && (
+        <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectSaving) setRenamingProject(null) }}>
+          <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-project-dialog-title">
+            <h2 id="rename-project-dialog-title">Rename project</h2>
+            <p>This changes the project name shown in SupraCode. Its folder stays unchanged.</p>
+            <form onSubmit={(event) => void renameProject(event)}>
+              <input ref={projectNameRef} value={projectName} onChange={(event) => { setProjectName(event.target.value); setProjectError('') }} aria-label="Project name" aria-describedby={projectError ? 'project-name-error' : undefined} disabled={projectSaving} />
+              {projectError && <div className="project-dialog-error" id="project-name-error" role="alert">{projectError}</div>}
+              <div className="project-dialog-actions">
+                <button type="button" onClick={() => setRenamingProject(null)} disabled={projectSaving}>Cancel</button>
+                <button className="primary" type="submit" disabled={!projectName.trim() || projectSaving}>{projectSaving ? 'Saving…' : 'Save'}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+      {deleteConfirmProject && (
+        <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectRemoving) setDeleteConfirmProject(null) }}>
+          <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-project-dialog-title">
+            <h2 id="delete-project-dialog-title">SupraCode will delete this project</h2>
+            <p>Deleting “<strong>{deleteConfirmProject.name}</strong>” won’t delete its project folder from your computer. To completely get rid of it, please delete the folder manually.</p>
+            {projectRemovalError && <div className="project-dialog-error" role="alert">{projectRemovalError}</div>}
+            <div className="project-dialog-actions">
+              <button type="button" onClick={() => setDeleteConfirmProject(null)} disabled={projectRemoving}>Don’t delete</button>
+              <button className="primary delete-confirm" type="button" onClick={() => void confirmRemoveProject()} disabled={projectRemoving}>{projectRemoving ? 'Deleting…' : 'Yes, delete!'}</button>
+            </div>
           </section>
         </div>
       )}

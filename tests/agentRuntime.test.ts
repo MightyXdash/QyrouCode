@@ -7,8 +7,9 @@ import { AgentRuntime, type AgentCompletionProvider, type AgentToolEvent } from 
 import type { LocalCompletion, LocalCompletionRequest, LocalMessageContent } from '../src/main/localCompletionClient.js'
 
 const textContent = (content: LocalMessageContent | undefined): string => typeof content === 'string' ? content : ''
-const REQUIRED_PROGRESS = 'I’ll inspect the smallest relevant surface first, confirm how the current behavior is wired, and use that evidence to make the next change safely. This keeps the work focused while ensuring the visible activity message, tool execution order, and user-facing history all remain synchronized as the task moves from exploration into implementation and verification across every supported reasoning effort without skipping ahead.'
-const taskStateCompletion = (id: string, message = REQUIRED_PROGRESS): LocalCompletion => ({
+const uiMessage = (uim_prt: string, uim_pat: string): { uim_prt: string; uim_pat: string } => ({ uim_prt, uim_pat })
+const REQUIRED_TASK_STATE = 'I’m inspecting the smallest relevant surface first so I can confirm how the current behavior is wired before changing anything. This matters because the agent loop, visible task state, and tool activity must stay synchronized without exposing intermediate assistant prose. After I understand the existing path, I’ll carefully perform the requested action, inspect its result, and verify the final behavior.'
+const taskStateCompletion = (id = 'task_state', message = REQUIRED_TASK_STATE): LocalCompletion => ({
   text: '',
   toolCalls: [{ id, name: 'cur_task_state', arguments: { message } }]
 })
@@ -28,15 +29,44 @@ class ScriptedProvider implements AgentCompletionProvider {
   }
 }
 
+test('retries provider errors three times and reports each retry before succeeding', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    let attempts = 0
+    const events: AgentToolEvent[] = []
+    const provider: AgentCompletionProvider = {
+      async complete(): Promise<LocalCompletion> {
+        attempts += 1
+        if (attempts <= 3) throw new Error('Remote completion did not contain assistant text, reasoning, or tool calls')
+        return { text: 'Recovered response.', toolCalls: [] }
+      }
+    }
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-provider-retry',
+      projectPath,
+      messages: [{ role: 'user', content: 'Respond after a transient provider error.' }]
+    }, () => {}, undefined, (event) => events.push(event))
+
+    assert.equal(attempts, 4)
+    assert.deepEqual(events.filter((event) => event.type === 'progress-update'), [
+      { type: 'progress-update', summary: 'Provider returned error, retrying' },
+      { type: 'progress-update', summary: 'Provider returned error, retrying' },
+      { type: 'progress-update', summary: 'Provider returned error, retrying' }
+    ])
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
 test('runs native and healed local-model tools end to end before returning a final answer', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
     writeFileSync(join(projectPath, 'AGENTS.md'), 'Always create files under src.\n', 'utf8')
     const provider = new ScriptedProvider([
-      { text: '', toolCalls: [{ id: 'call_1', name: 'write', arguments: { ui_message: 'I’m creating the result module', filePath: 'src/result.ts', content: 'export const result = 1\n' } }] },
-      taskStateCompletion('state_write'),
-      { text: '<tool_call>{"name":"read","arguments":{"ui_message":"I’m verifying the result module","filePath":"src/result.ts"}}</tool_call>', toolCalls: [] },
-      taskStateCompletion('state_read'),
+      taskStateCompletion(),
+      { text: 'I will now write the file.', toolCalls: [{ id: 'call_1', name: 'write', arguments: { ui_message: uiMessage('I’m creating the result module', 'Created the result module'), filePath: 'src/result.ts', content: 'export const result = 1\n' } }] },
+      { text: '<tool_call>{"name":"read","arguments":{"ui_message":{"uim_prt":"I’m verifying the result module","uim_pat":"Verified the result module"},"filePath":"src/result.ts"}}</tool_call>', toolCalls: [] },
       { text: 'Implemented the requested file and verified its contents.', toolCalls: [] }
     ])
     let output = ''
@@ -59,14 +89,23 @@ test('runs native and healed local-model tools end to end before returning a fin
     assert.match(system, /You are SupraCode/)
     assert.match(system, /Use a high reasoning effort internally/)
     assert.match(system, /Always create files under src/)
+    assert.match(system, /Treat the open workspace as the project/)
     assert.doesNotMatch(system, /\bOpenCode\b/i)
     assert.equal(provider.requests[0].toolChoice, 'auto')
     assert.ok(provider.requests[0].tools?.some((tool) => tool.name === 'web_search'))
-    assert.equal(provider.requests[1].toolChoice, 'auto')
-    assert.equal(provider.requests[1].enableThinking, false)
-    assert.deepEqual(provider.requests[1].tools?.map((tool) => tool.name), ['cur_task_state'])
-    assert.ok(provider.requests[4].messages.some((message) => message.role === 'tool' && message.name === 'read'))
+    assert.match(system, /first tool call.*cur_task_state/i)
+    assert.match(system, /about five cur_task_state updates/i)
+    assert.equal(provider.requests.length, 4)
+    assert.deepEqual(provider.requests[0].tools?.find((tool) => tool.name === 'cur_task_state')?.parameters, {
+      type: 'object',
+      additionalProperties: false,
+      properties: { message: { type: 'string', description: 'One natural 60–65-word paragraph, written mostly in first person, describing the immediate next substep, why it matters, and what follows. Later updates must contain unique information the user should know.' } },
+      required: ['message']
+    })
+    assert.ok(provider.requests[3].messages.some((message) => message.role === 'tool' && message.name === 'read'))
     assert.ok(persistedStates.some((messages) => messages.some((message) => message.role === 'tool' && message.name === 'write')))
+    assert.ok(persistedStates.flat().every((message) => message.name !== 'cur_task_state'))
+    assert.ok(persistedStates.flat().every((message) => message.content !== 'I will now write the file.'))
     assert.equal(persistedStates.at(-1)?.at(-1)?.content, 'Implemented the requested file and verified its contents.')
     assert.deepEqual(toolEvents.find((event) => event.type === 'files-changed'), {
       type: 'files-changed',
@@ -77,19 +116,44 @@ test('runs native and healed local-model tools end to end before returning a fin
   }
 })
 
-test('executes one tool per model turn and emits authored progress and UI messages', async () => {
+test('emits todo updates when the agent replaces its task list', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
-    const progress = REQUIRED_PROGRESS
+    const todos = [
+      { content: 'Inspect the task surface', status: 'completed' as const, priority: 'medium' as const },
+      { content: 'Implement the todo dock', status: 'in_progress' as const, priority: 'high' as const }
+    ]
     const provider = new ScriptedProvider([
+      taskStateCompletion(),
+      { text: '', toolCalls: [{ id: 'todo_write', name: 'todo_write', arguments: { ui_message: uiMessage('I’m updating the task list', 'Updated the task list'), todos } }] },
+      { text: 'The task list is ready.', toolCalls: [] }
+    ])
+    const events: AgentToolEvent[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-todos',
+      projectPath,
+      messages: [{ role: 'user', content: 'Plan this work.' }]
+    }, () => {}, undefined, (event) => events.push(event))
+
+    assert.deepEqual(events.find((event) => event.type === 'todos-updated'), { type: 'todos-updated', todos })
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('executes one tool per model turn and emits its UI message', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const provider = new ScriptedProvider([
+      taskStateCompletion(),
       {
-        text: progress,
+        text: '',
         toolCalls: [
-          { id: 'call_first', name: 'write', arguments: { ui_message: 'I’m creating the fixture', filePath: 'first.txt', content: 'first' } },
-          { id: 'call_second', name: 'write', arguments: { ui_message: 'I’m creating another fixture', filePath: 'second.txt', content: 'second' } }
+          { id: 'call_first', name: 'write', arguments: { ui_message: uiMessage('I’m creating the fixture', 'Created the fixture'), filePath: 'first.txt', content: 'first' } },
+          { id: 'call_second', name: 'write', arguments: { ui_message: uiMessage('I’m creating another fixture', 'Created another fixture'), filePath: 'second.txt', content: 'second' } }
         ]
       },
-      taskStateCompletion('state_single', progress),
       { text: 'Created the first fixture and stopped before executing another tool from the same model turn.', toolCalls: [] }
     ])
     const events: AgentToolEvent[] = []
@@ -102,41 +166,46 @@ test('executes one tool per model turn and emits authored progress and UI messag
 
     assert.equal(readFileSync(join(projectPath, 'first.txt'), 'utf8'), 'first')
     assert.equal(existsSync(join(projectPath, 'second.txt')), false)
-    const progressEvents = events.filter((event) => event.type === 'progress-update')
-    const toolCallIndex = events.findIndex((event) => event.type === 'tool-call' && event.toolCallId === 'call_first')
-    const completedProgressIndex = events.findIndex((event) => event.type === 'progress-update' && event.summary === progress)
-    assert.ok(progressEvents.length > 1)
-    assert.ok(completedProgressIndex >= 0 && completedProgressIndex < toolCallIndex)
     assert.deepEqual(events.find((event) => event.type === 'tool-call' && event.toolCallId === 'call_first'), {
       type: 'tool-call',
       toolCallId: 'call_first',
       name: 'write',
-      arguments: { ui_message: 'I’m creating the fixture', filePath: 'first.txt', content: 'first' },
-      summary: 'I’m creating the fixture'
+      arguments: { ui_message: uiMessage('I’m creating the fixture', 'Created the fixture'), filePath: 'first.txt', content: 'first' },
+      summary: uiMessage('I’m creating the fixture', 'Created the fixture')
     })
     assert.match(textContent(provider.requests[0].messages[0].content), /Call exactly one tool at a time/)
-    assert.equal(provider.requests[2].messages.find((message) => message.role === 'assistant')?.toolCalls?.length, 1)
+    assert.equal(provider.requests[2].messages.filter((message) => message.role === 'assistant').at(-1)?.toolCalls?.length, 1)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
 })
 
-test('does not block a tool when the model writes a shorter progress message', async () => {
+test('enforces cur_task_state before tools and suppresses repeated updates', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
     const provider = new ScriptedProvider([
-      { text: '', toolCalls: [{ id: 'short_progress', name: 'write', arguments: { ui_message: 'I’m writing the fixture', filePath: 'short.txt', content: 'done' } }] },
-      taskStateCompletion('state_short', 'I’ll create the requested fixture now, verify that the write succeeds, and then report the result.'),
-      { text: 'Created the fixture successfully.', toolCalls: [] }
+      { text: 'I will skip the status.', toolCalls: [{ id: 'premature_write', name: 'write', arguments: { ui_message: uiMessage('I’m writing too early', 'Wrote too early'), filePath: 'result.txt', content: 'wrong' } }] },
+      taskStateCompletion('initial_state'),
+      taskStateCompletion('duplicate_state'),
+      { text: 'This intermediate prose must stay hidden.', toolCalls: [{ id: 'accepted_write', name: 'write', arguments: { ui_message: uiMessage('I’m writing the result', 'Wrote the result'), filePath: 'result.txt', content: 'right' } }] },
+      { text: 'Created the verified result.', toolCalls: [] }
     ])
+    const events: AgentToolEvent[] = []
+    const persisted: LocalCompletionRequest['messages'][] = []
+    let output = ''
 
     await new AgentRuntime(provider).run({
-      threadId: 'thread-short-progress',
+      threadId: 'thread-task-state-protocol',
       projectPath,
-      messages: [{ role: 'user', content: 'Create the fixture.' }]
-    }, () => {}, undefined, () => {})
+      messages: [{ role: 'user', content: 'Create the result.' }]
+    }, (delta) => { output += delta }, (messages) => persisted.push(messages.map((message) => ({ ...message }))), (event) => events.push(event))
 
-    assert.equal(readFileSync(join(projectPath, 'short.txt'), 'utf8'), 'done')
+    assert.equal(readFileSync(join(projectPath, 'result.txt'), 'utf8'), 'right')
+    assert.match(textContent(provider.requests[1].messages.at(-1)?.content), /before any other tool, call cur_task_state alone/i)
+    assert.equal(events.filter((event) => event.type === 'progress-update' && event.summary === REQUIRED_TASK_STATE).length, 1)
+    assert.ok(!events.some((event) => event.type === 'tool-call' && event.toolCallId === 'premature_write'))
+    assert.ok(persisted.flat().every((message) => message.content !== 'This intermediate prose must stay hidden.'))
+    assert.equal(output, 'Created the verified result.')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
@@ -146,9 +215,9 @@ test('generates a UI message when a non-web tool omits one', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
     const provider = new ScriptedProvider([
+      taskStateCompletion(),
       { text: '', toolCalls: [{ id: 'missing_ui', name: 'write', arguments: { filePath: 'generated.txt', content: 'done' } }] },
-      taskStateCompletion('state_missing_ui'),
-      { text: 'I’m creating the requested file', toolCalls: [] },
+      { text: '{"uim_prt":"I’m creating the requested file","uim_pat":"Created the requested file"}', toolCalls: [] },
       { text: 'Created the requested file.', toolCalls: [] }
     ])
     const events: AgentToolEvent[] = []
@@ -160,7 +229,7 @@ test('generates a UI message when a non-web tool omits one', async () => {
     }, () => {}, undefined, (event) => events.push(event))
 
     const toolCall = events.find((event) => event.type === 'tool-call' && event.toolCallId === 'missing_ui')
-    assert.equal(toolCall?.type === 'tool-call' ? toolCall.summary : undefined, 'I’m creating the requested file')
+    assert.deepEqual(toolCall?.type === 'tool-call' ? toolCall.summary : undefined, uiMessage('I’m creating the requested file', 'Created the requested file'))
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
@@ -170,12 +239,13 @@ test('exploration subagents cannot receive file mutation tools', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
     const provider = new ScriptedProvider([
+      taskStateCompletion(),
       { text: '', toolCalls: [{ id: 'task_1', name: 'task', arguments: { description: 'Inspect', prompt: 'Find files', subagentType: 'explore' } }] },
       { text: 'Found the relevant files.', toolCalls: [] },
       { text: 'Exploration complete.', toolCalls: [] }
     ])
     await new AgentRuntime(provider).run({ threadId: 'thread-2', projectPath, messages: [{ role: 'user', content: 'Explore this project.' }] }, () => {})
-    const subagentRequest = provider.requests[1]
+    const subagentRequest = provider.requests[2]
     assert.ok(!subagentRequest.tools?.some((tool) => ['write', 'edit', 'apply_patch', 'task'].includes(tool.name)))
     assert.equal(existsSync(join(projectPath, 'unexpected.txt')), false)
   } finally {
@@ -241,6 +311,7 @@ test('executes healed tool calls emitted in hidden reasoning without persisting 
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
     const provider = new ScriptedProvider([
+      taskStateCompletion(),
       {
         text: '',
         reasoningText: '<tool_call>{"name":"write","arguments":{"filePath":"result.txt","content":"done"}}</tool_call>',

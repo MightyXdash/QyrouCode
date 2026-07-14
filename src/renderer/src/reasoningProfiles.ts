@@ -15,11 +15,11 @@ export interface ReasoningProfile {
 }
 
 const EFFORT_INSTRUCTIONS: Record<ReasoningEffort, string> = {
-  Instant: 'Answer immediately using the most direct reliable response. Break tool-based work into 1–4 substeps maximum. Be concise and avoid tangents.',
-  Low: 'Use a short, focused internal reasoning pass. Break tool-based work into about 2–6 substeps. Identify the key constraint, select the most direct sound approach, and avoid exploring unnecessary alternatives.',
-  Medium: 'Reason internally through a few plausible approaches and their important tradeoffs. Break tool-based work into about 3–8 substeps. Check the main assumptions, then choose the strongest approach without exhaustively exploring every branch.',
-  High: 'Reason deeply and explore multiple viable approaches. Break tool-based work into about 5–11 substeps. Test important assumptions, compare tradeoffs, consider meaningful failure modes and edge cases, then select and verify the best answer.',
-  'Extra high': 'Use the deepest feasible internal analysis. Break tool-based work into about 8–16 substeps. Systematically consider the relevant solution space, competing approaches, assumptions, edge cases, failure modes, and success conditions. Challenge and revise the leading answer, verify it from multiple angles, and produce the highest-quality answer you can.'
+  Instant: 'Answer immediately using the obvious fastest reliable path. Optimize for and reward the absolute least possible number of tool calls. For observation, inspection, lookup, and research, make at most the single decisive call needed and never call the same or a substantially similar tool again merely to reassure yourself, reconfirm evidence, or explore alternatives. If the answer is already available, call no tool. Writing and command tools are allowed when necessary, but keep them to the shortest possible sequence with no redundant reads or verification. Be decisive, concise, and avoid tangents.',
+  Low: 'Use a short, focused internal reasoning pass and take the fastest sound path. Minimize tool calls aggressively. Do not call the same or a substantially similar observation, inspection, lookup, or research tool merely to reassure yourself or reconfirm an already-supported conclusion. Use one focused verification only when it materially affects correctness. Keep writing and command sequences compact and avoid redundant reads, searches, and post-change checks. Identify the key constraint and avoid unnecessary alternatives.',
+  Medium: 'Reason internally through a few plausible approaches and their important tradeoffs. Check the main assumptions, then choose the strongest approach.',
+  High: 'Reason deeply and explore multiple viable approaches. Test assumptions, compare tradeoffs, consider meaningful failure modes, then verify the best answer.',
+  'Extra high': 'Use the deepest feasible internal analysis. Systematically consider approaches, assumptions, edge cases, failure modes, and success conditions, then verify the answer from multiple angles.'
 }
 
 export function reasoningProfile(model: CatalogModel, effort: ReasoningEffort): ReasoningProfile {

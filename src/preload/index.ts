@@ -6,13 +6,20 @@ import type { LocalCompletionEvent, LocalCompletionStart } from '../main/localCo
 import type { AgentRunRequest } from '../main/agentRuntime'
 import type { Project } from '../shared/projects'
 import type { ChatAttachment, ChatThread } from '../shared/chat'
-import type { WorkspaceViewState } from '../shared/agent'
-import type { PersistedAgentSession } from '../shared/agent'
+import type { AgentExecutionTarget, PersistedAgentSession, WorkspaceViewState } from '../shared/agent'
+import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, ConnectionTestResult } from '../shared/connections'
+import type { ConnectionSecurityStatus } from '../main/connectionStore'
+import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../shared/conversationExport'
 
 const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
   toggleMaximize: () => ipcRenderer.send('toggle-maximize-window'),
   runWindowCommand: (command: WindowCommand) => ipcRenderer.send('run-window-command', command),
+  onNativeMenuCommand: (callback: (command: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, command: string) => callback(command)
+    ipcRenderer.on('native-menu-command', handler)
+    return () => { ipcRenderer.removeListener('native-menu-command', handler) }
+  },
   close: () => ipcRenderer.send('close-window'),
   openMainWindow: (): Promise<void> => ipcRenderer.invoke('open-main-window'),
   rendererReady: () => ipcRenderer.send('renderer-ready'),
@@ -26,11 +33,23 @@ const api = {
     ipcRenderer.invoke('complete-onboarding', preferences),
   getTheme: (): Promise<ThemePreference> => ipcRenderer.invoke('get-theme'),
   getResponseStylePreference: (): Promise<ResponseStylePreference> => ipcRenderer.invoke('get-response-style-preference'),
+  setResponseStylePreference: (preference: ResponseStylePreference): Promise<ResponseStylePreference> => ipcRenderer.invoke('set-response-style-preference', preference),
   setTheme: (theme: ThemePreference): Promise<ThemePreference> => ipcRenderer.invoke('set-theme', theme),
+  getConnections: (): Promise<ConnectionSummary[]> => ipcRenderer.invoke('get-connections'),
+  getConnectionSecurityStatus: (): Promise<ConnectionSecurityStatus> => ipcRenderer.invoke('get-connection-security-status'),
+  resolveProviderSiteIcon: (baseUrl: string): Promise<string | undefined> => ipcRenderer.invoke('resolve-provider-site-icon', baseUrl),
+  saveConnection: (input: ConnectionInput, connectionId?: string): Promise<ConnectionMutationResult> => ipcRenderer.invoke('save-connection', input, connectionId),
+  testConnection: (input: ConnectionInput, connectionId?: string): Promise<ConnectionTestResult> => ipcRenderer.invoke('test-connection', input, connectionId),
+  deleteConnection: (connectionId: string): Promise<boolean> => ipcRenderer.invoke('delete-connection', connectionId),
+  updateConnectionModels: (connectionId: string, selectedModelIds: string[]): Promise<ConnectionMutationResult> => ipcRenderer.invoke('update-connection-models', connectionId, selectedModelIds),
+  previewConversationExport: (request: ConversationExportRequest): Promise<ConversationExportPreview> => ipcRenderer.invoke('preview-conversation-export', request),
+  exportConversations: (request: ConversationExportRequest): Promise<ConversationExportResult> => ipcRenderer.invoke('export-conversations', request),
   getProjects: (): Promise<Project[]> => ipcRenderer.invoke('get-projects'),
   getExpandedProjectPaths: (): Promise<string[]> => ipcRenderer.invoke('get-expanded-project-paths'),
   setExpandedProjectPaths: (paths: string[]): Promise<string[]> => ipcRenderer.invoke('set-expanded-project-paths', paths),
   createProject: (name: string): Promise<Project> => ipcRenderer.invoke('create-project', name),
+  renameProject: (projectPath: string, name: string): Promise<Project[]> => ipcRenderer.invoke('rename-project', projectPath, name),
+  removeProject: (projectPath: string): Promise<Project[]> => ipcRenderer.invoke('remove-project', projectPath),
   chooseProjectFolder: (): Promise<Project | null> => ipcRenderer.invoke('choose-project-folder'),
   getChatThreads: (): Promise<ChatThread[]> => ipcRenderer.invoke('get-chat-threads'),
   saveChatThread: (thread: ChatThread): Promise<ChatThread[]> => ipcRenderer.invoke('save-chat-thread', thread),
@@ -65,6 +84,7 @@ const api = {
    * and render deltas in a conversation surface without moving or restyling the current UI elements.
    */
   startLocalCompletion: (request: AgentRunRequest): Promise<LocalCompletionStart> => ipcRenderer.invoke('start-local-completion', request),
+  startAgentCompletion: (target: AgentExecutionTarget, request: AgentRunRequest): Promise<LocalCompletionStart> => ipcRenderer.invoke('start-agent-completion', target, request),
   cancelLocalCompletion: (requestId: string): Promise<boolean> => ipcRenderer.invoke('cancel-local-completion', requestId),
   onLocalCompletionEvent: (callback: (event: LocalCompletionEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, completionEvent: LocalCompletionEvent) => callback(completionEvent)

@@ -32,6 +32,7 @@ export interface LocalChatMessage {
   toolCalls?: readonly LocalToolCall[]
   reasoningText?: string
   filePath?: string
+  model?: import('../shared/agent').AgentModelProvenance
 }
 
 export interface LocalCompletionRequest {
@@ -70,16 +71,16 @@ export interface LocalCompletionStart {
 }
 
 export type LocalCompletionEvent =
-  | { requestId: string; type: 'delta'; delta: string }
-  | { requestId: string; type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: string }
-  | { requestId: string; type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
-  | { requestId: string; type: 'tool-error'; toolCallId: string; error: string }
-  | { requestId: string; type: 'files-changed'; files: import('../shared/chat').FileChangeDisplay[] }
-  | { requestId: string; type: 'progress-update'; summary: string }
-  | { requestId: string; type: 'reasoning-summary'; summary: string }
-  | { requestId: string; type: 'complete' }
-  | { requestId: string; type: 'cancelled' }
-  | { requestId: string; type: 'error'; message: string }
+  | { requestId: string; threadId?: string; type: 'delta'; delta: string }
+  | { requestId: string; threadId?: string; type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: import('../shared/chat').ToolUiMessage }
+  | { requestId: string; threadId?: string; type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
+  | { requestId: string; threadId?: string; type: 'tool-error'; toolCallId: string; error: string }
+  | { requestId: string; threadId?: string; type: 'files-changed'; files: import('../shared/chat').FileChangeDisplay[] }
+  | { requestId: string; threadId?: string; type: 'progress-update'; summary: string }
+  | { requestId: string; threadId?: string; type: 'todos-updated'; todos: import('../shared/chat').TodoDisplay[] }
+  | { requestId: string; threadId?: string; type: 'complete' }
+  | { requestId: string; threadId?: string; type: 'cancelled' }
+  | { requestId: string; threadId?: string; type: 'error'; message: string }
 
 interface CompletionResponse {
   choices?: Array<{
