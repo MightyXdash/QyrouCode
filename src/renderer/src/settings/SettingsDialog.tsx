@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, Fragment, useState, type JSX } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, Fragment, useState, type JSX } from 'react'
 import { Bot, Database, Download, Palette, Plug, SlidersHorizontal } from 'lucide-react'
 import { CONNECTION_PROVIDERS, type ConnectionProviderMetadata, type ConnectionSummary } from '../../../shared/connections'
 import AppearanceSettings from './AppearanceSettings'
@@ -42,6 +42,8 @@ export default function SettingsDialog(props: SettingsDialogProps): JSX.Element 
   const [activeConnectionId, setActiveConnectionId] = useState(props.connections[0]?.id ?? '')
   const [connectionTarget, setConnectionTarget] = useState<ConnectionTarget | null>(null)
   const dialogRef = useRef<HTMLElement>(null)
+  const navigationRef = useRef<HTMLElement>(null)
+  const [activeIndicator, setActiveIndicator] = useState({ top: 0, height: 0 })
   const activeConnection = useMemo(
     () => props.connections.find((connection) => connection.id === activeConnectionId) ?? props.connections[0],
     [activeConnectionId, props.connections]
@@ -51,6 +53,12 @@ export default function SettingsDialog(props: SettingsDialogProps): JSX.Element 
     if (!activeConnectionId && props.connections[0]) setActiveConnectionId(props.connections[0].id)
     if (activeConnectionId && !props.connections.some((connection) => connection.id === activeConnectionId)) setActiveConnectionId(props.connections[0]?.id ?? '')
   }, [activeConnectionId, props.connections])
+
+  useLayoutEffect(() => {
+    const activeButton = navigationRef.current?.querySelector<HTMLButtonElement>(`button[data-settings-section="${section}"]`)
+    if (!activeButton) return
+    setActiveIndicator({ top: activeButton.offsetTop, height: activeButton.offsetHeight })
+  }, [section, props.connections.length])
 
   useEffect(() => {
     const close = (event: KeyboardEvent): void => {
@@ -90,12 +98,13 @@ export default function SettingsDialog(props: SettingsDialogProps): JSX.Element 
     <div className="settings-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose() }}>
       <section className="settings-dialog-shell" ref={dialogRef} role="dialog" aria-modal="true" aria-label="Settings" onKeyDown={keepFocusInside}>
         <div className="settings-dialog-layout">
-          <nav className="settings-navigation" aria-label="Settings sections">
+          <nav className="settings-navigation" ref={navigationRef} aria-label="Settings sections">
+            <span className="settings-navigation-indicator" style={{ top: activeIndicator.top, height: activeIndicator.height }} aria-hidden="true" />
             {navigation.map((item) => {
               const Icon = item.icon
               return (
                 <Fragment key={item.section}>
-                  <button className={section === item.section ? 'active' : ''} type="button" onClick={() => setSection(item.section)}>
+                  <button data-settings-section={item.section} className={section === item.section ? 'active' : ''} type="button" onClick={() => setSection(item.section)}>
                     <Icon size={14} /><span>{item.label}</span>
                   </button>
                   {item.section === 'models' && props.connections.length > 0 && (

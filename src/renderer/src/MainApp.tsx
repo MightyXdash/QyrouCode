@@ -8,7 +8,7 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, ListTodo, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2, Circle, MoreHorizontal } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, ListTodo, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
@@ -1497,7 +1497,7 @@ export default function MainApp(): JSX.Element {
             <kbd>Ctrl K</kbd>
           </button>
           <button className={settingsOpen ? 'sidebar-action active' : 'sidebar-action'} type="button" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(true)}>
-            <Settings2 size={16} />
+            <Settings size={16} />
             <span>Settings</span>
           </button>
         </nav>
