@@ -357,8 +357,23 @@ function createMainAppWindow(): BrowserWindow {
   return targetWindow
 }
 
+function createMacApplicationMenu(): void {
+  if (process.platform !== 'darwin') return
+  const sendCommand = (command: string) => {
+    if (mainAppWindow && !mainAppWindow.isDestroyed()) mainAppWindow.webContents.send('native-menu-command', command)
+  }
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { label: 'File', submenu: [{ label: 'New Thread', accelerator: 'CmdOrCtrl+N', click: () => sendCommand('new-thread') }, { type: 'separator' }, { role: 'close' }] },
+    { role: 'editMenu' },
+    { label: 'View', submenu: [{ label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => sendCommand('reload') }, { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => sendCommand('toggle-dev-tools') }, { type: 'separator' }, { role: 'togglefullscreen' }] },
+    { label: 'Theme', submenu: [{ label: 'System', click: () => { setTheme('system'); sendCommand('theme:system') } }, { label: 'Dark', click: () => { setTheme('dark'); sendCommand('theme:dark') } }, { label: 'Light', click: () => { setTheme('light'); sendCommand('theme:light') } }] },
+    { label: 'Help', submenu: [{ label: 'SupraCode', enabled: false }, { label: 'Local coding model runner', enabled: false }] }
+  ]))
+}
+
 function createWindow(): void {
-  Menu.setApplicationMenu(null)
+  if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -476,6 +491,7 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.suprarcode')
   llamaRuntime = new LlamaRuntime()
   titleRuntime = new LlamaRuntime(LLAMA_TITLE_SERVER_PORT)
+  createMacApplicationMenu()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -686,7 +702,10 @@ app.whenReady().then(() => {
     const requestId = randomUUID()
     const controller = new AbortController()
     activeCompletionRequests.set(requestId, { senderId: event.sender.id, controller, source: model.source })
-    const send = (completionEvent: LocalCompletionEvent): void => event.sender.send('local-completion-event', completionEvent)
+    const send = (completionEvent: LocalCompletionEvent): void => event.sender.send('local-completion-event', {
+      ...completionEvent,
+      threadId: request.threadId
+    })
     const persisted = getAgentSession(request.threadId, project.path)
     const systemMessages = request.messages.filter((message) => message.role === 'system')
     const latestUserMessage = [...request.messages].reverse().find((message) => message.role === 'user')

@@ -42,7 +42,7 @@ const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules', 'dist', 'out', 'bui
 const DANGEROUS_COMMAND = /(?:\brm\s+-rf\s+(?:\/|~)|\bRemove-Item\b[^\r\n]*-Recurse[^\r\n]*(?:[A-Za-z]:\\|\s\/)|\b(?:shutdown|reboot|format)\b|\bgit\s+(?:reset\s+--hard|clean\s+-[^\s]*f))/i
 const READ_ONLY_COMMAND = /^\s*(?:git\s+(?:status|diff|log|show|branch|rev-parse|ls-files)\b|rg\b|grep\b|find\b|ls\b|pwd\b|cat\b|head\b|tail\b|wc\b|Get-ChildItem\b|Get-Content\b|Select-String\b)/i
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
-const TASK_STATE_TOOL_NAME = 'cur_task_state'
+export const TASK_STATE_TOOL_NAME = 'cur_task_state'
 const UI_MESSAGE_PROPERTY = {
   type: 'object',
   description: 'Required user-facing activity labels for this tool. Do not place a message directly under ui_message.',
@@ -69,8 +69,8 @@ const definition = (name: string, description: string, properties: Record<string
 }
 
 const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
-  definition(TASK_STATE_TOOL_NAME, 'Share a user-visible update after thinking and before a meaningful tool-based substep. Call this only when the task state materially changes. Prefer neutral state language and do not default to first person.', {
-    message: { type: 'string', description: 'A natural roughly 60–65-word user-facing task-state update. Prefer neutral phrasing; use first person only when genuinely natural. This is guidance, not a strict measured limit.' }
+  definition(TASK_STATE_TOOL_NAME, 'Share a user-visible task-state update before agentic work begins and at later material milestones. This is control-plane status, not an ordinary assistant response.', {
+    message: { type: 'string', description: 'One natural 60–65-word paragraph, written mostly in first person, describing the immediate next substep, why it matters, and what follows. Later updates must contain unique information the user should know.' }
   }, ['message']),
   definition('read', 'Read a UTF-8 text file with line numbers. Use this before editing an existing file.', {
     filePath: { type: 'string', description: 'Workspace-relative or absolute file path' },
@@ -281,7 +281,7 @@ export class AgentToolbox {
   async execute(name: string, args: Record<string, unknown>): Promise<string> {
     this.options.signal?.throwIfAborted()
     switch (name) {
-      case TASK_STATE_TOOL_NAME: return 'Current task state shared with the user.'
+      case TASK_STATE_TOOL_NAME: return 'Task state accepted. Continue the agentic loop without an ordinary assistant response.'
       case 'read': return this.read(args)
       case 'list': return this.list(args)
       case 'glob': return this.glob(args)

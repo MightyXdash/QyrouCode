@@ -15,6 +15,11 @@ const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
   toggleMaximize: () => ipcRenderer.send('toggle-maximize-window'),
   runWindowCommand: (command: WindowCommand) => ipcRenderer.send('run-window-command', command),
+  onNativeMenuCommand: (callback: (command: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, command: string) => callback(command)
+    ipcRenderer.on('native-menu-command', handler)
+    return () => { ipcRenderer.removeListener('native-menu-command', handler) }
+  },
   close: () => ipcRenderer.send('close-window'),
   openMainWindow: (): Promise<void> => ipcRenderer.invoke('open-main-window'),
   rendererReady: () => ipcRenderer.send('renderer-ready'),

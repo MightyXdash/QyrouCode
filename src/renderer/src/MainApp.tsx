@@ -8,7 +8,7 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, Clock, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, ListTodo, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2, Circle, MoreHorizontal } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, ListTodo, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings2, Circle, MoreHorizontal } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
@@ -68,7 +68,6 @@ const projectThreadAnimationStyle = (index: number, count: number): ProjectThrea
 })
 
 const toolIconMap: Record<string, typeof Terminal> = {
-  cur_task_state: Clock,
   bash: Terminal,
   write: FilePlus,
   edit: FileEdit,
@@ -150,14 +149,12 @@ function activitySweepDurationMs(): number {
 }
 
 function runningToolLabel(toolCall: ToolCallDisplay): string {
-  if (toolCall.name === 'cur_task_state') return 'Sharing current task state'
   if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searching the web'
   if (toolCall.uiMessage?.uim_prt) return toolCall.uiMessage.uim_prt
   return 'Thinking'
 }
 
 function completedToolLabel(toolCall: ToolCallDisplay): string {
-  if (toolCall.name === 'cur_task_state') return 'Shared current task state'
   if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searched the web'
   if (toolCall.uiMessage?.uim_pat) return toolCall.uiMessage.uim_pat
   if (toolCall.name === 'read') return 'Viewed a file'
@@ -371,6 +368,7 @@ export default function MainApp(): JSX.Element {
   const threadsRef = useRef<ChatThread[]>([])
   const threadRunsRef = useRef<Record<string, ThreadRun>>({})
   const requestThreadIdsRef = useRef<Map<string, string>>(new Map())
+  const settledCompletionRequestIdsRef = useRef<Set<string>>(new Set())
   const cancelledThreadIdsRef = useRef<Set<string>>(new Set())
   const conversationEndRef = useRef<HTMLDivElement>(null)
   const conversationRef = useRef<HTMLDivElement>(null)
@@ -697,7 +695,7 @@ export default function MainApp(): JSX.Element {
   }, [activeThread?.id, expandedWorkIds, prompt, reasoningEffort, selectedModelId, selectedProjectPath, sidebarOpen])
 
   useEffect(() => window.api.onLocalCompletionEvent((event) => {
-    const requestThreadId = requestThreadIdsRef.current.get(event.requestId)
+    const requestThreadId = requestThreadIdsRef.current.get(event.requestId) ?? event.threadId
     if (!requestThreadId) return
     if (event.type === 'delta') {
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
@@ -856,6 +854,7 @@ export default function MainApp(): JSX.Element {
       saveThreadImmediate(updated)
       return
     }
+    if (!requestThreadIdsRef.current.has(event.requestId)) settledCompletionRequestIdsRef.current.add(event.requestId)
     if (event.type === 'error') {
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (current) {
@@ -983,6 +982,13 @@ export default function MainApp(): JSX.Element {
     previousFocusRef.current?.focus()
     document.execCommand(editCommand)
   }
+
+  useEffect(() => window.api.onNativeMenuCommand((command) => {
+    if (command === 'new-thread') startNewThread()
+    else if (command === 'reload') window.api.runWindowCommand(WINDOW_COMMANDS.reload)
+    else if (command === 'toggle-dev-tools') window.api.runWindowCommand(WINDOW_COMMANDS.toggleDevTools)
+    else if (command.startsWith('theme:')) selectTheme(command.slice(6) as ThemePreference)
+  }), [])
 
   const selectTheme = (nextTheme: ThemePreference): void => {
     setTheme(nextTheme)
@@ -1410,6 +1416,7 @@ export default function MainApp(): JSX.Element {
         void window.api.cancelLocalCompletion(start.requestId)
         return
       }
+      if (settledCompletionRequestIdsRef.current.delete(start.requestId)) return
       requestThreadIdsRef.current.set(start.requestId, threadId)
       setThreadRun(threadId, { requestId: start.requestId, source: modelProvenance.source, startedAt: now, state: 'streaming' })
     } catch (error) {
@@ -1435,7 +1442,7 @@ export default function MainApp(): JSX.Element {
           <button className="titlebar-icon-button" type="button" aria-label="Toggle sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((current) => !current)}><PanelLeft size={16} /></button>
           <button className="titlebar-icon-button" type="button" aria-label="Go back" disabled><ChevronLeft size={16} /></button>
           <button className="titlebar-icon-button" type="button" aria-label="Go forward" disabled><ChevronRight size={16} /></button>
-          <nav className="titlebar-menu" aria-label="Application menu" ref={titlebarMenuRef}>
+          {!navigator.userAgent.includes('Mac OS X') && <nav className="titlebar-menu" aria-label="Application menu" ref={titlebarMenuRef}>
             {(Object.keys(TITLEBAR_MENUS) as TitlebarMenuId[]).map((menuId) => (
               <div className="titlebar-menu-group" key={menuId}>
                 <button
@@ -1471,7 +1478,7 @@ export default function MainApp(): JSX.Element {
                 )}
               </div>
             ))}
-          </nav>
+          </nav>}
         </div>
         <div className="titlebar-drag-region" aria-hidden="true" />
       </header>
@@ -1708,15 +1715,17 @@ export default function MainApp(): JSX.Element {
                   return (
                     <div key={message.id}>
                       {showDuration && (
-                        <button className="work-duration" type="button" aria-expanded={expanded} onClick={() => setExpandedWorkIds((current) => {
-                          const next = new Set(current)
-                          if (next.has(message.id)) next.delete(message.id)
-                          else next.add(message.id)
-                          return next
-                        })}>
-                          <span className="work-duration-text">Worked for {formatDurationShort(message.durationMs ?? 0)}</span>
-                          <ChevronRight size={12} className={expanded ? 'work-duration-chevron expanded' : 'work-duration-chevron'} />
-                        </button>
+                        <div className="work-duration-row">
+                          <button className="work-duration" type="button" aria-expanded={expanded} onClick={() => setExpandedWorkIds((current) => {
+                            const next = new Set(current)
+                            if (next.has(message.id)) next.delete(message.id)
+                            else next.add(message.id)
+                            return next
+                          })}>
+                            <span className="work-duration-text">Worked for {formatDurationShort(message.durationMs ?? 0)}</span>
+                            <ChevronRight size={12} className={expanded ? 'work-duration-chevron expanded' : 'work-duration-chevron'} />
+                          </button>
+                        </div>
                       )}
                       <div className={message.content ? 'chat-message assistant-message' : 'chat-message assistant-message pending'}>
                         {message.content

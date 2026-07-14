@@ -493,7 +493,7 @@
 .todo-dock-indicator-track { position: absolute; inset: 0; border-radius: 50%; background: var(--surface-selected); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px)); mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px)); }
 .todo-dock-spinner { position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(var(--todo-dock-accent), transparent 75%); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px)); mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px)); animation: todoSpin var(--todo-dock-spinner-duration) linear infinite; will-change: transform; }
 @keyframes todoSpin { to { transform: rotate(1turn); } }
-.chat-message { color: var(--text-strong); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.chat-message { color: var(--text-strong); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; user-select: text; }
 .user-turn { display: grid; justify-items: end; margin: 0 0 30px; }
 .user-message { position: relative; width: fit-content; max-width: 82%; margin: 0; padding: 9px 13px; border-radius: var(--radius-xl); background: var(--surface-selected); user-select: text; }
 
@@ -555,7 +555,8 @@
 .files-changed-row-end { flex: 0 0 auto; font-family: 'DM Sans', sans-serif; }
 .files-changed-file svg { flex: 0 0 auto; color: var(--text-weak); }
 
-.work-duration { display: inline-flex; align-items: center; gap: 4px; width: fit-content; margin: 12px 0 14px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.work-duration-row { margin: 12px 0 14px; border-bottom: var(--border-width-hairline) solid var(--border-weak); }
+.work-duration { display: inline-flex; align-items: center; gap: 4px; width: fit-content; margin: 0 0 10px; padding: 0; border: 0; background: transparent; cursor: pointer; }
 .work-duration:hover .work-duration-text { color: var(--text-base); }
 .work-duration-text { font-size: 13px; color: var(--text-weak); white-space: nowrap; transition: color 120ms ease; }
 .work-duration-chevron { color: var(--text-weak); transition: transform 0.2s ease; flex-shrink: 0; }
@@ -583,6 +584,10 @@
 .chat-message a { color: var(--interactive); text-decoration: none; }
 .chat-message a:hover { text-decoration: underline; }
 .chat-message code { padding: 0.12em 0.32em; border-radius: var(--radius-sm); background: var(--markdown-code-background); font: 0.9em/1.5 'JetBrains Mono', monospace; }
+.markdown-code-block { position: relative; }
+.markdown-code-copy { position: absolute; z-index: 1; top: 7px; right: 7px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-weak); cursor: pointer; user-select: none; }
+.markdown-code-copy:hover { color: var(--text-strong); background: var(--surface-hover); }
+.markdown-code-copy:active { transform: scale(0.95); }
 .chat-message pre { max-width: 100%; margin: 0.9em 0; padding: 12px 14px; overflow-x: auto; border: var(--border-width-hairline) solid var(--border-weak); border-radius: var(--radius-lg); background: var(--markdown-code-background); }
 .chat-message pre code { padding: 0; border-radius: 0; background: transparent; font-size: 12px; white-space: pre; }
 .chat-message table { display: block; max-width: 100%; margin: 0.9em 0; overflow-x: auto; border-collapse: collapse; }

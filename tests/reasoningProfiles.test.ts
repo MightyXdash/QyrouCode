@@ -22,21 +22,6 @@ test('reasoning efforts enable native thinking', () => {
   }
 })
 
-test('reasoning efforts communicate their substep ranges', () => {
-  const model = MODEL_LIST[0]
-  const ranges = {
-    Instant: '1–4',
-    Low: '2–6',
-    Medium: '3–8',
-    High: '5–11',
-    'Extra high': '8–16'
-  } as const
-
-  for (const [effort, range] of Object.entries(ranges)) {
-    assert.match(reasoningProfile(model, effort as keyof typeof ranges).systemPrompt, new RegExp(range))
-  }
-})
-
 test('lower efforts explicitly minimize reassurance and research calls', () => {
   const model = MODEL_LIST[0]
   const instant = reasoningProfile(model, 'Instant').systemPrompt

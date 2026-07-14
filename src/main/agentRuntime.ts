@@ -1,11 +1,11 @@
 import { randomUUID } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { isAbsolute, relative, resolve } from 'path'
-import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall, LocalToolDefinition } from './localCompletionClient'
+import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall } from './localCompletionClient'
 import type { FileChangeDisplay, TodoDisplay, ToolUiMessage } from '../shared/chat'
 import type { AgentModelProvenance } from '../shared/agent'
 import { COMPACTION_SYSTEM_PROMPT, buildAgentSystemPrompt } from './agentPrompt'
-import { AgentToolbox, type AgentTaskRequest } from './agentTools'
+import { AgentToolbox, TASK_STATE_TOOL_NAME, type AgentTaskRequest } from './agentTools'
 import { parseHealedToolCalls, stripToolCallMarkup } from './toolCallParser'
 
 export interface AgentCompletionProvider {
@@ -39,9 +39,12 @@ const FINAL_MAX_TOKENS = 8_192
 const MAX_INTENT_REPROMPTS = 3
 const MAX_PROVIDER_RETRIES = 3
 const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
-const TASK_STATE_TOOL_NAME = 'cur_task_state'
+const TASK_STATE_MIN_WORDS = 60
+const TASK_STATE_MAX_WORDS = 65
+const TASK_STATE_TARGET_UPDATES = 5
 const TASK_STATE_SIMILARITY_THRESHOLD = 0.42
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
+const FIRST_PERSON_PATTERN = /\b(?:i|i'm|i’m|i'll|i’ll|me|my|mine|we|we're|we’re|we'll|we’ll|us|our|ours)\b/i
 
 function messageContentCharacters(content: LocalChatMessage['content']): number {
   if (typeof content === 'string') return content.length
@@ -76,8 +79,11 @@ function isIntentWithoutAction(value: string): boolean {
   return normalized.length > 0 && normalized.length < 2_000 && INTENT_PATTERN.test(normalized)
 }
 
+function taskStateWordCount(value: string): number {
+  return value.trim() ? value.trim().split(/\s+/).length : 0
+}
+
 function taskStatesAreSimilar(left: string, right: string): boolean {
-  if (!left.trim() || !right.trim()) return false
   const words = (value: string): Set<string> => new Set(value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((word) => word.length > 2))
   const leftWords = words(left)
   const rightWords = words(right)
@@ -85,6 +91,16 @@ function taskStatesAreSimilar(left: string, right: string): boolean {
   let shared = 0
   for (const word of leftWords) if (rightWords.has(word)) shared += 1
   return shared / Math.min(leftWords.size, rightWords.size) >= TASK_STATE_SIMILARITY_THRESHOLD
+}
+
+function persistedMessages(messages: readonly LocalChatMessage[]): LocalChatMessage[] {
+  const hiddenCallIds = new Set(messages.flatMap((message) => message.role === 'assistant'
+    ? (message.toolCalls ?? []).filter((call) => call.name === TASK_STATE_TOOL_NAME).map((call) => call.id)
+    : []))
+  return messages.filter((message) => {
+    if (message.role === 'assistant' && message.toolCalls?.some((call) => call.name === TASK_STATE_TOOL_NAME)) return false
+    return message.role !== 'tool' || !message.toolCallId || !hiddenCallIds.has(message.toolCallId)
+  }).map((message) => ({ ...message }))
 }
 
 function modelSettings(request: AgentRunRequest, enableThinking = request.enableThinking): Omit<LocalCompletionRequest, 'messages'> {
@@ -137,9 +153,10 @@ export class AgentRuntime {
     const duplicateCalls = new Map<string, number>()
     let intentReprompts = 0
     let emptyCompletionRetries = 0
-    let enableThinking = request.enableThinking ?? false
+    let taskStateProtocolReprompts = 0
     let taskStateReady = false
-    let currentTaskState = ''
+    let completedActionCount = 0
+    let enableThinking = request.enableThinking ?? false
     const toolbox = new AgentToolbox({
       projectPath: request.projectPath,
       signal: request.signal,
@@ -153,7 +170,7 @@ export class AgentRuntime {
       request.signal?.throwIfAborted()
       if (contentCharacters(messages) > COMPACTION_CHARACTER_THRESHOLD) {
         messages = await this.compact(request, messages, onToolEvent)
-        onState?.(messages)
+        onState?.(persistedMessages(messages))
       }
       const completion = await this.completeWithRetries({
         ...modelSettings(request, enableThinking),
@@ -175,14 +192,18 @@ export class AgentRuntime {
           continue
         }
         if (!finalText) throw new Error('The local model completed a turn without a visible answer or usable tool call')
+        if (taskStateReady && completedActionCount === 0 && taskStateProtocolReprompts < MAX_INTENT_REPROMPTS) {
+          taskStateProtocolReprompts += 1
+          messages.push({ role: 'user', content: 'Do not generate an assistant response while agentic work is active. You announced the next substep with cur_task_state but have not performed it. Continue now with exactly one appropriate tool call and its required ui_message.' })
+          continue
+        }
         if (isIntentWithoutAction(finalText) && intentReprompts < MAX_INTENT_REPROMPTS) {
           intentReprompts += 1
-          messages.push({ role: 'assistant', content: finalText, ...modelProvenance(request) })
-          messages.push({ role: 'user', content: 'Continue now using the available tools. If no tool is needed, provide the completed final answer instead of describing future actions.' })
+          messages.push({ role: 'user', content: 'Your previous internal turn described future actions and was not shown to the user. Continue now using exactly one available tool. If no tool is needed, provide only the completed final answer.' })
           continue
         }
         messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
-        onState?.(messages)
+        onState?.(persistedMessages(messages))
         await this.emitStreamedText(finalText, onDelta)
         return finalText
       }
@@ -190,28 +211,23 @@ export class AgentRuntime {
       intentReprompts = 0
       emptyCompletionRetries = 0
       const selectedCall = healedCalls[0]
-      if (onToolEvent && selectedCall.name !== TASK_STATE_TOOL_NAME && !taskStateReady) {
-        const definition = toolbox.definitions.find((tool) => tool.name === TASK_STATE_TOOL_NAME)
-        if (definition) {
-          const stateCall = await this.requestTaskState(request, messages, definition, selectedCall.name, onToolEvent)
-          const stateMessage = typeof stateCall.arguments.message === 'string' ? stateCall.arguments.message.trim() : ''
-          if (stateMessage && this.registerVisibleTaskState(stateMessage, visibleTaskStates)) await this.emitProgressUpdate(stateMessage, onToolEvent)
-          const stateResult = await toolbox.execute(stateCall.name, stateCall.arguments)
-          messages.push({ role: 'assistant', content: null, toolCalls: [stateCall], ...modelProvenance(request) })
-          messages.push({ role: 'tool', name: stateCall.name, toolCallId: stateCall.id, content: stateResult })
-          taskStateReady = true
-          currentTaskState = visibleTaskStates.at(-1) ?? stateMessage
-          onState?.(messages)
-        }
+      if (!taskStateReady && selectedCall.name !== TASK_STATE_TOOL_NAME) {
+        taskStateProtocolReprompts += 1
+        if (taskStateProtocolReprompts > MAX_INTENT_REPROMPTS) throw new Error('The model repeatedly attempted agentic tools before the required cur_task_state update')
+        messages.push({ role: 'user', content: 'Protocol correction: before any other tool, call cur_task_state alone. Its message must be one 60–65-word paragraph written mostly in first person, explaining the immediate next substep, why it matters, and what follows. Do not generate ordinary assistant prose.' })
+        continue
       }
+      const selectedCallId = selectedCall.id || randomUUID()
       messages.push({
         role: 'assistant',
-        content: stripToolCallMarkup(completion.text) || null,
-        toolCalls: healedCalls,
+        content: null,
+        toolCalls: [{ ...selectedCall, id: selectedCallId }],
         reasoningText: retainedReasoning(request, completion.reasoningText),
         ...modelProvenance(request)
       })
       for (const call of healedCalls) {
+        const callId = selectedCallId
+        const isTaskState = call.name === TASK_STATE_TOOL_NAME
         const candidatePaths = mutationPaths(call, request.projectPath)
         for (const candidatePath of candidatePaths) captureOriginalFile(request.projectPath, candidatePath, originalFiles)
         const key = callKey(call)
@@ -224,19 +240,24 @@ export class AgentRuntime {
           error = result
         } else {
           try {
-            const isTaskState = call.name === TASK_STATE_TOOL_NAME
-            const taskStateMessage = isTaskState && typeof call.arguments.message === 'string' ? call.arguments.message.trim() : ''
-            const taskStateChanged = !isTaskState || !onToolEvent || this.registerVisibleTaskState(taskStateMessage, visibleTaskStates)
-            const uiMessage = isTaskState
-              ? undefined
-              : onToolEvent ? await this.resolveUiMessage(request, messages, call, currentTaskState, onToolEvent) : undefined
-            if (!isTaskState) onToolEvent?.({ type: 'tool-call', toolCallId: call.id || randomUUID(), name: call.name, arguments: call.arguments, summary: uiMessage })
-            if (isTaskState && taskStateMessage && taskStateChanged && onToolEvent) await this.emitProgressUpdate(taskStateMessage, onToolEvent)
-            result = await toolbox.execute(call.name, call.arguments)
             if (isTaskState) {
+              const message = typeof call.arguments.message === 'string' ? call.arguments.message.trim() : ''
+              const wordCount = taskStateWordCount(message)
+              if (wordCount < TASK_STATE_MIN_WORDS || wordCount > TASK_STATE_MAX_WORDS) throw new Error(`cur_task_state must contain 60–65 words; received ${wordCount}`)
+              if (/\r?\n\s*\r?\n/.test(message)) throw new Error('cur_task_state must be one paragraph')
+              if (!FIRST_PERSON_PATTERN.test(message)) throw new Error('cur_task_state must be written mostly in first person')
+              if (visibleTaskStates.length >= TASK_STATE_TARGET_UPDATES) throw new Error('The task already has five cur_task_state updates; continue the work without another')
+              if (visibleTaskStates.some((visible) => taskStatesAreSimilar(visible, message))) throw new Error('This cur_task_state is substantially similar to an earlier update; continue working or report a genuinely new development')
+              visibleTaskStates.push(message)
               taskStateReady = true
-              if (taskStateChanged) currentTaskState = taskStateMessage
+              taskStateProtocolReprompts = 0
+              onToolEvent?.({ type: 'progress-update', summary: message })
+            } else {
+              const uiMessage = onToolEvent ? await this.resolveUiMessage(request, messages, call, onToolEvent) : undefined
+              onToolEvent?.({ type: 'tool-call', toolCallId: callId, name: call.name, arguments: call.arguments, summary: uiMessage })
             }
+            result = await toolbox.execute(call.name, call.arguments)
+            if (!isTaskState) completedActionCount += 1
           } catch (err) {
             const message = `Error: ${err instanceof Error ? err.message : 'Tool execution failed'}. Inspect this result and try a different approach.`
             result = message
@@ -256,13 +277,13 @@ export class AgentRuntime {
           }
         }
         if (filePath) modifiedFiles?.add(filePath)
-        if (call.name !== TASK_STATE_TOOL_NAME) {
-          if (error) onToolEvent?.({ type: 'tool-error', toolCallId: call.id || randomUUID(), error })
-          else onToolEvent?.({ type: 'tool-result', toolCallId: call.id || randomUUID(), result, filePath })
+        if (!isTaskState) {
+          if (error) onToolEvent?.({ type: 'tool-error', toolCallId: callId, error })
+          else onToolEvent?.({ type: 'tool-result', toolCallId: callId, result, filePath })
         }
-        messages.push({ role: 'tool', name: call.name, toolCallId: call.id || randomUUID(), content: result, filePath })
+        messages.push({ role: 'tool', name: call.name, toolCallId: callId, content: result, filePath })
       }
-      onState?.(messages)
+      onState?.(persistedMessages(messages))
     }
 
     const completion = await this.completeWithRetries({
@@ -279,7 +300,7 @@ export class AgentRuntime {
     }, onToolEvent)
     const finalText = stripToolCallMarkup(completion.text)
     messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
-    onState?.(messages)
+    onState?.(persistedMessages(messages))
     await this.emitStreamedText(finalText, onDelta)
     return finalText
   }
@@ -304,38 +325,8 @@ export class AgentRuntime {
     ]
   }
 
-  private async requestTaskState(request: AgentRunRequest, messages: readonly LocalChatMessage[], definition: LocalToolDefinition, nextToolName: string, onToolEvent?: (event: AgentToolEvent) => void): Promise<LocalToolCall> {
-    const completion = await this.completeWithRetries({
-      ...modelSettings(request, false),
-      messages: [
-        ...messages,
-        {
-          role: 'user',
-          content: `Call cur_task_state now before the ${nextToolName} tool. Put a natural roughly 60–65-word user-facing update in its message argument explaining the distinct current substep and what comes next. Prefer neutral state language and do not begin with first-person wording unless it is genuinely necessary. Do not call any other tool.`
-        }
-      ],
-      tools: [definition],
-      toolChoice: 'auto',
-      enableThinking: false,
-      maxTokens: 180,
-      signal: request.signal
-    }, onToolEvent)
-    const calls = completion.toolCalls.length
-      ? completion.toolCalls
-      : parseHealedToolCalls(completion.text, new Set([TASK_STATE_TOOL_NAME]))
-    const call = calls.find((candidate) => candidate.name === TASK_STATE_TOOL_NAME)
-    if (call && typeof call.arguments.message === 'string' && call.arguments.message.trim()) return call
-    return {
-      id: randomUUID(),
-      name: TASK_STATE_TOOL_NAME,
-      arguments: {
-        message: stripToolCallMarkup(completion.text).trim() || `The next ${nextToolName} step is ready to begin. It will gather the concrete information needed for this task, support a careful review of the result, and establish what should happen afterward. This keeps the work visible, makes the current direction clear, and helps each action follow naturally from the evidence already available.`
-      }
-    }
-  }
-
-  private async resolveUiMessage(request: AgentRunRequest, messages: readonly LocalChatMessage[], call: LocalToolCall, progress: string, onToolEvent?: (event: AgentToolEvent) => void): Promise<ToolUiMessage | undefined> {
-    if (call.name === 'web_search' || call.name === 'web_fetch') return undefined
+  private async resolveUiMessage(request: AgentRunRequest, messages: readonly LocalChatMessage[], call: LocalToolCall, onToolEvent?: (event: AgentToolEvent) => void): Promise<ToolUiMessage | undefined> {
+    if (call.name === TASK_STATE_TOOL_NAME || call.name === 'web_search' || call.name === 'web_fetch') return undefined
     const supplied = call.arguments.ui_message && typeof call.arguments.ui_message === 'object' && !Array.isArray(call.arguments.ui_message)
       ? call.arguments.ui_message as Partial<ToolUiMessage>
       : undefined
@@ -348,7 +339,7 @@ export class AgentRuntime {
         ...messages,
         {
           role: 'user',
-          content: `Return only compact JSON for the ${call.name} tool call described by this progress update: ${progress}. Use exactly this shape: {"uim_prt":"present-tense first-person label","uim_pat":"past-tense completed label"}. Keep each value under six words. Do not add explanation or a tool call.`
+          content: `Return only compact JSON describing the current ${call.name} tool call. Use exactly this shape: {"uim_prt":"present-tense first-person label","uim_pat":"past-tense completed label"}. Keep each value under six words. Do not add explanation or a tool call.`
         }
       ],
       tools: [],
@@ -380,19 +371,6 @@ export class AgentRuntime {
       }
     }
     throw new Error('Provider retry limit was reached')
-  }
-
-  private async emitProgressUpdate(progress: string, onToolEvent: (event: AgentToolEvent) => void): Promise<void> {
-    for (let index = 0; index < progress.length; index += 3) {
-      onToolEvent({ type: 'progress-update', summary: progress.slice(0, index + 3) })
-      await new Promise((resolve) => setTimeout(resolve, 8))
-    }
-  }
-
-  private registerVisibleTaskState(message: string, visibleTaskStates: string[]): boolean {
-    if (!message || visibleTaskStates.some((visible) => taskStatesAreSimilar(visible, message))) return false
-    visibleTaskStates.push(message)
-    return true
   }
 
   private runSubagent(parent: AgentRunRequest, task: AgentTaskRequest, depth: number, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, onToolEvent?: (event: AgentToolEvent) => void, visibleTaskStates: string[] = []): Promise<string> {

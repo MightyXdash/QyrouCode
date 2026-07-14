@@ -18,6 +18,7 @@ declare global {
       minimize: () => void
       toggleMaximize: () => void
       runWindowCommand: (command: WindowCommand) => void
+      onNativeMenuCommand: (callback: (command: string) => void) => () => void
       close: () => void
       openMainWindow: () => Promise<void>
       rendererReady: () => void
