@@ -75,8 +75,6 @@ const api = {
   },
   getLlamaStatus: (): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('get-llama-status'),
   startLocalModel: (modelId: string): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('start-local-model', modelId),
-  startLlamaServer: (modelPath: string, contextTokens: number): Promise<LlamaRuntimeStatus> =>
-    ipcRenderer.invoke('start-llama-server', modelPath, contextTokens),
   stopLlamaServer: (): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('stop-llama-server'),
   /*
    * Sequence 3 adds only the typed completion transport. It does not modify renderer layout, styling,

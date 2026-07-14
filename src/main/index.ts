@@ -22,6 +22,7 @@ import { validateConversationExportRequest } from '../shared/conversationExport'
 import type { AgentExecutionTarget, AgentModelProvenance, AgentModelSource } from '../shared/agent'
 import { getReasoningEffortPrompt, getRemoteModel, resolveRemoteReasoningEffort, shouldRetainRemoteReasoning } from '../shared/remoteModels'
 import { RemoteCompletionClient } from './remoteCompletionClient'
+import { getExternalProjectorSource, isModelProjectorFile, isModelWeightsFile, selectModelProjectorFile, type ModelTreeEntry } from '../shared/modelProjector'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -32,7 +33,6 @@ const MAIN_WINDOW_QUERY_VALUE = 'app'
 const MAIN_APP_WINDOW_WIDTH = 1440
 const MAIN_APP_WINDOW_HEIGHT = 900
 const GGUF_FILE_EXTENSION = '.gguf'
-const MODEL_PROJECTOR_MARKERS = ['mmproj', 'projector']
 const TITLE_MODEL_REPOSITORY = 'SupraLabs/supra-title-50M-pre-gguf'
 const TITLE_MODEL_FILENAME = 'SupraTitle-50M-Q4_K_M.gguf'
 const TITLE_MODEL_CONTEXT_TOKENS = 4096
@@ -48,7 +48,6 @@ let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
 let titleRuntime: LlamaRuntime | null = null
 const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController; source: AgentModelSource }>()
-const projectorlessRepositories = new Set<string>()
 
 function appIconPath(): string {
   const filename = process.platform === 'win32' ? WINDOWS_ICON_FILENAME : DEFAULT_ICON_FILENAME
@@ -83,8 +82,7 @@ function containsGguf(directory: string): boolean {
   try {
     return readdirSync(directory, { withFileTypes: true }).some((entry) => {
       const normalizedName = entry.name.toLowerCase()
-      const isModelFile = normalizedName.endsWith(GGUF_FILE_EXTENSION) &&
-        !MODEL_PROJECTOR_MARKERS.some((marker) => normalizedName.includes(marker))
+      const isModelFile = isModelWeightsFile(normalizedName)
       if (isModelFile) return true
       return entry.isDirectory() && containsGguf(join(directory, entry.name))
     })
@@ -152,7 +150,7 @@ function findProjector(modelPath: string): string | undefined {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const entryPath = join(directory, entry.name)
       if (entry.isDirectory()) visit(entryPath)
-      else if (isProjectorFile(entry.name)) candidates.push(entryPath)
+      else if (isModelProjectorFile(entry.name)) candidates.push(entryPath)
     }
   }
 
@@ -175,37 +173,6 @@ function messageContentEquals(left: AgentRunRequest['messages'][number]['content
       ? candidate.type === 'text' && part.text === candidate.text
       : candidate.type === 'image_url' && part.image_url.url === candidate.image_url.url
   })
-}
-
-interface ModelTreeEntry {
-  path: string
-  size: number
-}
-
-function isWeightsFile(path: string): boolean {
-  const normalizedName = path.toLowerCase()
-  return normalizedName.endsWith(GGUF_FILE_EXTENSION) &&
-    !MODEL_PROJECTOR_MARKERS.some((marker) => normalizedName.includes(marker))
-}
-
-function isProjectorFile(path: string): boolean {
-  const normalizedName = path.toLowerCase()
-  return normalizedName.endsWith(GGUF_FILE_EXTENSION) &&
-    MODEL_PROJECTOR_MARKERS.some((marker) => normalizedName.includes(marker))
-}
-
-function projectorPreferenceRank(path: string): number {
-  const normalizedName = path.toLowerCase()
-  if (normalizedName.includes('f16')) return 1
-  if (normalizedName.includes('bf16')) return 2
-  if (normalizedName.includes('f32')) return 3
-  return 4
-}
-
-function selectProjectorFile(entries: ModelTreeEntry[]): string | undefined {
-  const projectors = entries.filter((entry) => isProjectorFile(entry.path))
-  if (projectors.length === 0) return undefined
-  return projectors.sort((a, b) => projectorPreferenceRank(a.path) - projectorPreferenceRank(b.path))[0].path
 }
 
 function fetchModelTree(repoId: string): Promise<ModelTreeEntry[]> {
@@ -276,36 +243,57 @@ function downloadGgufFile(
   })
 }
 
-async function ensureModelProjector(repoId: string, modelPath: string): Promise<string | undefined> {
-  const cachedProjector = findProjector(modelPath)
-  if (cachedProjector || projectorlessRepositories.has(repoId)) return cachedProjector
+interface ProjectorDownload {
+  repository: string
+  path: string
+  size: number
+}
 
-  const tree = await fetchModelTree(repoId)
-  const projectorPath = selectProjectorFile(tree)
-  if (!projectorPath) {
-    projectorlessRepositories.add(repoId)
-    return undefined
+async function resolveProjectorDownload(repoId: string, tree: readonly ModelTreeEntry[]): Promise<ProjectorDownload | undefined> {
+  const bundledPath = selectModelProjectorFile(tree)
+  if (bundledPath) {
+    return {
+      repository: repoId,
+      path: bundledPath,
+      size: tree.find((entry) => entry.path === bundledPath)?.size ?? 0
+    }
   }
 
-  const filename = projectorPath.split('/').at(-1)
+  const externalSource = getExternalProjectorSource(repoId)
+  if (!externalSource) return undefined
+  const externalTree = await fetchModelTree(externalSource.repository)
+  const entry = externalTree.find((candidate) => candidate.path === externalSource.path)
+  if (!entry || !isModelProjectorFile(entry.path)) throw new Error('The configured vision projector is unavailable')
+  return { ...externalSource, size: entry.size }
+}
+
+async function ensureModelProjector(repoId: string, modelPath: string): Promise<string> {
+  const cachedProjector = findProjector(modelPath)
+  if (cachedProjector) return cachedProjector
+
+  const tree = await fetchModelTree(repoId)
+  const projector = await resolveProjectorDownload(repoId, tree)
+  if (!projector) throw new Error('This model is missing the vision projector required for image input')
+
+  const filename = projector.path.split('/').at(-1)
   if (!filename) throw new Error('The model projector has an invalid filename')
   const targetPath = join(dirname(modelPath), filename)
   if (existsSync(targetPath)) return targetPath
   const partPath = `${targetPath}.part`
-  const encodedPath = projectorPath.split('/').map((segment) => encodeURIComponent(segment)).join('/')
+  const encodedPath = projector.path.split('/').map((segment) => encodeURIComponent(segment)).join('/')
   const cancelFns: Array<() => void> = []
 
   for (let attempt = 1; attempt <= MODEL_DOWNLOAD_ATTEMPTS; attempt += 1) {
     const resumeFrom = existsSync(partPath) ? statSync(partPath).size : 0
     try {
-      await downloadGgufFile(repoId, encodedPath, partPath, resumeFrom, () => {}, cancelFns)
+      await downloadGgufFile(projector.repository, encodedPath, partPath, resumeFrom, () => {}, cancelFns)
       renameSync(partPath, targetPath)
       return targetPath
     } catch (error) {
       if (attempt === MODEL_DOWNLOAD_ATTEMPTS) throw error
     }
   }
-  return undefined
+  throw new Error('The vision projector could not be downloaded')
 }
 
 function loadRenderer(targetWindow: BrowserWindow, query?: Record<string, string>): void {
@@ -430,11 +418,13 @@ function createWindow(): void {
     mkdirSync(snapshotsDir, { recursive: true })
 
     const tree = await fetchModelTree(repoId)
-    const targetWeights = ggufFile ?? tree.find((entry) => isWeightsFile(entry.path))?.path
+    const targetWeights = ggufFile ?? tree.find((entry) => isModelWeightsFile(entry.path))?.path
     if (!targetWeights) throw new Error('No GGUF file found in repo')
-    const projectorPath = selectProjectorFile(tree)
-    const targets = [targetWeights, ...(projectorPath ? [projectorPath] : [])]
-      .map((path) => ({ path, size: tree.find((entry) => entry.path === path)?.size ?? 0 }))
+    const projector = await resolveProjectorDownload(repoId, tree)
+    const targets = [
+      { repository: repoId, path: targetWeights, size: tree.find((entry) => entry.path === targetWeights)?.size ?? 0 },
+      ...(projector ? [projector] : [])
+    ]
 
     let cancelled = false
     const cancelFns: Array<() => void> = []
@@ -458,7 +448,7 @@ function createWindow(): void {
         attempt++
         const resumeFrom = existsSync(partPath) ? statSync(partPath).size : 0
         try {
-          await downloadGgufFile(repoId, encodedPath, partPath, resumeFrom, (bytes) => {
+          await downloadGgufFile(file.repository, encodedPath, partPath, resumeFrom, (bytes) => {
             downloaded += bytes
             event.sender.send('download-progress', { repoId, downloaded, total })
           }, cancelFns)
@@ -651,10 +641,6 @@ app.whenReady().then(() => {
     const titleInput = userMessage.trim().slice(0, TITLE_MODEL_MAX_INPUT_CHARACTERS)
     const title = await titleRuntime.completePrompt(`User: ${titleInput}\nTitle: `)
     return title.replace(/[\r\n]+/g, ' ').replace(/^Title:\s*/i, '').trim()
-  })
-  ipcMain.handle('start-llama-server', (_event, modelPath: string, contextTokens: number) => {
-    const mmprojPath = findProjector(modelPath)
-    return llamaRuntime?.start(modelPath, contextTokens, mmprojPath)
   })
   ipcMain.handle('stop-llama-server', () => llamaRuntime?.stop())
 

@@ -92,6 +92,9 @@ interface ThreadRun {
   source: AgentModelProvenance['source']
   startedAt: number
   state: 'starting' | 'streaming'
+  generationStartedAt?: number
+  outputCharacters: number
+  tokensPerSecond: number
 }
 
 const hasPendingAssistant = (thread: ChatThread | null | undefined): boolean =>
@@ -147,6 +150,39 @@ function durationFromCssVariable(name: string, fallback: number): number {
   if (value.endsWith('ms')) return Number.parseFloat(value) || fallback
   if (value.endsWith('s')) return (Number.parseFloat(value) || fallback / 1_000) * 1_000
   return fallback
+}
+
+const TASK_STATE_CHARACTERS_PER_SECOND = 170
+
+function ProgressMessage({ content, animate }: { content: string; animate: boolean }): JSX.Element {
+  const characters = useMemo(() => Array.from(content), [content])
+  const [revealedCharacters, setRevealedCharacters] = useState(animate ? 0 : characters.length)
+
+  useEffect(() => {
+    if (!animate) {
+      setRevealedCharacters(characters.length)
+      return
+    }
+
+    setRevealedCharacters(0)
+    const startedAt = performance.now()
+    let frameId = 0
+    const reveal = (now: number): void => {
+      const nextCount = Math.min(characters.length, Math.floor((now - startedAt) * TASK_STATE_CHARACTERS_PER_SECOND / 1_000))
+      setRevealedCharacters(nextCount)
+      if (nextCount < characters.length) frameId = requestAnimationFrame(reveal)
+    }
+    frameId = requestAnimationFrame(reveal)
+    return () => cancelAnimationFrame(frameId)
+  }, [animate, characters])
+
+  return (
+    <div className="chat-message progress-message">
+      {characters.slice(0, revealedCharacters).map((character, index) => (
+        <span className="progress-message-character" key={`${index}-${character}`}>{character}</span>
+      ))}
+    </div>
+  )
 }
 
 function UserMessage({ content }: { content: string }): JSX.Element {
@@ -489,6 +525,7 @@ export default function MainApp(): JSX.Element {
     ? threadRuns[activeThread.id]?.state ?? 'starting'
     : 'idle'
   const completionError = activeThread ? threadErrors[activeThread.id] ?? '' : ''
+  const activeTokensPerSecond = activeThread ? threadRuns[activeThread.id]?.tokensPerSecond ?? 0 : 0
 
   const setThreadRun = (threadId: string, run: ThreadRun | undefined): void => {
     const next = { ...threadRunsRef.current }
@@ -818,6 +855,21 @@ export default function MainApp(): JSX.Element {
     if (event.type === 'delta') {
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
+      const run = threadRunsRef.current[requestThreadId]
+      if (run) {
+        const now = Date.now()
+        const generationStartedAt = run.generationStartedAt ?? now
+        const outputCharacters = run.outputCharacters + event.delta.length
+        const elapsedSeconds = (now - generationStartedAt) / 1_000
+        setThreadRun(requestThreadId, {
+          ...run,
+          generationStartedAt,
+          outputCharacters,
+          tokensPerSecond: elapsedSeconds > 0
+            ? outputCharacters / ESTIMATED_CHARACTERS_PER_TOKEN / elapsedSeconds
+            : 0
+        })
+      }
       const messages = current.messages.map((message, index) => index === current.messages.length - 1
         ? { ...message, content: message.content + event.delta }
         : message)
@@ -1485,7 +1537,7 @@ export default function MainApp(): JSX.Element {
     setPendingAttachments([])
     setAttachmentError('')
     setThreadError(threadId, undefined)
-    setThreadRun(threadId, { source: modelProvenance.source, startedAt: now, state: 'starting' })
+    setThreadRun(threadId, { source: modelProvenance.source, startedAt: now, state: 'starting', outputCharacters: 0, tokensPerSecond: 0 })
     setAutoScrollEnabled(true)
     void window.api.saveChatThread(thread)
     if (isNewThread && content) void updateThreadTitle(threadId, content)
@@ -1541,7 +1593,7 @@ export default function MainApp(): JSX.Element {
       const current = threadsRef.current.find((item) => item.id === threadId)
       if (current?.messages.find((message) => message.id === assistantMessage.id)?.status !== 'pending') return
       requestThreadIdsRef.current.set(start.requestId, threadId)
-      setThreadRun(threadId, { requestId: start.requestId, source: modelProvenance.source, startedAt: now, state: 'streaming' })
+      setThreadRun(threadId, { requestId: start.requestId, source: modelProvenance.source, startedAt: now, state: 'streaming', outputCharacters: 0, tokensPerSecond: 0 })
     } catch (error) {
       setThreadError(threadId, error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'The selected model could not start')
       const current = threadsRef.current.find((item) => item.id === threadId)
@@ -1742,11 +1794,7 @@ export default function MainApp(): JSX.Element {
                   if (message.content.startsWith('__reasoning__') || message.content.startsWith('__progress__')) return null
                   if (!message.toolCalls?.length && message.content) {
                     if (parent?.role === 'assistant' && parent.status !== 'pending' && !expandedWorkIds.has(parent.id)) return null
-                    return (
-                      <div className="chat-message progress-message" key={message.id}>
-                        <span>{message.content}</span>
-                      </div>
-                    )
+                    return <ProgressMessage content={message.content} animate={parent?.role === 'assistant' && parent.status === 'pending'} key={message.id} />
                   }
                   const parentIsFinished = parent?.role === 'assistant' && parent.status !== 'pending'
                   if (parentIsFinished && parent && !expandedWorkIds.has(parent.id)) return null
@@ -1979,6 +2027,11 @@ export default function MainApp(): JSX.Element {
           <div className="composer-toolbar" ref={controlsRef}>
             <button className="composer-icon-button" type="button" aria-label="Attach images" title="Attach images" disabled={completionState !== 'idle' || !selectedModel?.vision || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => void chooseChatImages()}><Plus size={14} /></button>
             <div className="composer-controls">
+              {completionState === 'streaming' && activeTokensPerSecond > 0 && (
+                <output className="composer-tps" aria-label={`${activeTokensPerSecond.toFixed(1)} tokens per second`}>
+                  {activeTokensPerSecond.toFixed(1)} TPS
+                </output>
+              )}
               <div className="composer-menu-wrap">
                 {openMenu !== null && (
                   <div className="composer-menu advanced-menu" role="menu">

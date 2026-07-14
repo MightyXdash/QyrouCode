@@ -14,6 +14,7 @@
   --app-composer-padding-inline: 14px;
   --app-composer-assistant-overlap: 14px;
   --app-composer-toolbar-gap: 8px;
+  --app-composer-tps-padding-inline: 5px;
   --app-composer-project-strip-height: 38px;
   --app-composer-project-strip-inset: 18px;
   --app-composer-project-strip-overlap: 5px;
@@ -73,6 +74,7 @@
   --tool-call-preview-padding: 9px 10px;
   --tool-call-preview-font-size: 11px;
   --tool-call-progress-margin-bottom: 12px;
+  --progress-character-fade-duration: 0.45s;
   --tool-bundle-list-gap: 2px;
   --tool-bundle-list-indent: 22px;
   --user-message-expand-gap: 5px;
@@ -549,6 +551,7 @@
 .tool-call-summary:hover .tool-call-icon-check, .tool-call-summary:hover .tool-call-icon-error, .tool-call[open] .tool-call-icon-check, .tool-call[open] .tool-call-icon-error { color: var(--text-base); }
 .tool-call-preview { max-height: var(--tool-call-preview-max-height); margin: var(--tool-call-preview-margin); padding: var(--tool-call-preview-padding); overflow: auto; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-sm); background: var(--background-weak); color: var(--text-base); font: var(--tool-call-preview-font-size)/1.5 var(--font-code); white-space: pre-wrap; }
 .progress-message { margin: 0 0 var(--tool-call-progress-margin-bottom); color: var(--text-base); font-size: 13px; line-height: 1.55; }
+.progress-message-character { animation: progressCharacterFade var(--progress-character-fade-duration) ease-out both; }
 
 .files-changed { margin: 22px 0 0; }
 .files-changed-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; color: var(--text-strong); font-size: 13px; font-weight: 600; }
@@ -683,6 +686,7 @@
 .prompt-composer textarea::-webkit-scrollbar-button { display: none; }
 .composer-toolbar { position: relative; z-index: 1; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: var(--app-composer-toolbar-gap); }
 .composer-controls { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.composer-tps { flex: 0 0 auto; padding: 0 var(--app-composer-tps-padding-inline); color: var(--text-weak); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .composer-icon-button, .composer-select, .send-button { height: var(--app-control-height); border: 0; font: inherit; cursor: pointer; }
 .composer-icon-button { display: grid; place-items: center; width: var(--app-control-height); border-radius: var(--radius-md); background: transparent; color: var(--text-weak); }
 .composer-icon-button:hover, .composer-select:hover { background: var(--surface-hover); color: var(--text-strong); }
@@ -839,12 +843,14 @@
 @keyframes menuEnter { from { opacity: 0; transform: translateY(2px) scale(0.94); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @keyframes dialogEnter { from { opacity: 0; transform: scale(1.05); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @keyframes activitySweep { from { -webkit-mask-position: -75% 0; mask-position: -75% 0; } to { -webkit-mask-position: 175% 0; mask-position: 175% 0; } }
+@keyframes progressCharacterFade { from { opacity: 0; } to { opacity: 1; } }
 
 @media (prefers-reduced-motion: reduce) {
   .app-workspace, .project-threads-shell, .project-thread, .project-show-more, .project-thread-rename-input { transition-duration: 0ms; transition-delay: 0ms; }
   .sidebar-collapsed .app-sidebar { transition-delay: 0ms; }
   .todo-dock-list, .todo-dock-progress-fill, .todo-dock-chevron { transition-duration: 0ms; }
   .todo-dock-spinner { animation: none; }
+  .progress-message-character { animation: none; }
 }
 
 @media (max-width: 760px) {

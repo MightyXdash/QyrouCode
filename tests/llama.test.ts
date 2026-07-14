@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FIRST_LOAD_CONTEXT_TOKENS, backendAppearsInDeviceList, buildLlamaServerArgs, type LlamaLaunchProfile } from '../src/shared/llama.js'
+import { FIRST_LOAD_CONTEXT_TOKENS, backendAppearsInDeviceList, buildLlamaServerArgs, llamaRuntimeProfileMatches, type LlamaLaunchProfile } from '../src/shared/llama.js'
 
 const baseProfile: LlamaLaunchProfile = {
   platform: 'darwin',
@@ -19,10 +19,22 @@ test('keeps the first model-load profile conservative until onboarding settings 
 test('configures accelerated inference with bounded batching and quantized KV cache', () => {
   const args = buildLlamaServerArgs(baseProfile)
   assert.deepEqual(args.slice(0, 2), ['--model', baseProfile.modelPath])
+  assert.equal(args[args.indexOf('--ctx-size') + 1], String(baseProfile.contextTokens))
   assert.ok(args.includes('auto'))
   assert.ok(args.includes('q8_0'))
   assert.ok(args.includes('--cont-batching'))
   assert.equal(args[args.indexOf('--threads') + 1], '6')
+})
+
+test('restarts the same model when the selected context window changes', () => {
+  const status = {
+    state: 'ready' as const,
+    modelPath: baseProfile.modelPath,
+    contextTokens: baseProfile.contextTokens
+  }
+
+  assert.equal(llamaRuntimeProfileMatches(status, baseProfile.modelPath, baseProfile.contextTokens), true)
+  assert.equal(llamaRuntimeProfileMatches(status, baseProfile.modelPath, 256000), false)
 })
 
 test('recognizes numbered CUDA and Vulkan devices from llama-server probes', () => {

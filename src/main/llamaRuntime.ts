@@ -8,6 +8,7 @@ import {
   LLAMA_SERVER_PORT,
   backendAppearsInDeviceList,
   buildLlamaServerArgs,
+  llamaRuntimeProfileMatches,
   type LlamaBackend,
   type LlamaPlatform,
   type LlamaRuntimeStatus
@@ -174,7 +175,7 @@ export class LlamaRuntime {
 
   async start(modelPath: string, contextTokens: number, mmprojPath?: string): Promise<LlamaRuntimeStatus> {
     if (this.process && (this.status.state === 'starting' || this.status.state === 'ready')) {
-      if (this.status.modelPath === modelPath && this.status.mmprojPath === mmprojPath) return this.getStatus()
+      if (llamaRuntimeProfileMatches(this.status, modelPath, contextTokens, mmprojPath)) return this.getStatus()
       await this.stop()
     }
     const runtime = findRuntime()
@@ -198,7 +199,7 @@ export class LlamaRuntime {
       port: this.port
     })
 
-    this.status = { state: 'starting', backend, executablePath, modelPath, mmprojPath }
+    this.status = { state: 'starting', backend, executablePath, modelPath, mmprojPath, contextTokens }
     const child = spawn(executablePath, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     this.process = child
     let stderrTail = ''
@@ -233,7 +234,7 @@ export class LlamaRuntime {
 
   async stop(): Promise<LlamaRuntimeStatus> {
     const child = this.process
-    this.status = { ...this.status, state: this.status.executablePath ? 'stopped' : 'unavailable', modelPath: undefined, mmprojPath: undefined }
+    this.status = { ...this.status, state: this.status.executablePath ? 'stopped' : 'unavailable', modelPath: undefined, mmprojPath: undefined, contextTokens: undefined }
     if (!child) return this.getStatus()
     this.process = null
     child.kill()

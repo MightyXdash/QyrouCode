@@ -65,7 +65,6 @@ declare global {
       startAgentCompletion: (target: AgentExecutionTarget, request: AgentRunRequest) => Promise<LocalCompletionStart>
       cancelLocalCompletion: (requestId: string) => Promise<boolean>
       onLocalCompletionEvent: (callback: (event: LocalCompletionEvent) => void) => () => void
-      startLlamaServer: (modelPath: string, contextTokens: number) => Promise<LlamaRuntimeStatus>
       stopLlamaServer: () => Promise<LlamaRuntimeStatus>
     }
   }

@@ -13,6 +13,7 @@ export interface LlamaRuntimeStatus {
   executablePath?: string
   modelPath?: string
   mmprojPath?: string
+  contextTokens?: number
   message?: string
 }
 
@@ -39,6 +40,16 @@ const CONSERVATIVE_MICRO_BATCH_SIZE = 256
 
 export const backendAppearsInDeviceList = (backend: LlamaBackend, devices: string): boolean =>
   new RegExp(`\\b${backend}(?:\\d+)?\\s*:`, 'i').test(devices)
+
+export const llamaRuntimeProfileMatches = (
+  status: LlamaRuntimeStatus,
+  modelPath: string,
+  contextTokens: number,
+  mmprojPath?: string
+): boolean =>
+  status.modelPath === modelPath &&
+  status.contextTokens === contextTokens &&
+  status.mmprojPath === mmprojPath
 
 const boundedThreadCount = (logicalCpuCount: number, maximum: number): number =>
   Math.max(MINIMUM_THREAD_COUNT, Math.min(maximum, Math.floor(logicalCpuCount)))
