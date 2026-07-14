@@ -10,10 +10,12 @@ interface MarkdownMessageProps {
   content: string
 }
 
+const remarkMathOptions = { singleDollarTextMath: false }
+
 function MarkdownMessage({ content }: MarkdownMessageProps): JSX.Element {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
+      remarkPlugins={[remarkGfm, [remarkMath, remarkMathOptions]]}
       rehypePlugins={[rehypeKatex]}
       components={{
         a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,

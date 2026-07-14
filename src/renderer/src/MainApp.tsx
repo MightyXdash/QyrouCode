@@ -94,6 +94,9 @@ interface ThreadRun {
   state: 'starting' | 'streaming'
 }
 
+const hasPendingAssistant = (thread: ChatThread | null | undefined): boolean =>
+  [...(thread?.messages ?? [])].reverse().find((message) => message.role === 'assistant')?.status === 'pending'
+
 interface TitlebarMenuItem {
   action?: TitlebarAction
   disabled?: boolean
@@ -480,7 +483,9 @@ export default function MainApp(): JSX.Element {
     return [...localModels, ...remoteModels]
   }, [connections, downloadedModels])
   const selectedModel = composerModels.find((model) => model.id === selectedModelId)
-  const completionState = activeThread ? threadRuns[activeThread.id]?.state ?? 'idle' : 'idle'
+  const completionState = activeThread && hasPendingAssistant(activeThread)
+    ? threadRuns[activeThread.id]?.state ?? 'starting'
+    : 'idle'
   const completionError = activeThread ? threadErrors[activeThread.id] ?? '' : ''
 
   const setThreadRun = (threadId: string, run: ThreadRun | undefined): void => {
@@ -552,6 +557,20 @@ export default function MainApp(): JSX.Element {
     if (run.requestId) void window.api.cancelLocalCompletion(run.requestId)
     else if (run.source === 'local') void window.api.stopLlamaServer()
   }
+
+  useEffect(() => {
+    const staleThreadIds = Object.keys(threadRunsRef.current).filter((threadId) =>
+      !hasPendingAssistant(threadsRef.current.find((thread) => thread.id === threadId))
+    )
+    for (const threadId of staleThreadIds) {
+      const run = threadRunsRef.current[threadId]
+      if (run?.requestId) {
+        clearCompletionSettleTimer(run.requestId)
+        requestThreadIdsRef.current.delete(run.requestId)
+      }
+      setThreadRun(threadId, undefined)
+    }
+  }, [threadRuns, threads])
 
   const setThreadError = (threadId: string, error: string | undefined): void => {
     setThreadErrors((current) => {
@@ -1515,6 +1534,8 @@ export default function MainApp(): JSX.Element {
         return
       }
       if (settledCompletionRequestIdsRef.current.delete(start.requestId)) return
+      const current = threadsRef.current.find((item) => item.id === threadId)
+      if (current?.messages.find((message) => message.id === assistantMessage.id)?.status !== 'pending') return
       requestThreadIdsRef.current.set(start.requestId, threadId)
       setThreadRun(threadId, { requestId: start.requestId, source: modelProvenance.source, startedAt: now, state: 'streaming' })
     } catch (error) {
@@ -1788,7 +1809,7 @@ export default function MainApp(): JSX.Element {
                   const displayedFileChanges = message.fileChanges ?? message.filesChanged?.map((path) => ({ path, ...legacyFileChangeCounts(path, turnToolCalls) })) ?? []
                   const totalAdditions = displayedFileChanges.reduce((total, file) => total + file.additions, 0)
                   const totalDeletions = displayedFileChanges.reduce((total, file) => total + file.deletions, 0)
-                  const showDuration = message.status !== 'pending' && message.durationMs !== undefined
+                  const showDuration = message.status !== 'pending' && message.durationMs !== undefined && turnToolCalls.length > 0
                   const runningTool = [...activeThread.messages.slice(0, messageIndex)].reverse().find((candidate) =>
                     candidate.role === 'tool' && candidate.parentAssistantId === message.id && candidate.toolCalls?.some((toolCall) => toolCall.result === undefined && !toolCall.error)
                   )
