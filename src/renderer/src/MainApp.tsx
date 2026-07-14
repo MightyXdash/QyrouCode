@@ -406,6 +406,7 @@ export default function MainApp(): JSX.Element {
   const [threads, setThreads] = useState<ChatThread[]>([])
   const [activeThread, setActiveThread] = useState<ChatThread | null>(null)
   const [selectedProjectPath, setSelectedProjectPath] = useState('')
+  const [composerProjectMenuOpen, setComposerProjectMenuOpen] = useState(false)
   const [threadRuns, setThreadRuns] = useState<Record<string, ThreadRun>>({})
   const [threadErrors, setThreadErrors] = useState<Record<string, string>>({})
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true)
@@ -421,6 +422,7 @@ export default function MainApp(): JSX.Element {
   const previousFocusRef = useRef<HTMLElement | null>(null)
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null)
   const promptComposerRef = useRef<HTMLFormElement>(null)
+  const composerProjectMenuRef = useRef<HTMLDivElement>(null)
   const projectMenuRef = useRef<HTMLDivElement>(null)
   const projectActionMenuRef = useRef<HTMLDivElement>(null)
   const projectNameRef = useRef<HTMLInputElement>(null)
@@ -768,6 +770,7 @@ export default function MainApp(): JSX.Element {
       }
       if (!titlebarMenuRef.current?.contains(event.target as Node)) setOpenTitlebarMenu(null)
       if (!projectMenuRef.current?.contains(event.target as Node)) setProjectMenuOpen(false)
+      if (!composerProjectMenuRef.current?.contains(event.target as Node)) setComposerProjectMenuOpen(false)
       if (!projectActionMenuRef.current?.contains(event.target as Node)) setProjectActionMenu(null)
       if (contextMenu && !contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
     }
@@ -777,6 +780,7 @@ export default function MainApp(): JSX.Element {
         setDeleteConfirmThread(null)
         setProjectActionMenu(null)
         setDeleteConfirmProject(null)
+        setComposerProjectMenuOpen(false)
       }
     }
     window.addEventListener('mousedown', closeMenus)
@@ -2071,14 +2075,43 @@ export default function MainApp(): JSX.Element {
           </div>
           {!activeThread && (
             <div className="composer-project-strip">
-              <label className="composer-project-selector">
-                <FolderOpen size={14} aria-hidden="true" />
-                <select aria-label="Project" value={selectedProjectPath} onChange={(event) => setSelectedProjectPath(event.target.value)}>
-                  {projects.length === 0 && <option value="">No project</option>}
-                  {projects.map((project) => <option key={project.path} value={project.path}>{project.name}</option>)}
-                </select>
-                <ChevronDown size={12} aria-hidden="true" />
-              </label>
+              <div className="composer-project-selector" ref={composerProjectMenuRef}>
+                <button
+                  className="composer-project-trigger"
+                  type="button"
+                  aria-label="Project"
+                  aria-haspopup="listbox"
+                  aria-expanded={composerProjectMenuOpen}
+                  disabled={projects.length === 0}
+                  onClick={() => setComposerProjectMenuOpen((current) => !current)}
+                >
+                  <FolderOpen size={14} aria-hidden="true" />
+                  <span>{projects.find((project) => project.path === selectedProjectPath)?.name ?? 'No project'}</span>
+                  <ChevronDown className={composerProjectMenuOpen ? 'expanded' : undefined} size={12} aria-hidden="true" />
+                </button>
+                {composerProjectMenuOpen && (
+                  <div className="composer-project-menu" role="listbox" aria-label="Projects">
+                    {projects.map((project) => (
+                      <button
+                        className={project.path === selectedProjectPath ? 'composer-project-option selected' : 'composer-project-option'}
+                        key={project.path}
+                        type="button"
+                        role="option"
+                        aria-selected={project.path === selectedProjectPath}
+                        title={project.path}
+                        onClick={() => {
+                          setSelectedProjectPath(project.path)
+                          setComposerProjectMenuOpen(false)
+                        }}
+                      >
+                        <Folder size={14} aria-hidden="true" />
+                        <span>{project.name}</span>
+                        {project.path === selectedProjectPath && <Check size={13} aria-hidden="true" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </form>

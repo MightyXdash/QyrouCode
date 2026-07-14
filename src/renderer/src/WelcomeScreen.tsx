@@ -596,7 +596,7 @@ export default function WelcomeScreen(): JSX.Element {
       {displayPage === 1 && (
         <div className="page-inner roles-inner">
           <div className="roles-header">
-            <h2 className={`roles-title${phase === 'enter' ? ' enter-fade' : ''}${phase === 'exit' ? ' exit-left' : ''}`}
+            <h2 className={`roles-title${phase === 'enter' ? ' enter-fade' : phase === 'idle' ? ' motion-settled' : ''}${phase === 'exit' ? ' exit-left' : ''}`}
                 style={phase === 'enter' ? animationDelay(0) : phase === 'exit' ? animationDelay(0) : undefined}>
               Before we continue, let&apos;s see what you will be doing with SupraCode
             </h2>
@@ -605,7 +605,7 @@ export default function WelcomeScreen(): JSX.Element {
             {ROLES.map((role, i) => (
               <div
                 key={role}
-                className={`role-card${selectedRoles.includes(role) ? ' selected' : ''}${phase === 'enter' ? ' enter-right' : ''}${phase === 'exit' ? ' exit-left' : ''}`}
+                className={`role-card${selectedRoles.includes(role) ? ' selected' : ''}${phase === 'enter' ? ' enter-right' : phase === 'idle' ? ' motion-settled' : ''}${phase === 'exit' ? ' exit-left' : ''}`}
                 style={phase === 'enter' ? animationDelay(ENTER_CARD_DELAY_MS + i * ENTER_CARD_STAGGER_MS) : phase === 'exit' ? animationDelay(i * EXIT_STAGGER_MS) : undefined}
                 onClick={() => toggleRole(role)}
               >
@@ -630,7 +630,7 @@ export default function WelcomeScreen(): JSX.Element {
       {displayPage === 2 && (
         <div className="page-inner models-inner">
           <div className="models-header">
-            <h2 className={`models-title${phase === 'enter' ? ' enter-fade' : ''}`}
+            <h2 className="models-title enter-fade"
                 style={phase === 'enter' ? animationDelay(0) : undefined}>
               Select Models to Download
             </h2>
@@ -670,7 +670,7 @@ export default function WelcomeScreen(): JSX.Element {
         <div className={`page-inner ready-inner${phase === 'exit' ? ' ready-exit' : ''}`}>
           <div className="ready-header">
             <h2
-              className={`ready-title${phase === 'enter' ? ' ready-title-scale-in' : ''}`}
+              className={`ready-title${phase === 'enter' ? ' ready-title-scale-in' : phase === 'idle' ? ' motion-settled' : ''}`}
               style={phase === 'enter' ? transitionStyle(0, READY_TITLE_SCALE_MS) : undefined}
             >
               {READY_TITLE_TEXT}
@@ -710,7 +710,7 @@ export default function WelcomeScreen(): JSX.Element {
         </div>
       )}
       {displayPage === SETUP_INTRO_PAGE && (
-        <div className={`page-inner setup-intro${phase === 'enter' ? ' setup-intro-enter' : ''}${phase === 'exit' ? ' setup-intro-exit' : ''}`}>
+        <div className={`page-inner setup-intro${phase === 'enter' ? ' setup-intro-enter' : phase === 'idle' ? ' motion-settled' : ''}${phase === 'exit' ? ' setup-intro-exit' : ''}`}>
           <div className="setup-intro-content">
             <p className="setup-eyebrow">Personalise SupraCode</p>
             <h2>We&apos;re almost done</h2>
@@ -790,7 +790,7 @@ function CompletionScene({ phase }: { phase: Phase }): JSX.Element {
   }, [])
 
   return (
-    <div className={`page-inner completion-inner${phase === 'enter' ? ' completion-enter' : ''}`}>
+    <div className={`page-inner completion-inner${phase !== 'exit' ? ' completion-enter' : ''}`}>
       <div className="completion-layout">
         <div className="completion-copy">
           <p className="completion-index">08 / 08 <span>Configuration</span></p>
@@ -892,17 +892,17 @@ function PreferenceQuestion({
   const exitClass = isCompletionHandoff ? '' : direction === 'forward' ? ' exit-left' : ' exit-right'
   const enterClass = direction === 'forward' ? ' preference-enter-right' : ' preference-enter-left'
   const headerClass = phase === 'exit'
-    ? exitClass
+    ? exitClass || ' motion-settled'
     : phase === 'enter'
       ? ' preference-header-enter'
-      : ''
+      : ' motion-settled'
   const footerDelay = QUESTION_CARD_DELAY_MS +
     Math.max(question.choices.length - 1, 0) * QUESTION_CARD_DELAY_MS
   const footerClass = phase === 'exit'
-    ? exitClass
+    ? exitClass || ' motion-settled'
     : phase === 'enter'
       ? enterClass
-      : ''
+      : ' motion-settled'
 
   return (
     <div className={`page-inner preference-inner${isCompletionHandoff ? ' completion-handoff-exit' : ''}`}>
@@ -921,10 +921,10 @@ function PreferenceQuestion({
         {question.choices.map((choice, index) => {
           const selected = selectedValue === choice.value
           const choiceClass = phase === 'exit'
-            ? exitClass
+            ? exitClass || ' motion-settled'
             : phase === 'enter'
               ? enterClass
-              : ''
+              : ' motion-settled'
           const choiceDelay = phase === 'exit'
             ? index * QUESTION_EXIT_STAGGER_MS
             : QUESTION_CARD_DELAY_MS + index * QUESTION_CARD_DELAY_MS
@@ -956,7 +956,7 @@ function PreferenceQuestion({
       </div>
       {isCustomResponseStyle && (
         <div
-          className={`custom-response-field${phase === 'exit' ? exitClass : phase === 'enter' ? enterClass : ''}`}
+          className={`custom-response-field${phase === 'exit' ? exitClass || ' motion-settled' : phase === 'enter' ? enterClass : ' motion-settled'}`}
           style={phase === 'idle' ? undefined : animationDelay(footerDelay)}
         >
           <label htmlFor="custom-response-instruction">{CUSTOM_RESPONSE_INSTRUCTION_LABEL}</label>
@@ -998,7 +998,7 @@ function ModelCard({ model, selected, cached, downloading, progress, onToggle, p
 }): JSX.Element {
   const ratingKeys = ['coding', 'reasoning', 'writing', 'agentic', 'tool_use'] as const
   const topRatings = ratingKeys.map(k => ({ key: k, val: model.ratings[k] }))
-  const animClass = phase === 'enter' ? ' enter-right' : phase === 'exit' ? ' exit-left' : ''
+  const animClass = phase === 'enter' ? ' enter-right' : phase === 'exit' ? ' exit-left' : ' motion-settled'
   const animDelay =
     phase === 'enter'
       ? animationDelay(ENTER_CARD_DELAY_MS + index * ENTER_CARD_STAGGER_MS)
@@ -1078,7 +1078,7 @@ function DownloadItem({ name, done, active, failure, progress, phase, index, onR
 
   return (
     <div
-      className={`download-item${done ? ' done' : ''}${active ? ' active' : ''}${failure ? ' failed' : ''}${phase === 'enter' ? ' ready-pop-in' : ''}`}
+      className={`download-item${done ? ' done' : ''}${active ? ' active' : ''}${failure ? ' failed' : ''}${phase === 'enter' ? ' ready-pop-in' : phase === 'idle' ? ' motion-settled' : ''}`}
       style={phase === 'enter' ? transitionStyle(readyCardsDelay() + index * READY_CARD_STAGGER_MS, READY_CARD_POP_MS) : undefined}
     >
       <div className="download-item-icon">
