@@ -96,13 +96,13 @@ test('runs native and healed local-model tools end to end before returning a fin
     assert.equal(provider.requests[0].toolChoice, 'auto')
     assert.ok(provider.requests[0].tools?.some((tool) => tool.name === 'web_search'))
     assert.match(system, /first tool call.*cur_task_state/i)
-    assert.match(system, /1–2 for easy tasks, 1–6 for somewhat hard tasks, 2–8 for hard tasks, 3–12 for actually hard tasks/i)
-    assert.match(system, /more than 5, up to 12, for very hard tasks/i)
+    assert.match(system, /1–2 for easy tasks, 2–6 for somewhat hard tasks, 3–8 for hard tasks, 4–12 for actually hard tasks/i)
+    assert.match(system, /more than 6, up to 12, for very hard tasks/i)
     assert.equal(provider.requests.length, 4)
     assert.deepEqual(provider.requests[0].tools?.find((tool) => tool.name === 'cur_task_state')?.parameters, {
       type: 'object',
       additionalProperties: false,
-      properties: { message: { type: 'string', description: 'One natural 60–65-word paragraph, written mostly in first person, describing the immediate next substep, why it matters, and what follows. Later updates must contain unique information the user should know; total update count scales with task difficulty up to twelve.' } },
+      properties: { message: { type: 'string', description: 'One natural 60–65-word paragraph, written mostly in first person, describing the immediate next substep, why it matters, and what follows. Later updates must contain unique information about the new work phase; the runtime requires another after every four completed agent tools while work continues, up to twelve total.' } },
       required: ['message']
     })
     assert.ok(provider.requests[3].messages.some((message) => message.role === 'tool' && message.name === 'read'))
@@ -205,11 +205,71 @@ test('enforces cur_task_state before tools and suppresses repeated updates', asy
     }, (delta) => { output += delta }, (messages) => persisted.push(messages.map((message) => ({ ...message }))), (event) => events.push(event))
 
     assert.equal(readFileSync(join(projectPath, 'result.txt'), 'utf8'), 'right')
-    assert.match(textContent(provider.requests[1].messages.at(-1)?.content), /before any other tool, call cur_task_state alone/i)
+    assert.match(textContent(provider.requests[1].messages.at(-1)?.content), /cur_task_state is required first/i)
     assert.equal(events.filter((event) => event.type === 'progress-update' && event.summary === REQUIRED_TASK_STATE).length, 1)
     assert.ok(!events.some((event) => event.type === 'tool-call' && event.toolCallId === 'premature_write'))
     assert.ok(persisted.flat().every((message) => message.content !== 'This intermediate prose must stay hidden.'))
     assert.equal(output, 'Created the verified result.')
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('keeps correcting missing cur_task_state without surfacing a protocol failure', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const prematureCalls = Array.from({ length: 5 }, (_, index): LocalCompletion => ({
+      text: '',
+      toolCalls: [{ id: `premature_${index}`, name: 'write', arguments: { ui_message: uiMessage('I’m writing too early', 'Wrote too early'), filePath: 'wrong.txt', content: 'wrong' } }]
+    }))
+    const provider = new ScriptedProvider([
+      ...prematureCalls,
+      taskStateCompletion(),
+      { text: '', toolCalls: [{ id: 'accepted_write', name: 'write', arguments: { ui_message: uiMessage('I’m writing the result', 'Wrote the result'), filePath: 'result.txt', content: 'right' } }] },
+      { text: 'Created the result.', toolCalls: [] }
+    ])
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-task-state-recovery',
+      projectPath,
+      messages: [{ role: 'user', content: 'Create the result.' }]
+    }, () => {})
+
+    assert.equal(existsSync(join(projectPath, 'wrong.txt')), false)
+    assert.equal(readFileSync(join(projectPath, 'result.txt'), 'utf8'), 'right')
+    assert.match(textContent(provider.requests[5].messages.at(-1)?.content), /cur_task_state is required first/i)
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('requires a fresh cur_task_state after four completed agent tools', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const completedWrites = Array.from({ length: 4 }, (_, index): LocalCompletion => ({
+      text: '',
+      toolCalls: [{ id: `write_${index}`, name: 'write', arguments: { ui_message: uiMessage('I’m writing a phase file', 'Wrote a phase file'), filePath: `phase-${index}.txt`, content: `${index}` } }]
+    }))
+    const provider = new ScriptedProvider([
+      taskStateCompletion('initial_state'),
+      ...completedWrites,
+      { text: '', toolCalls: [{ id: 'premature_fifth', name: 'write', arguments: { ui_message: uiMessage('I’m skipping the milestone', 'Skipped the milestone'), filePath: 'wrong.txt', content: 'wrong' } }] },
+      taskStateCompletion('milestone_state', distinctTaskState(20)),
+      { text: '', toolCalls: [{ id: 'accepted_fifth', name: 'write', arguments: { ui_message: uiMessage('I’m finishing the phase', 'Finished the phase'), filePath: 'final.txt', content: 'done' } }] },
+      { text: 'Completed all phases.', toolCalls: [] }
+    ])
+    const events: AgentToolEvent[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-task-state-interval',
+      projectPath,
+      messages: [{ role: 'user', content: 'Complete a long multi-phase task.' }]
+    }, () => {}, undefined, (event) => events.push(event))
+
+    assert.equal(events.filter((event) => event.type === 'progress-update').length, 2)
+    assert.equal(existsSync(join(projectPath, 'wrong.txt')), false)
+    assert.equal(readFileSync(join(projectPath, 'final.txt'), 'utf8'), 'done')
+    assert.match(textContent(provider.requests[6].messages.at(-1)?.content), /cur_task_state is required first/i)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

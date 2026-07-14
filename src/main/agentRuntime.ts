@@ -42,6 +42,7 @@ const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
 const TASK_STATE_MIN_WORDS = 60
 const TASK_STATE_MAX_WORDS = 65
 const TASK_STATE_MAX_UPDATES = 12
+const TASK_STATE_ACTION_INTERVAL = 4
 const TASK_STATE_SIMILARITY_THRESHOLD = 0.42
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
 const FIRST_PERSON_PATTERN = /\b(?:i|i'm|i’m|i'll|i’ll|me|my|mine|we|we're|we’re|we'll|we’ll|us|our|ours)\b/i
@@ -158,6 +159,7 @@ export class AgentRuntime {
     let taskStateProtocolReprompts = 0
     let taskStateReady = false
     let completedActionCount = 0
+    let actionsSinceTaskState = 0
     let enableThinking = request.enableThinking ?? false
     const toolbox = new AgentToolbox({
       projectPath: request.projectPath,
@@ -194,6 +196,12 @@ export class AgentRuntime {
           continue
         }
         if (!finalText) throw new Error('The local model completed a turn without a visible answer or usable tool call')
+        if (!taskStateReady && taskStateProtocolReprompts > 0) {
+          taskStateProtocolReprompts += 1
+          enableThinking = false
+          messages.push({ role: 'user', content: 'Protocol error: cur_task_state is still required before you may continue or provide a final response. Call cur_task_state now as the only tool call. Use one unique 60–65-word, mostly first-person paragraph describing the immediate next substep, why it matters, and what follows.' })
+          continue
+        }
         if (taskStateReady && completedActionCount === 0 && taskStateProtocolReprompts < MAX_INTENT_REPROMPTS) {
           taskStateProtocolReprompts += 1
           messages.push({ role: 'user', content: 'Do not generate an assistant response while agentic work is active. You announced the next substep with cur_task_state but have not performed it. Continue now with exactly one appropriate tool call and its required ui_message.' })
@@ -214,8 +222,8 @@ export class AgentRuntime {
       const selectedCall = healedCalls[0]
       if (!taskStateReady && selectedCall.name !== TASK_STATE_TOOL_NAME) {
         taskStateProtocolReprompts += 1
-        if (taskStateProtocolReprompts > MAX_INTENT_REPROMPTS) throw new Error('The model repeatedly attempted agentic tools before the required cur_task_state update')
-        messages.push({ role: 'user', content: 'Protocol correction: before any other tool, call cur_task_state alone. Its message must be one 60–65-word paragraph written mostly in first person, explaining the immediate next substep, why it matters, and what follows. Do not generate ordinary assistant prose.' })
+        enableThinking = false
+        messages.push({ role: 'user', content: `Protocol error: ${selectedCall.name} was not executed because cur_task_state is required first. Call cur_task_state now as the only tool call. Its message must be one unique 60–65-word paragraph written mostly in first person, explaining the immediate next substep, why it matters, and what follows. Do not generate ordinary assistant prose.` })
         continue
       }
       const selectedCallId = selectedCall.id || randomUUID()
@@ -251,6 +259,7 @@ export class AgentRuntime {
               if (visibleTaskStates.some((visible) => taskStatesAreSimilar(visible, message))) throw new Error('This cur_task_state is substantially similar to an earlier update; continue working or report a genuinely new development')
               visibleTaskStates.push(message)
               taskStateReady = true
+              actionsSinceTaskState = 0
               taskStateProtocolReprompts = 0
               onToolEvent?.({ type: 'progress-update', summary: message })
             } else {
@@ -258,7 +267,11 @@ export class AgentRuntime {
               onToolEvent?.({ type: 'tool-call', toolCallId: callId, name: call.name, arguments: call.arguments, summary: uiMessage })
             }
             result = await toolbox.execute(call.name, call.arguments)
-            if (!isTaskState) completedActionCount += 1
+            if (!isTaskState) {
+              completedActionCount += 1
+              actionsSinceTaskState += 1
+              if (actionsSinceTaskState >= TASK_STATE_ACTION_INTERVAL && visibleTaskStates.length < TASK_STATE_MAX_UPDATES) taskStateReady = false
+            }
           } catch (err) {
             const message = `Error: ${err instanceof Error ? err.message : 'Tool execution failed'}. Inspect this result and try a different approach.`
             result = message
