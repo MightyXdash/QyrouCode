@@ -25,11 +25,13 @@ import './MainApp.css'
 const AUTO_SCROLL_THRESHOLD = 72
 const WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND = 150
 const DEFAULT_ACTIVITY_SWEEP_DURATION_MS = 1_800
+const FINAL_RESPONSE_SETTLE_DELAY_MS = 250
 const PROJECT_THREAD_STAGGER_MS = 45
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 128_000
 const DEFAULT_AGENT_MAX_TOKENS = 8_192
 const ESTIMATED_CHARACTERS_PER_TOKEN = 4
+const USER_MESSAGE_LINE_LIMITS = [20, 40] as const
 
 interface ComposerModel {
   id: string
@@ -142,6 +144,61 @@ function durationFromCssVariable(name: string, fallback: number): number {
   if (value.endsWith('ms')) return Number.parseFloat(value) || fallback
   if (value.endsWith('s')) return (Number.parseFloat(value) || fallback / 1_000) * 1_000
   return fallback
+}
+
+function UserMessage({ content }: { content: string }): JSX.Element {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [expansionLevel, setExpansionLevel] = useState(0)
+  const [hasOverflow, setHasOverflow] = useState(false)
+  const lineLimit = USER_MESSAGE_LINE_LIMITS[expansionLevel]
+
+  useLayoutEffect(() => {
+    const contentElement = contentRef.current
+    if (!contentElement || lineLimit === undefined) {
+      setHasOverflow(false)
+      return
+    }
+
+    const updateOverflow = (): void => setHasOverflow(contentElement.scrollHeight > contentElement.clientHeight + 1)
+    updateOverflow()
+    const resizeObserver = new ResizeObserver(updateOverflow)
+    resizeObserver.observe(contentElement)
+    return () => resizeObserver.disconnect()
+  }, [content, lineLimit])
+
+  const isFullyExpanded = lineLimit === undefined
+  const nextLineLimit = USER_MESSAGE_LINE_LIMITS[expansionLevel + 1]
+
+  return (
+    <div className="chat-message user-message">
+      <button className="copy-user-message" onClick={() => navigator.clipboard.writeText(content)} title="Copy message" aria-label="Copy message">
+        <Copy className="copy-user-message-icon" width={14} height={14} />
+      </button>
+      <div
+        className={isFullyExpanded ? 'user-message-content' : 'user-message-content constrained'}
+        ref={contentRef}
+        style={lineLimit === undefined ? undefined : { '--user-message-visible-lines': lineLimit } as CSSProperties}
+      >
+        <MarkdownMessage content={content} />
+      </div>
+      {(expansionLevel > 0 || hasOverflow) && (
+        <div className="user-message-controls">
+          {expansionLevel > 0 && (
+            <button className="user-message-expand" type="button" onClick={() => setExpansionLevel(0)}>
+              <span>Show less</span>
+              <ChevronDown className="user-message-retract-icon" size={14} />
+            </button>
+          )}
+          {hasOverflow && (
+            <button className="user-message-expand" type="button" onClick={() => setExpansionLevel((level) => level + 1)}>
+              <span>{nextLineLimit === undefined ? 'Show full message' : `Show ${nextLineLimit} lines`}</span>
+              <ChevronDown size={14} />
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function activitySweepDurationMs(): number {
@@ -376,6 +433,7 @@ export default function MainApp(): JSX.Element {
   const viewStateLoadedRef = useRef(false)
   const modelMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const completionSettleTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const webSearchRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const toolCallStartedAtRef = useRef<Map<string, number>>(new Map())
   const toolTenseTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
@@ -433,12 +491,49 @@ export default function MainApp(): JSX.Element {
     setThreadRuns(next)
   }
 
+  const clearCompletionSettleTimer = (requestId: string): void => {
+    const timer = completionSettleTimerRefs.current.get(requestId)
+    if (!timer) return
+    clearTimeout(timer)
+    completionSettleTimerRefs.current.delete(requestId)
+  }
+
+  const settleFinalResponse = (requestId: string, threadId: string): void => {
+    clearCompletionSettleTimer(requestId)
+    const timer = setTimeout(() => {
+      completionSettleTimerRefs.current.delete(requestId)
+      const run = threadRunsRef.current[threadId]
+      if (run?.requestId !== requestId) return
+      const current = threadsRef.current.find((thread) => thread.id === threadId)
+      if (!current) return
+      const completedAt = Date.now()
+      const messages = current.messages.map((message, index) => index === current.messages.length - 1 && message.role === 'assistant' && message.status === 'pending'
+        ? {
+            ...message,
+            status: 'completed' as const,
+            completedAt,
+            durationMs: Math.max(0, completedAt - (message.startedAt ?? run.startedAt))
+          }
+        : message)
+      const completedThread = { ...current, messages, updatedAt: completedAt }
+      replaceThread(completedThread)
+      void window.api.saveChatThread(completedThread)
+      requestThreadIdsRef.current.delete(requestId)
+      settledCompletionRequestIdsRef.current.add(requestId)
+      setThreadRun(threadId, undefined)
+    }, FINAL_RESPONSE_SETTLE_DELAY_MS)
+    completionSettleTimerRefs.current.set(requestId, timer)
+  }
+
   const stopThreadRun = (threadId: string): void => {
     const run = threadRunsRef.current[threadId]
     if (!run) return
     const completedAt = Date.now()
     cancelledThreadIdsRef.current.add(threadId)
-    if (run.requestId) requestThreadIdsRef.current.delete(run.requestId)
+    if (run.requestId) {
+      clearCompletionSettleTimer(run.requestId)
+      requestThreadIdsRef.current.delete(run.requestId)
+    }
     setThreadRun(threadId, undefined)
     const current = threadsRef.current.find((thread) => thread.id === threadId)
     if (current) {
@@ -706,6 +801,7 @@ export default function MainApp(): JSX.Element {
       const updated = { ...current, messages, updatedAt: Date.now() }
       replaceThread(updated)
       saveThreadDebounced(updated)
+      settleFinalResponse(event.requestId, requestThreadId)
       return
     }
     if (event.type === 'tool-call') {
@@ -854,6 +950,7 @@ export default function MainApp(): JSX.Element {
       saveThreadImmediate(updated)
       return
     }
+    clearCompletionSettleTimer(event.requestId)
     if (!requestThreadIdsRef.current.has(event.requestId)) settledCompletionRequestIdsRef.current.add(event.requestId)
     if (event.type === 'error') {
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
@@ -903,6 +1000,7 @@ export default function MainApp(): JSX.Element {
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
     for (const timer of toolTenseTimerRefs.current.values()) clearTimeout(timer)
     for (const timer of saveTimerRefs.current.values()) clearTimeout(timer)
+    for (const timer of completionSettleTimerRefs.current.values()) clearTimeout(timer)
   }, [])
 
   useLayoutEffect(() => {
@@ -1604,12 +1702,7 @@ export default function MainApp(): JSX.Element {
                         </div>
                       )}
                       {message.content && (
-                        <div className="chat-message user-message">
-                          <button className="copy-user-message" onClick={() => navigator.clipboard.writeText(message.content)} title="Copy message">
-                            <Copy className="copy-user-message-icon" width={14} height={14} />
-                          </button>
-                          <MarkdownMessage content={message.content} />
-                        </div>
+                        <UserMessage content={message.content} />
                       )}
                     </div>
                   )

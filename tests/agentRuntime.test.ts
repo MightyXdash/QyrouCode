@@ -13,6 +13,7 @@ const taskStateCompletion = (id = 'task_state', message = REQUIRED_TASK_STATE): 
   text: '',
   toolCalls: [{ id, name: 'cur_task_state', arguments: { message } }]
 })
+const distinctTaskState = (index: number): string => `I ${Array.from({ length: 59 }, (_, word) => `state${index}word${word}`).join(' ')}`
 
 class ScriptedProvider implements AgentCompletionProvider {
   readonly requests: LocalCompletionRequest[] = []
@@ -72,6 +73,7 @@ test('runs native and healed local-model tools end to end before returning a fin
     let output = ''
     const persistedStates: LocalCompletionRequest['messages'][] = []
     const toolEvents: AgentToolEvent[] = []
+    const lifecycle: string[] = []
     await new AgentRuntime(provider).run({
       threadId: 'thread-1',
       projectPath,
@@ -81,7 +83,7 @@ test('runs native and healed local-model tools end to end before returning a fin
       ],
       enableThinking: true,
       temperature: 0.8
-    }, (delta) => { output += delta }, (messages) => { persistedStates.push(messages.map((message) => ({ ...message }))) }, (event) => { toolEvents.push(event) })
+    }, (delta) => { lifecycle.push('delta'); output += delta }, (messages) => { persistedStates.push(messages.map((message) => ({ ...message }))) }, (event) => { lifecycle.push(event.type); toolEvents.push(event) })
 
     assert.equal(readFileSync(join(projectPath, 'src', 'result.ts'), 'utf8'), 'export const result = 1\n')
     assert.equal(output, 'Implemented the requested file and verified its contents.')
@@ -94,12 +96,13 @@ test('runs native and healed local-model tools end to end before returning a fin
     assert.equal(provider.requests[0].toolChoice, 'auto')
     assert.ok(provider.requests[0].tools?.some((tool) => tool.name === 'web_search'))
     assert.match(system, /first tool call.*cur_task_state/i)
-    assert.match(system, /about five cur_task_state updates/i)
+    assert.match(system, /1–2 for easy tasks, 1–6 for somewhat hard tasks, 2–8 for hard tasks, 3–12 for actually hard tasks/i)
+    assert.match(system, /more than 5, up to 12, for very hard tasks/i)
     assert.equal(provider.requests.length, 4)
     assert.deepEqual(provider.requests[0].tools?.find((tool) => tool.name === 'cur_task_state')?.parameters, {
       type: 'object',
       additionalProperties: false,
-      properties: { message: { type: 'string', description: 'One natural 60–65-word paragraph, written mostly in first person, describing the immediate next substep, why it matters, and what follows. Later updates must contain unique information the user should know.' } },
+      properties: { message: { type: 'string', description: 'One natural 60–65-word paragraph, written mostly in first person, describing the immediate next substep, why it matters, and what follows. Later updates must contain unique information the user should know; total update count scales with task difficulty up to twelve.' } },
       required: ['message']
     })
     assert.ok(provider.requests[3].messages.some((message) => message.role === 'tool' && message.name === 'read'))
@@ -111,6 +114,7 @@ test('runs native and healed local-model tools end to end before returning a fin
       type: 'files-changed',
       files: [{ path: 'src/result.ts', additions: 1, deletions: 0 }]
     })
+    assert.ok(lifecycle.indexOf('files-changed') < lifecycle.indexOf('delta'))
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
@@ -206,6 +210,30 @@ test('enforces cur_task_state before tools and suppresses repeated updates', asy
     assert.ok(!events.some((event) => event.type === 'tool-call' && event.toolCallId === 'premature_write'))
     assert.ok(persisted.flat().every((message) => message.content !== 'This intermediate prose must stay hidden.'))
     assert.equal(output, 'Created the verified result.')
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('accepts up to twelve distinct cur_task_state tool calls and rejects a thirteenth', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const provider = new ScriptedProvider([
+      ...Array.from({ length: 13 }, (_, index) => taskStateCompletion(`state_${index}`, distinctTaskState(index))),
+      { text: '', toolCalls: [{ id: 'accepted_write', name: 'write', arguments: { ui_message: uiMessage('I’m writing the result', 'Wrote the result'), filePath: 'result.txt', content: 'done' } }] },
+      { text: 'Completed the difficult task.', toolCalls: [] }
+    ])
+    const events: AgentToolEvent[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-task-state-limit',
+      projectPath,
+      messages: [{ role: 'user', content: 'Complete a very difficult task.' }]
+    }, () => {}, undefined, (event) => events.push(event))
+
+    assert.equal(events.filter((event) => event.type === 'progress-update').length, 12)
+    assert.match(textContent(provider.requests[13].messages.at(-1)?.content), /already has twelve cur_task_state updates/i)
+    assert.equal(readFileSync(join(projectPath, 'result.txt'), 'utf8'), 'done')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

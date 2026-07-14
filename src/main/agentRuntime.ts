@@ -41,7 +41,7 @@ const MAX_PROVIDER_RETRIES = 3
 const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
 const TASK_STATE_MIN_WORDS = 60
 const TASK_STATE_MAX_WORDS = 65
-const TASK_STATE_TARGET_UPDATES = 5
+const TASK_STATE_MAX_UPDATES = 12
 const TASK_STATE_SIMILARITY_THRESHOLD = 0.42
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
 const FIRST_PERSON_PATTERN = /\b(?:i|i'm|i’m|i'll|i’ll|me|my|mine|we|we're|we’re|we'll|we’ll|us|our|ours)\b/i
@@ -134,15 +134,17 @@ export class AgentRuntime {
     const modifiedFiles = new Set<string>()
     const originalFiles = new Map<string, string | null>()
     const visibleTaskStates: string[] = []
+    let finalText: string | undefined
     try {
-      await this.runInternal(request, 0, false, onDelta, onState, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates)
+      finalText = await this.runInternal(request, 0, false, onState, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates)
     } finally {
       const files = summarizeFileChanges(request.projectPath, modifiedFiles, originalFiles)
       if (files.length > 0) onToolEvent?.({ type: 'files-changed', files })
     }
+    await this.emitStreamedText(finalText, onDelta)
   }
 
-  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, visibleTaskStates: string[] = []): Promise<string> {
+  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, visibleTaskStates: string[] = []): Promise<string> {
     request.signal?.throwIfAborted()
     const systemPrompt = buildAgentSystemPrompt({
       projectPath: request.projectPath,
@@ -204,7 +206,6 @@ export class AgentRuntime {
         }
         messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
         onState?.(persistedMessages(messages))
-        await this.emitStreamedText(finalText, onDelta)
         return finalText
       }
 
@@ -246,7 +247,7 @@ export class AgentRuntime {
               if (wordCount < TASK_STATE_MIN_WORDS || wordCount > TASK_STATE_MAX_WORDS) throw new Error(`cur_task_state must contain 60–65 words; received ${wordCount}`)
               if (/\r?\n\s*\r?\n/.test(message)) throw new Error('cur_task_state must be one paragraph')
               if (!FIRST_PERSON_PATTERN.test(message)) throw new Error('cur_task_state must be written mostly in first person')
-              if (visibleTaskStates.length >= TASK_STATE_TARGET_UPDATES) throw new Error('The task already has five cur_task_state updates; continue the work without another')
+              if (visibleTaskStates.length >= TASK_STATE_MAX_UPDATES) throw new Error('The task already has twelve cur_task_state updates; continue the work without another')
               if (visibleTaskStates.some((visible) => taskStatesAreSimilar(visible, message))) throw new Error('This cur_task_state is substantially similar to an earlier update; continue working or report a genuinely new development')
               visibleTaskStates.push(message)
               taskStateReady = true
@@ -301,7 +302,6 @@ export class AgentRuntime {
     const finalText = stripToolCallMarkup(completion.text)
     messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
     onState?.(persistedMessages(messages))
-    await this.emitStreamedText(finalText, onDelta)
     return finalText
   }
 
@@ -380,7 +380,7 @@ export class AgentRuntime {
         { role: 'system', content: `Subagent task: ${task.description}. Return a single concise result to the parent agent. Include exact paths and evidence. Complete the requested work autonomously.` },
         { role: 'user', content: task.prompt }
       ]
-    }, depth, task.subagentType === 'explore', () => undefined, undefined, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates)
+    }, depth, task.subagentType === 'explore', undefined, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates)
   }
 
   private async emitStreamedText(text: string, onDelta: (delta: string) => void): Promise<void> {

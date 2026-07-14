@@ -75,6 +75,10 @@
   --tool-call-progress-margin-bottom: 12px;
   --tool-bundle-list-gap: 2px;
   --tool-bundle-list-indent: 22px;
+  --user-message-expand-gap: 5px;
+  --user-message-expand-margin-top: 6px;
+  --user-message-expand-padding-top: 4px;
+  --user-message-expand-font-size: 12px;
   --composer-stack-width: min(calc(100% - (var(--app-page-padding) * 2) + var(--app-composer-assistant-overlap)), calc(var(--app-content-max-width) + var(--app-composer-assistant-overlap)));
   --todo-dock-width: 92%;
   --todo-dock-join-depth: 12px;
@@ -496,6 +500,11 @@
 .chat-message { color: var(--text-strong); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; user-select: text; }
 .user-turn { display: grid; justify-items: end; margin: 0 0 30px; }
 .user-message { position: relative; width: fit-content; max-width: 82%; margin: 0; padding: 9px 13px; border-radius: var(--radius-xl); background: var(--surface-selected); user-select: text; }
+.user-message-content.constrained { max-height: calc(var(--user-message-visible-lines) * 1lh); overflow: hidden; }
+.user-message-controls { display: flex; gap: var(--user-message-expand-gap); width: 100%; margin-top: var(--user-message-expand-margin-top); padding-top: var(--user-message-expand-padding-top); border-top: var(--border-width-hairline) solid var(--border-base); }
+.user-message-expand { display: flex; flex: 1; align-items: center; justify-content: center; gap: var(--user-message-expand-gap); padding: 0; border: 0; background: transparent; color: var(--text-weak); font: 500 var(--user-message-expand-font-size)/1.5 'DM Sans', sans-serif; cursor: pointer; }
+.user-message-expand:hover { color: var(--text-strong); }
+.user-message-retract-icon { transform: rotate(180deg); }
 
 .copy-user-message { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-weak); opacity: 0; cursor: pointer; transition: opacity 150ms ease, color 150ms ease, background 150ms ease; }
 .user-message:hover .copy-user-message { opacity: 1; }

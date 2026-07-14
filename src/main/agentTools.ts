@@ -70,7 +70,7 @@ const definition = (name: string, description: string, properties: Record<string
 
 const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
   definition(TASK_STATE_TOOL_NAME, 'Share a user-visible task-state update before agentic work begins and at later material milestones. This is control-plane status, not an ordinary assistant response.', {
-    message: { type: 'string', description: 'One natural 60–65-word paragraph, written mostly in first person, describing the immediate next substep, why it matters, and what follows. Later updates must contain unique information the user should know.' }
+    message: { type: 'string', description: 'One natural 60–65-word paragraph, written mostly in first person, describing the immediate next substep, why it matters, and what follows. Later updates must contain unique information the user should know; total update count scales with task difficulty up to twelve.' }
   }, ['message']),
   definition('read', 'Read a UTF-8 text file with line numbers. Use this before editing an existing file.', {
     filePath: { type: 'string', description: 'Workspace-relative or absolute file path' },
