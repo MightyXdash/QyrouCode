@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, Fragment, useState, type JSX } from 'react'
+import { useCallback, useEffect, useMemo, useRef, Fragment, useState, type JSX } from 'react'
 import { Bot, Database, Download, Palette, Plug, SlidersHorizontal } from 'lucide-react'
 import { CONNECTION_PROVIDERS, type ConnectionProviderMetadata, type ConnectionSummary } from '../../../shared/connections'
 import AppearanceSettings from './AppearanceSettings'
@@ -42,8 +42,6 @@ export default function SettingsDialog(props: SettingsDialogProps): JSX.Element 
   const [activeConnectionId, setActiveConnectionId] = useState(props.connections[0]?.id ?? '')
   const [connectionTarget, setConnectionTarget] = useState<ConnectionTarget | null>(null)
   const dialogRef = useRef<HTMLElement>(null)
-  const navigationRef = useRef<HTMLElement>(null)
-  const [activeIndicator, setActiveIndicator] = useState({ top: 0, height: 0 })
   const activeConnection = useMemo(
     () => props.connections.find((connection) => connection.id === activeConnectionId) ?? props.connections[0],
     [activeConnectionId, props.connections]
@@ -53,12 +51,6 @@ export default function SettingsDialog(props: SettingsDialogProps): JSX.Element 
     if (!activeConnectionId && props.connections[0]) setActiveConnectionId(props.connections[0].id)
     if (activeConnectionId && !props.connections.some((connection) => connection.id === activeConnectionId)) setActiveConnectionId(props.connections[0]?.id ?? '')
   }, [activeConnectionId, props.connections])
-
-  useLayoutEffect(() => {
-    const activeButton = navigationRef.current?.querySelector<HTMLButtonElement>(`button[data-settings-section="${section}"]`)
-    if (!activeButton) return
-    setActiveIndicator({ top: activeButton.offsetTop, height: activeButton.offsetHeight })
-  }, [section, props.connections.length])
 
   useEffect(() => {
     const close = (event: KeyboardEvent): void => {
@@ -98,8 +90,7 @@ export default function SettingsDialog(props: SettingsDialogProps): JSX.Element 
     <div className="settings-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose() }}>
       <section className="settings-dialog-shell" ref={dialogRef} role="dialog" aria-modal="true" aria-label="Settings" onKeyDown={keepFocusInside}>
         <div className="settings-dialog-layout">
-          <nav className="settings-navigation" ref={navigationRef} aria-label="Settings sections">
-            <span className="settings-navigation-indicator" style={{ top: activeIndicator.top, height: activeIndicator.height }} aria-hidden="true" />
+          <nav className="settings-navigation" aria-label="Settings sections">
             {navigation.map((item) => {
               const Icon = item.icon
               return (
@@ -129,7 +120,7 @@ export default function SettingsDialog(props: SettingsDialogProps): JSX.Element 
 
           <main className="settings-panel">
             {section === 'appearance' && <AppearanceSettings theme={props.theme} onThemeChange={props.onThemeChange} />}
-            {section === 'general' && <GeneralSettings reasoningEffort={props.reasoningEffort} responseStyle={props.responseStyle} onReasoningEffortChange={props.onReasoningEffortChange} onResponseStyleChange={props.onResponseStyleChange} />}
+            {section === 'general' && <GeneralSettings reasoningEffort={props.reasoningEffort} responseStyle={props.responseStyle} promptRefinementPreferences={props.promptRefinementPreferences} promptRefinementModels={props.promptRefinementModels} onReasoningEffortChange={props.onReasoningEffortChange} onResponseStyleChange={props.onResponseStyleChange} onPromptRefinementPreferencesChange={props.onPromptRefinementPreferencesChange} />}
             {section === 'providers' && <ProvidersSettings connections={props.connections} onConfigure={configureConnection} />}
             {section === 'models' && <ModelsSettings connection={activeConnection} catalog={props.catalog} onManageConnection={manageConnection} onUpdateSelection={props.onUpdateModelSelection} />}
             {section === 'local-models' && <LocalModelsSettings catalog={props.localCatalog} downloadedModelIds={props.downloadedLocalModelIds} downloads={props.localModelDownloads} onDownload={props.onDownloadLocalModel} onCancel={props.onCancelLocalModelDownload} />}

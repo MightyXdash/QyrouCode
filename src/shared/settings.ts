@@ -1,4 +1,6 @@
-export const SETTINGS_VERSION = 2
+import type { PromptRefinementPreferences } from './promptRefinement'
+
+export const SETTINGS_VERSION = 3
 export const MAX_CUSTOM_RESPONSE_STYLE_LENGTH = 600
 
 export const CONTEXT_WINDOW_TOKENS = [32000, 72000, 145000, 256000] as const
@@ -39,6 +41,7 @@ export interface SettingsStoreData {
   chatThreads?: import('./chat').ChatThread[]
   agentSessions?: Record<string, import('./agent').PersistedAgentSession>
   workspaceViewState?: import('./agent').WorkspaceViewState
+  promptRefinementPreferences?: PromptRefinementPreferences
 }
 
 export interface OnboardingState {

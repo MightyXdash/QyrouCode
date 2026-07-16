@@ -6,7 +6,7 @@ import { writeFile } from 'fs/promises'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setResponseStylePreference, setTheme } from './settings'
+import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
@@ -23,6 +23,8 @@ import type { AgentExecutionTarget, AgentModelProvenance, AgentModelSource } fro
 import { getReasoningEffortPrompt, getRemoteModel, resolveRemoteReasoningEffort, shouldRetainRemoteReasoning } from '../shared/remoteModels'
 import { RemoteCompletionClient } from './remoteCompletionClient'
 import { getExternalProjectorSource, isModelProjectorFile, isModelWeightsFile, selectModelProjectorFile, type ModelTreeEntry } from '../shared/modelProjector'
+import { MAX_PROMPT_REFINEMENT_BACKUPS, MAX_PROMPT_REFINEMENT_MODEL_ID_CHARACTERS, type PromptRefinementTarget } from '../shared/promptRefinement'
+import { refinePrompt, type PromptRefinementCandidate } from './promptRefiner'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -523,6 +525,8 @@ app.whenReady().then(() => {
   ipcMain.handle('get-theme', () => getTheme())
   ipcMain.handle('get-response-style-preference', () => getResponseStylePreference())
   ipcMain.handle('set-response-style-preference', (_event, preference: unknown) => setResponseStylePreference(preference))
+  ipcMain.handle('get-prompt-refinement-preferences', () => getPromptRefinementPreferences())
+  ipcMain.handle('set-prompt-refinement-preferences', (_event, preference: unknown) => setPromptRefinementPreferences(preference))
   ipcMain.handle('set-theme', (_event, theme: unknown) => setTheme(theme))
   ipcMain.handle('get-connections', () => getConnections())
   ipcMain.handle('get-connection-security-status', () => getConnectionSecurityStatus())
@@ -545,6 +549,81 @@ app.whenReady().then(() => {
   ipcMain.handle('update-connection-models', (_event, connectionId: unknown, selectedModelIds: unknown) => {
     if (typeof connectionId !== 'string' || !connectionId || !Array.isArray(selectedModelIds)) throw new Error('Invalid model selection')
     return updateConnectionModels(connectionId, selectedModelIds)
+  })
+  ipcMain.handle('refine-prompt', async (_event, prompt: unknown, value: unknown) => {
+    if (!Array.isArray(value) || value.length === 0 || value.length > MAX_PROMPT_REFINEMENT_BACKUPS + 1) {
+      throw new Error('Choose at least one valid prompt refinement model')
+    }
+    const targets = value as PromptRefinementTarget[]
+    if (new Set(targets.map((target) => target?.id)).size !== targets.length) {
+      throw new Error('Prompt refinement models must be unique')
+    }
+    const candidates: PromptRefinementCandidate[] = targets.map((target) => {
+      if (
+        !target ||
+        typeof target !== 'object' ||
+        typeof target.id !== 'string' ||
+        !target.id ||
+        target.id.length > MAX_PROMPT_REFINEMENT_MODEL_ID_CHARACTERS ||
+        typeof target.modelId !== 'string' ||
+        !target.modelId ||
+        target.modelId.length > MAX_PROMPT_REFINEMENT_MODEL_ID_CHARACTERS
+      ) {
+        throw new Error('Invalid prompt refinement model')
+      }
+      if (target.source === 'local') {
+        if (
+          typeof target.repository !== 'string' ||
+          !MODEL_REPOSITORY_PATTERN.test(target.repository) ||
+          typeof target.filename !== 'string' ||
+          target.filename !== basename(target.filename) ||
+          !target.filename.toLowerCase().endsWith(GGUF_FILE_EXTENSION)
+        ) throw new Error('Invalid local prompt refinement model')
+        return {
+          modelId: target.id,
+          modelName: target.repository,
+          complete: async (request) => {
+            if (!llamaRuntime) throw new Error('Local model runtime is unavailable')
+            if ([...activeCompletionRequests.values()].some((activeRequest) => activeRequest.source === 'local')) {
+              throw new Error('a local model is currently handling another request')
+            }
+            const modelPath = resolveDownloadedModel(target.repository, target.filename)
+            const status = await llamaRuntime.start(modelPath, getSelectedContextWindowTokens(), findProjector(modelPath))
+            if (status.state !== 'ready') throw new Error(status.message ?? 'the local model could not start')
+            return llamaRuntime.complete(request)
+          }
+        }
+      }
+      if (target.source !== 'remote' || typeof target.connectionId !== 'string' || !target.connectionId) throw new Error('Invalid provider prompt refinement model')
+      return {
+        modelId: target.id,
+        modelName: target.modelId,
+        complete: async (request) => {
+          const connection = resolveConnection(target.connectionId)
+          if (!connection.selectedModelIds.includes(target.modelId)) throw new Error('Select this model in Settings before using it')
+          const catalogModel = getRemoteModel(target.modelId)
+          if (connection.kind !== 'openai-compatible' && (!catalogModel || !catalogModel.availableOn.includes(connection.kind))) {
+            throw new Error('This prompt refinement model is unavailable from the selected provider')
+          }
+          if (connection.kind === 'openai-compatible' && !connection.modelIds.includes(target.modelId)) {
+            throw new Error('This prompt refinement model is not configured for the selected provider')
+          }
+          const providerModelId = catalogModel
+            ? catalogModel.providerModelIds[connection.kind as keyof typeof catalogModel.providerModelIds]
+            : target.modelId
+          if (!providerModelId) throw new Error('This prompt refinement model does not have a valid provider model ID')
+          return new RemoteCompletionClient({
+            kind: connection.kind,
+            baseUrl: connection.baseUrl,
+            apiKey: connection.apiKey,
+            modelId: providerModelId,
+            retainReasoning: false,
+            reasoning: { enabled: false }
+          }).complete(request)
+        }
+      }
+    })
+    return refinePrompt(prompt, candidates)
   })
   ipcMain.handle('preview-conversation-export', (_event, value: unknown) => {
     const request = validateConversationExportRequest(value)

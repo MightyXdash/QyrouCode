@@ -9,6 +9,7 @@ import type {
 } from '../../../shared/conversationExport'
 import type { RemoteModel } from '../../../shared/remoteModels'
 import type { ResponseStylePreference, ThemePreference } from '../../../shared/settings'
+import type { PromptRefinementModelOption, PromptRefinementPreferences } from '../../../shared/promptRefinement'
 import type { CatalogModel } from '../modelCatalog'
 import type { ReasoningEffort } from '../reasoningProfiles'
 
@@ -48,11 +49,14 @@ export interface SettingsDialogProps {
   theme: ThemePreference
   reasoningEffort: ReasoningEffort
   responseStyle: ResponseStylePreference
+  promptRefinementPreferences: PromptRefinementPreferences
+  promptRefinementModels: readonly PromptRefinementModelOption[]
   exportOptions: SettingsExportOptions
   exportState: SettingsExportState
   onThemeChange: (theme: ThemePreference) => void
   onReasoningEffortChange: (effort: ReasoningEffort) => void
   onResponseStyleChange: (preference: ResponseStylePreference) => Promise<void> | void
+  onPromptRefinementPreferencesChange: (preference: PromptRefinementPreferences) => Promise<void> | void
   onSaveConnection: (request: SettingsConnectionRequest) => Promise<void>
   onTestConnection: (request: SettingsConnectionRequest) => Promise<SettingsConnectionTestResult>
   onDisconnectConnection: (connectionId: string) => Promise<void>

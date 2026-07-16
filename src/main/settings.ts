@@ -15,6 +15,11 @@ import type { Project } from '../shared/projects'
 import type { ChatThread } from '../shared/chat'
 import { DEFAULT_WORKSPACE_VIEW_STATE, VIEW_REASONING_EFFORTS, type AgentModelProvenance, type PersistedAgentMessage, type PersistedAgentSession, type WorkspaceViewState } from '../shared/agent'
 import { FIRST_LOAD_CONTEXT_TOKENS } from '../shared/llama'
+import {
+  DEFAULT_PROMPT_REFINEMENT_PREFERENCES,
+  type PromptRefinementPreferences,
+  validatePromptRefinementPreferences
+} from '../shared/promptRefinement'
 
 const settingsStore = new Store<SettingsStoreData>({
   name: 'settings',
@@ -74,6 +79,15 @@ export const setResponseStylePreference = (value: unknown): ResponseStylePrefere
     })
   }
   return responseStyle
+}
+
+export const getPromptRefinementPreferences = (): PromptRefinementPreferences =>
+  settingsStore.get('promptRefinementPreferences') ?? DEFAULT_PROMPT_REFINEMENT_PREFERENCES
+
+export const setPromptRefinementPreferences = (value: unknown): PromptRefinementPreferences => {
+  const preferences = validatePromptRefinementPreferences(value)
+  settingsStore.set('promptRefinementPreferences', preferences)
+  return preferences
 }
 
 export const getProjects = (): Project[] => settingsStore.get('projects') ?? []

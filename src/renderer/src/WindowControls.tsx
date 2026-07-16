@@ -11,6 +11,7 @@ import type { AgentExecutionTarget, PersistedAgentSession, WorkspaceViewState } 
 import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, ConnectionTestResult } from '../../shared/connections'
 import type { ConnectionSecurityStatus } from '../../main/connectionStore'
 import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../../shared/conversationExport'
+import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinementTarget } from '../../shared/promptRefinement'
 
 declare global {
   interface Window {
@@ -29,6 +30,9 @@ declare global {
       getResponseStylePreference: () => Promise<ResponseStylePreference>
       setResponseStylePreference: (preference: ResponseStylePreference) => Promise<ResponseStylePreference>
       setTheme: (theme: ThemePreference) => Promise<ThemePreference>
+      getPromptRefinementPreferences: () => Promise<PromptRefinementPreferences>
+      setPromptRefinementPreferences: (preference: PromptRefinementPreferences) => Promise<PromptRefinementPreferences>
+      refinePrompt: (prompt: string, targets: PromptRefinementTarget[]) => Promise<PromptRefinementResult>
       getConnections: () => Promise<ConnectionSummary[]>
       getConnectionSecurityStatus: () => Promise<ConnectionSecurityStatus>
       resolveProviderSiteIcon: (baseUrl: string) => Promise<string | undefined>

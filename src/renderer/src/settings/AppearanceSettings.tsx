@@ -1,6 +1,7 @@
 import { type JSX } from 'react'
 import { THEMES, type ThemePreference } from '../../../shared/settings'
 import { SettingsGroup, SettingsRow } from './SettingsControls'
+import SettingsSelect from './SettingsSelect'
 
 interface AppearanceSettingsProps {
   theme: ThemePreference
@@ -16,9 +17,12 @@ export default function AppearanceSettings({ theme, onThemeChange }: AppearanceS
       <div className="settings-tab-body">
         <SettingsGroup title="Theme">
           <SettingsRow title="Color scheme" description="Choose how SupraCode follows your desktop theme.">
-            <select value={theme} onChange={(event) => onThemeChange(event.target.value as ThemePreference)}>
-              {THEMES.map((option) => <option value={option} key={option}>{label(option)}</option>)}
-            </select>
+            <SettingsSelect
+              value={theme}
+              label="Color scheme"
+              options={THEMES.map((option) => ({ value: option, label: label(option) }))}
+              onChange={(value) => onThemeChange(value as ThemePreference)}
+            />
           </SettingsRow>
         </SettingsGroup>
       </div>

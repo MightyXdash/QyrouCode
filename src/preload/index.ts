@@ -10,6 +10,7 @@ import type { AgentExecutionTarget, PersistedAgentSession, WorkspaceViewState } 
 import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, ConnectionTestResult } from '../shared/connections'
 import type { ConnectionSecurityStatus } from '../main/connectionStore'
 import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../shared/conversationExport'
+import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinementTarget } from '../shared/promptRefinement'
 
 const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
@@ -35,6 +36,9 @@ const api = {
   getResponseStylePreference: (): Promise<ResponseStylePreference> => ipcRenderer.invoke('get-response-style-preference'),
   setResponseStylePreference: (preference: ResponseStylePreference): Promise<ResponseStylePreference> => ipcRenderer.invoke('set-response-style-preference', preference),
   setTheme: (theme: ThemePreference): Promise<ThemePreference> => ipcRenderer.invoke('set-theme', theme),
+  getPromptRefinementPreferences: (): Promise<PromptRefinementPreferences> => ipcRenderer.invoke('get-prompt-refinement-preferences'),
+  setPromptRefinementPreferences: (preference: PromptRefinementPreferences): Promise<PromptRefinementPreferences> => ipcRenderer.invoke('set-prompt-refinement-preferences', preference),
+  refinePrompt: (prompt: string, targets: PromptRefinementTarget[]): Promise<PromptRefinementResult> => ipcRenderer.invoke('refine-prompt', prompt, targets),
   getConnections: (): Promise<ConnectionSummary[]> => ipcRenderer.invoke('get-connections'),
   getConnectionSecurityStatus: (): Promise<ConnectionSecurityStatus> => ipcRenderer.invoke('get-connection-security-status'),
   resolveProviderSiteIcon: (baseUrl: string): Promise<string | undefined> => ipcRenderer.invoke('resolve-provider-site-icon', baseUrl),

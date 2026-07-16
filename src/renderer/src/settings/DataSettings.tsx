@@ -1,6 +1,7 @@
 import { Download, LoaderCircle } from 'lucide-react'
 import type { JSX } from 'react'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsControls'
+import SettingsSelect from './SettingsSelect'
 import type { SettingsAttachmentMode, SettingsExportFormat, SettingsExportOptions, SettingsExportScope, SettingsExportState } from './settingsTypes'
 
 interface DataSettingsProps {
@@ -21,24 +22,24 @@ export default function DataSettings({ options, state, onOptionsChange, onExport
       <div className="settings-tab-body">
         <SettingsGroup title="Export">
           <SettingsRow title="Scope" description="Choose which saved conversations to export.">
-            <select value={options.scope} onChange={(event) => update('scope', event.target.value as SettingsExportScope)}>
-              <option value="thread">Current thread</option>
-              <option value="project">Current project</option>
-              <option value="all">All threads</option>
-            </select>
+            <SettingsSelect value={options.scope} label="Export scope" options={[
+              { value: 'thread', label: 'Current thread' },
+              { value: 'project', label: 'Current project' },
+              { value: 'all', label: 'All threads' }
+            ]} onChange={(value) => update('scope', value as SettingsExportScope)} />
           </SettingsRow>
           <SettingsRow title="Format" description="OpenAI-compatible JSONL or a structured JSON bundle.">
-            <select value={options.format} onChange={(event) => update('format', event.target.value as SettingsExportFormat)}>
-              <option value="jsonl">HF / OpenAI JSONL</option>
-              <option value="json">JSON</option>
-            </select>
+            <SettingsSelect value={options.format} label="Export format" options={[
+              { value: 'jsonl', label: 'HF / OpenAI JSONL' },
+              { value: 'json', label: 'JSON' }
+            ]} onChange={(value) => update('format', value as SettingsExportFormat)} />
           </SettingsRow>
           <SettingsRow title="Attachments" description="Choose whether image data is included.">
-            <select value={options.attachments} onChange={(event) => update('attachments', event.target.value as SettingsAttachmentMode)}>
-              <option value="none">Exclude</option>
-              <option value="metadata">Metadata only</option>
-              <option value="embedded">Embed data</option>
-            </select>
+            <SettingsSelect value={options.attachments} label="Export attachments" options={[
+              { value: 'none', label: 'Exclude' },
+              { value: 'metadata', label: 'Metadata only' },
+              { value: 'embedded', label: 'Embed data' }
+            ]} onChange={(value) => update('attachments', value as SettingsAttachmentMode)} />
           </SettingsRow>
         </SettingsGroup>
 

@@ -14,7 +14,7 @@ import {
   type LlamaRuntimeStatus
 } from '../shared/llama'
 import { INITIAL_RUNTIME_ARTIFACTS, getRuntimeArtifact, type RuntimeArchitecture } from '../shared/runtimeManifest'
-import { LocalCompletionClient, type LocalCompletionRequest } from './localCompletionClient'
+import { LocalCompletionClient, type LocalCompletion, type LocalCompletionRequest } from './localCompletionClient'
 import { AgentRuntime, type AgentRunRequest, type AgentStateListener, type AgentToolEvent } from './agentRuntime'
 import { developmentRuntimeDirectory, packagedRuntimeExecutable } from './runtimePaths'
 
@@ -152,6 +152,11 @@ export class LlamaRuntime {
   async streamCompletion(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<void> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
     await new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).stream(request, onDelta)
+  }
+
+  async complete(request: LocalCompletionRequest): Promise<LocalCompletion> {
+    if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
+    return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).complete(request)
   }
 
   async runAgent(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void): Promise<void> {

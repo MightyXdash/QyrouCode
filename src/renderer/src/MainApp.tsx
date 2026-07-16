@@ -1,6 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { MODEL_LIST } from './modelCatalog'
 import { DEFAULT_RESPONSE_STYLE, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
+import {
+  DEFAULT_PROMPT_REFINEMENT_PREFERENCES,
+  orderPromptRefinementModels,
+  type PromptRefinementModelOption,
+  type PromptRefinementPreferences,
+  type PromptRefinementTarget
+} from '../../shared/promptRefinement'
 import { WINDOW_COMMANDS } from '../../shared/windowCommands'
 import type { Project } from '../../shared/projects'
 import { MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatMessage, type ChatThread, type TodoDisplay, type ToolCallDisplay } from '../../shared/chat'
@@ -8,7 +15,7 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, ListTodo, Eye, Braces, PenLine, RefreshCw, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, PencilSparkles, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
@@ -32,6 +39,8 @@ const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 128_000
 const DEFAULT_AGENT_MAX_TOKENS = 8_192
 const ESTIMATED_CHARACTERS_PER_TOKEN = 4
 const USER_MESSAGE_LINE_LIMITS = [20, 40] as const
+const PROMPT_REFINEMENT_SHORTCUT = 'Ctrl/Cmd+Shift+Enter'
+const TODO_VISIBLE_ITEM_COUNT = 3
 
 interface ComposerModel {
   id: string
@@ -271,10 +280,6 @@ function webSearchDetail(toolCall: ToolCallDisplay): string | undefined {
   return typeof toolCall.arguments.query === 'string' ? toolCall.arguments.query.trim() || undefined : undefined
 }
 
-function activeTodo(todos: readonly TodoDisplay[]): TodoDisplay | undefined {
-  return todos.find((todo) => todo.status === 'in_progress') ?? todos.find((todo) => todo.status === 'pending') ?? todos.at(-1)
-}
-
 function estimateTextTokens(value: string): number {
   return Math.ceil(value.length / ESTIMATED_CHARACTERS_PER_TOKEN)
 }
@@ -417,6 +422,7 @@ function normalizeRestoredThread(thread: ChatThread): ChatThread {
 export default function MainApp(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
+  const [promptEditorRevision, setPromptEditorRevision] = useState(0)
   const [selectedModelId, setSelectedModelId] = useState('')
   const [downloadedModelIds, setDownloadedModelIds] = useState<Set<string> | null>(null)
   const [localModelDownloads, setLocalModelDownloads] = useState<Record<string, LocalModelDownloadState>>({})
@@ -426,6 +432,9 @@ export default function MainApp(): JSX.Element {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [theme, setTheme] = useState<ThemePreference>('system')
   const [responseStylePreference, setResponseStylePreference] = useState<ResponseStylePreference>({ style: DEFAULT_RESPONSE_STYLE, customInstruction: '' })
+  const [promptRefinementPreferences, setPromptRefinementPreferences] = useState<PromptRefinementPreferences>(DEFAULT_PROMPT_REFINEMENT_PREFERENCES)
+  const [promptRefinementBusy, setPromptRefinementBusy] = useState(false)
+  const [promptRefinementError, setPromptRefinementError] = useState('')
   const [projects, setProjects] = useState<Project[]>([])
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
@@ -457,6 +466,7 @@ export default function MainApp(): JSX.Element {
   const titlebarMenuRef = useRef<HTMLElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const promptRef = useRef('')
   const promptComposerRef = useRef<HTMLFormElement>(null)
   const composerProjectMenuRef = useRef<HTMLDivElement>(null)
   const projectMenuRef = useRef<HTMLDivElement>(null)
@@ -520,6 +530,38 @@ export default function MainApp(): JSX.Element {
       }))
     return [...localModels, ...remoteModels]
   }, [connections, downloadedModels])
+  const promptRefinementModels = useMemo<PromptRefinementModelOption[]>(() => composerModels.map((model) => ({
+    id: model.id,
+    source: model.source,
+    displayName: model.displayName,
+    providerName: model.providerName
+  })), [composerModels])
+  const promptRefinementTargets = useMemo<PromptRefinementTarget[]>(() => (
+    orderPromptRefinementModels(composerModels, promptRefinementPreferences).flatMap((model) => {
+      if (model.source === 'local' && model.localModel) {
+        return [{
+          id: model.id,
+          source: 'local' as const,
+          modelId: model.modelId,
+          displayName: model.displayName,
+          providerName: model.providerName,
+          repository: model.localModel.hf_repo,
+          filename: model.localModel.gguf_file
+        }]
+      }
+      if (model.source === 'remote' && model.connectionId) {
+        return [{
+          id: model.id,
+          source: 'remote' as const,
+          modelId: model.modelId,
+          displayName: model.displayName,
+          providerName: model.providerName,
+          connectionId: model.connectionId
+        }]
+      }
+      return []
+    })
+  ), [composerModels, promptRefinementPreferences])
   const selectedModel = composerModels.find((model) => model.id === selectedModelId)
   const completionState = activeThread && hasPendingAssistant(activeThread)
     ? threadRuns[activeThread.id]?.state ?? 'starting'
@@ -699,6 +741,7 @@ export default function MainApp(): JSX.Element {
   useEffect(() => {
     void window.api.getTheme().then(setTheme)
     void window.api.getResponseStylePreference().then(setResponseStylePreference)
+    void window.api.getPromptRefinementPreferences().then(setPromptRefinementPreferences)
     void window.api.getConnections().then(setConnections).catch(() => setConnections([]))
     void Promise.all([window.api.getProjects(), window.api.getExpandedProjectPaths(), window.api.getChatThreads(), window.api.getWorkspaceViewState()]).then(async ([storedProjects, storedExpandedPaths, storedThreads, storedViewState]) => {
       const projectPaths = new Set(storedProjects.map((project) => project.path))
@@ -1128,6 +1171,10 @@ export default function MainApp(): JSX.Element {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [reasoningEffort])
 
+  useEffect(() => {
+    promptRef.current = prompt
+  }, [prompt])
+
   useLayoutEffect(() => {
     const textarea = promptTextareaRef.current
     if (!textarea) return
@@ -1470,6 +1517,52 @@ export default function MainApp(): JSX.Element {
     }
   }
 
+  const changePromptRefinementPreferences = async (preferences: PromptRefinementPreferences): Promise<void> => {
+    const previous = promptRefinementPreferences
+    setPromptRefinementPreferences(preferences)
+    try {
+      setPromptRefinementPreferences(await window.api.setPromptRefinementPreferences(preferences))
+    } catch {
+      setPromptRefinementPreferences(previous)
+    }
+  }
+
+  const refineCurrentPrompt = async (): Promise<void> => {
+    const originalPrompt = promptRef.current
+    if (!originalPrompt.trim() || promptRefinementBusy || completionState !== 'idle') return
+    if (promptRefinementTargets.length === 0) {
+      setPromptRefinementError('Enable or download at least one model before refining prompts.')
+      return
+    }
+    setPromptRefinementBusy(true)
+    setPromptRefinementError('')
+    try {
+      const result = await window.api.refinePrompt(originalPrompt, promptRefinementTargets)
+      if (promptRef.current !== originalPrompt) {
+        setPromptRefinementError('Your draft changed while refinement was running, so SupraCode left it untouched.')
+        return
+      }
+      if (result.outcome === 'harm') {
+        promptRef.current = ''
+        setPrompt('')
+        setPromptEditorRevision((revision) => revision + 1)
+        requestAnimationFrame(() => promptTextareaRef.current?.focus())
+        return
+      }
+      if (result.outcome === 'ambiguous' || result.prompt === originalPrompt) return
+      promptRef.current = result.prompt
+      setPrompt(result.prompt)
+      requestAnimationFrame(() => promptTextareaRef.current?.focus())
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
+        : 'SupraCode could not refine this prompt.'
+      setPromptRefinementError(message)
+    } finally {
+      setPromptRefinementBusy(false)
+    }
+  }
+
   const updateExportOptions = (options: SettingsExportOptions): void => {
     const request = exportRequest(options)
     setExportOptions(request)
@@ -1488,6 +1581,7 @@ export default function MainApp(): JSX.Element {
 
   const submitPrompt = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
+    if (promptRefinementBusy) return
     const content = prompt.trim()
     if ((!content && pendingAttachments.length === 0) || completionState !== 'idle' || !selectedModel) return
     if (pendingAttachments.length > 0 && !selectedModel.vision) {
@@ -1956,35 +2050,22 @@ export default function MainApp(): JSX.Element {
           {activeThread && (activeThread.todos?.length ?? 0) > 0 && (() => {
             const todos = activeThread.todos ?? []
             const completed = todos.filter((todo) => todo.status === 'completed').length
-            const preview = activeTodo(todos)?.content ?? ''
             return (
               <section className={todoCollapsed ? 'todo-dock collapsed' : 'todo-dock'} aria-label="Task list">
                 <button className="todo-dock-header" type="button" aria-expanded={!todoCollapsed} onClick={() => setTodoCollapsed((collapsed) => !collapsed)}>
-                  <span className="todo-dock-heading-icon" aria-hidden="true"><ListTodo size={14} /></span>
-                  <span className="todo-dock-progress">
-                    <span className="todo-dock-progress-count">{completed}</span>
-                    <span className="todo-dock-progress-sep">/</span>
-                    <span className="todo-dock-progress-total">{todos.length}</span>
-                  </span>
-                  <span className="todo-dock-preview">{preview}</span>
-                  <ChevronDown size={15} className="todo-dock-chevron" aria-hidden="true" />
-                  <span className="todo-dock-progress-track" aria-hidden="true">
-                    <span className="todo-dock-progress-fill" style={{ width: `${Math.round((completed / todos.length) * 100)}%` }} />
-                  </span>
+                  <span className="todo-dock-label">Tasks</span>
+                  <span className="todo-dock-count">{completed} of {todos.length}</span>
+                  <ChevronDown className="todo-dock-chevron" aria-hidden="true" />
                 </button>
-                <div className="todo-dock-list" aria-hidden={todoCollapsed}>
-                  {todos.map((todo, index) => {
-                    const completedTodo = todo.status === 'completed' || todo.status === 'cancelled'
-                    return <div className={`todo-dock-item ${todo.status}`} key={`${index}-${todo.content}`}>
-                      {todo.status === 'in_progress' ? (
-                        <span className="todo-dock-indicator" aria-label="In progress">
-                          <span className="todo-dock-indicator-track" />
-                          <span className="todo-dock-spinner" />
-                        </span>
-                      ) : completedTodo ? <Check size={15} aria-hidden="true" /> : <Circle size={15} aria-hidden="true" />}
-                      <span>{todo.content}</span>
-                    </div>
-                  })}
+                <div className={todos.length > TODO_VISIBLE_ITEM_COUNT ? 'todo-dock-list-shell scrollable' : 'todo-dock-list-shell'} aria-hidden={todoCollapsed}>
+                  <div className="todo-dock-list">
+                    {todos.map((todo, index) => {
+                      return <div className={`todo-dock-item ${todo.status}`} key={`${index}-${todo.content}`}>
+                        {todo.status === 'completed' ? <Check aria-hidden="true" /> : todo.status === 'cancelled' ? <X aria-hidden="true" /> : <Circle aria-hidden="true" />}
+                        <span>{todo.content}</span>
+                      </div>
+                    })}
+                  </div>
                 </div>
               </section>
             )
@@ -2002,9 +2083,14 @@ export default function MainApp(): JSX.Element {
             </div>
           )}
           <textarea
+            key={promptEditorRevision}
             ref={promptTextareaRef}
             value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
+            onChange={(event) => {
+              promptRef.current = event.target.value
+              setPrompt(event.target.value)
+              setPromptRefinementError('')
+            }}
             onPaste={(event) => {
               const images = Array.from(event.clipboardData.items)
                 .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
@@ -2014,6 +2100,11 @@ export default function MainApp(): JSX.Element {
               void pasteChatImages(images)
             }}
             onKeyDown={(event) => {
+              if (event.key === 'Enter' && event.shiftKey && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                void refineCurrentPrompt()
+                return
+              }
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 promptComposerRef.current?.requestSubmit()
@@ -2024,8 +2115,22 @@ export default function MainApp(): JSX.Element {
             rows={2}
           />
           {attachmentError && <div className="attachment-error" role="alert">{attachmentError}</div>}
+          {promptRefinementError && <div className="prompt-refinement-error" role="alert">{promptRefinementError}</div>}
           <div className="composer-toolbar" ref={controlsRef}>
-            <button className="composer-icon-button" type="button" aria-label="Attach images" title="Attach images" disabled={completionState !== 'idle' || !selectedModel?.vision || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => void chooseChatImages()}><Plus size={14} /></button>
+            <div className="composer-actions">
+              <button className="composer-icon-button" type="button" aria-label="Attach images" title="Attach images" disabled={completionState !== 'idle' || !selectedModel?.vision || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => void chooseChatImages()}><Plus size={14} /></button>
+              <button
+                className={promptRefinementBusy ? 'composer-icon-button prompt-refinement-button busy' : 'composer-icon-button prompt-refinement-button'}
+                type="button"
+                aria-label={promptRefinementBusy ? 'Refining prompt' : 'Refine prompt'}
+                aria-busy={promptRefinementBusy}
+                title={`Refine prompt (${PROMPT_REFINEMENT_SHORTCUT})`}
+                disabled={!prompt.trim() || promptRefinementBusy || completionState !== 'idle' || promptRefinementTargets.length === 0}
+                onClick={() => void refineCurrentPrompt()}
+              >
+                {promptRefinementBusy ? <LoaderCircle size={14} /> : <PencilSparkles size={14} />}
+              </button>
+            </div>
             <div className="composer-controls">
               {completionState === 'streaming' && activeTokensPerSecond > 0 && (
                 <output className="composer-tps" aria-label={`${activeTokensPerSecond.toFixed(1)} tokens per second`}>
@@ -2120,7 +2225,7 @@ export default function MainApp(): JSX.Element {
                 </button>
               </div>
               {completionState === 'idle'
-                ? <button className="send-button" type="submit" disabled={(!prompt.trim() && pendingAttachments.length === 0) || !selectedModel} aria-label="Send prompt"><ArrowUp size={16} /></button>
+                ? <button className="send-button" type="submit" disabled={promptRefinementBusy || (!prompt.trim() && pendingAttachments.length === 0) || !selectedModel} aria-label="Send prompt"><ArrowUp size={16} /></button>
                 : <button className="send-button stop-button" type="button" aria-label="Stop response" onClick={() => {
                   if (activeThread) stopThreadRun(activeThread.id)
                 }}><Square size={14} /></button>}
@@ -2181,11 +2286,14 @@ export default function MainApp(): JSX.Element {
           theme={theme}
           reasoningEffort={reasoningEffort}
           responseStyle={responseStylePreference}
+          promptRefinementPreferences={promptRefinementPreferences}
+          promptRefinementModels={promptRefinementModels}
           exportOptions={exportRequest(exportOptions)}
           exportState={exportState}
           onThemeChange={selectTheme}
           onReasoningEffortChange={setReasoningEffort}
           onResponseStyleChange={changeResponseStyle}
+          onPromptRefinementPreferencesChange={changePromptRefinementPreferences}
           onSaveConnection={saveProviderConnection}
           onTestConnection={testProviderConnection}
           onDisconnectConnection={disconnectProvider}

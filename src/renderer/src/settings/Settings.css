@@ -1,3 +1,38 @@
+:root {
+  --settings-dropdown-background: light-dark(#f7f7f7, #242424);
+  --settings-dropdown-border: light-dark(#d8dbe2, #3b3b3b);
+  --settings-dropdown-open-border: light-dark(#b7c1d8, #4a5060);
+  --settings-dropdown-hover: light-dark(#eef3ff, #2d3447);
+  --settings-dropdown-selected: light-dark(#e5edff, #293551);
+  --settings-dropdown-placeholder: light-dark(#858991, #858585);
+  --settings-dropdown-shadow: 0 6px 18px light-dark(rgba(28, 35, 48, 0.07), rgba(0, 0, 0, 0.2));
+  --settings-dropdown-option-min-height: 38px;
+  --settings-dropdown-menu-padding: 5px;
+  --settings-dropdown-menu-z-index: 140;
+  --settings-dropdown-reveal-duration: 300ms;
+  --settings-dropdown-reveal-easing: cubic-bezier(0.16, 1, 0.3, 1);
+  --settings-dropdown-trigger-padding-start: 10px;
+  --settings-dropdown-trigger-padding-end: 8px;
+  --settings-dropdown-icon-size: 13px;
+  --settings-dropdown-option-gap: 10px;
+  --settings-dropdown-option-padding-block: 6px;
+  --settings-dropdown-option-padding-inline: 8px;
+  --settings-dropdown-option-copy-gap: 2px;
+  --settings-dropdown-option-title-size: 11px;
+  --settings-dropdown-option-detail-size: 9px;
+  --settings-refinement-row-min-height: 64px;
+  --settings-refinement-row-gap: 20px;
+  --settings-refinement-copy-gap: 4px;
+  --settings-refinement-copy-title-size: 12px;
+  --settings-refinement-copy-description-size: 10px;
+  --settings-refinement-copy-line-height: 1.35;
+  --settings-refinement-backups-gap: 10px;
+  --settings-refinement-empty-padding: 10px;
+  --settings-refinement-note-gap: 8px;
+  --settings-refinement-note-icon-size: 13px;
+  --settings-refinement-note-icon-offset: 1px;
+}
+
 .settings-overlay {
   --settings-width: min(760px, calc(100vw - 56px));
   --settings-height: min(560px, calc(100dvh - var(--app-titlebar-height) - 24px));
@@ -9,6 +44,16 @@
   --settings-switch-width: 30px;
   --settings-switch-height: 18px;
   --settings-switch-thumb: 14px;
+  --settings-refinement-select-width: 220px;
+  --settings-refinement-add-width: 116px;
+  --settings-refinement-control-gap: 6px;
+  --settings-refinement-row-padding-block: 14px;
+  --settings-refinement-backup-order-size: 22px;
+  --settings-refinement-remove-size: 28px;
+  --settings-refinement-note-padding-block: 10px;
+  --settings-refinement-note-font-size: 10px;
+  --settings-refinement-note-line-height: 1.45;
+  --settings-refinement-note-background: light-dark(#f4f6fb, #222631);
   position: fixed;
   inset: 0;
   z-index: 95;
@@ -64,17 +109,7 @@
   overflow-y: auto;
   border-right: var(--border-width-hairline) solid var(--border-weak);
   background: var(--background-weak);
-}
-
-.settings-navigation-indicator {
-  position: absolute;
-  right: 10px;
-  left: 10px;
-  z-index: 0;
-  border-radius: var(--radius-md);
-  background: var(--surface-selected);
-  pointer-events: none;
-  transition: top 320ms cubic-bezier(0.16, 1, 0.3, 1), height 180ms ease-out;
+  scrollbar-width: none;
 }
 
 .settings-navigation button {
@@ -95,14 +130,14 @@
   cursor: pointer;
 }
 
-.settings-navigation button:hover,
-.settings-navigation button.active {
+.settings-navigation button:hover {
   background: var(--surface-hover);
   color: var(--text-strong);
 }
 
 .settings-navigation button.active {
-  background: transparent;
+  background: var(--surface-selected);
+  color: var(--text-strong);
 }
 
 .settings-provider-nav {
@@ -153,7 +188,14 @@
   min-width: 0;
   overflow-y: auto;
   background: var(--background-base);
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.settings-navigation::-webkit-scrollbar,
+.settings-panel::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .settings-tab-header {
@@ -391,6 +433,301 @@
   padding: var(--settings-row-padding);
   border-top: var(--border-width-hairline) solid var(--border-weak);
   background: var(--surface-raised);
+}
+
+.settings-select {
+  position: relative;
+  width: var(--settings-refinement-select-width);
+}
+
+.settings-select.compact {
+  width: var(--settings-refinement-add-width);
+}
+
+.settings-panel .settings-select-trigger {
+  display: flex;
+  width: 100%;
+  min-height: var(--settings-control-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--settings-refinement-control-gap);
+  padding: 0 var(--settings-dropdown-trigger-padding-end) 0 var(--settings-dropdown-trigger-padding-start);
+  border: var(--border-width-hairline) solid var(--settings-dropdown-border);
+  border-radius: var(--radius-md);
+  background: var(--settings-dropdown-background);
+  color: var(--text-strong);
+  font-weight: 500;
+  text-align: left;
+}
+
+.settings-panel .settings-select-trigger:hover:not(:disabled),
+.settings-panel .settings-select-trigger.attached {
+  border-color: var(--settings-dropdown-open-border);
+  background: var(--settings-dropdown-background);
+  color: var(--text-strong);
+}
+
+.settings-panel .settings-select-trigger.attached {
+  border-bottom-color: transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.settings-panel .settings-select-trigger:focus-visible {
+  border-color: var(--interactive);
+  outline: 2px solid color-mix(in srgb, var(--interactive) 22%, transparent);
+  outline-offset: 1px;
+}
+
+.settings-select-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-select-trigger > span.placeholder {
+  color: var(--settings-dropdown-placeholder);
+}
+
+.settings-select-trigger > svg {
+  width: var(--settings-dropdown-icon-size);
+  height: var(--settings-dropdown-icon-size);
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+
+.settings-select-menu {
+  position: fixed;
+  z-index: var(--settings-dropdown-menu-z-index);
+  display: grid;
+  box-sizing: border-box;
+  grid-template-rows: 0fr;
+  overflow: hidden;
+  border: var(--border-width-hairline) solid var(--settings-dropdown-open-border);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: var(--settings-dropdown-background);
+  box-shadow: var(--settings-dropdown-shadow);
+  color: var(--text-base);
+  font-family: 'DM Sans', sans-serif;
+  pointer-events: none;
+  transition: grid-template-rows var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing);
+}
+
+.settings-select-menu.expanded {
+  grid-template-rows: 1fr;
+  pointer-events: auto;
+}
+
+.settings-select-menu-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-select-menu-scroll {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  max-height: var(--settings-select-menu-max-height);
+  flex-direction: column;
+  overflow-y: auto;
+  padding: var(--settings-dropdown-menu-padding);
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+.settings-select-menu-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.settings-select-option {
+  display: flex;
+  width: 100%;
+  min-height: var(--settings-dropdown-option-min-height);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--settings-dropdown-option-gap);
+  padding: var(--settings-dropdown-option-padding-block) var(--settings-dropdown-option-padding-inline);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--settings-dropdown-background);
+  color: var(--text-base);
+  font: 400 11px 'DM Sans', sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-select-option.active,
+.settings-select-option:hover:not(:disabled) {
+  background: var(--settings-dropdown-hover);
+  color: var(--text-strong);
+}
+
+.settings-select-option[aria-selected='true'] {
+  background: var(--settings-dropdown-selected);
+  color: var(--text-strong);
+}
+
+.settings-select-option[aria-selected='true'].active {
+  background: var(--settings-dropdown-selected);
+}
+
+.settings-select-option:disabled {
+  color: var(--text-weaker);
+  cursor: default;
+}
+
+.settings-select-option > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--settings-dropdown-option-copy-gap);
+}
+
+.settings-select-option strong {
+  overflow: hidden;
+  font-size: var(--settings-dropdown-option-title-size);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-select-option small {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: var(--settings-dropdown-option-detail-size);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-select-option > svg {
+  width: var(--settings-dropdown-icon-size);
+  height: var(--settings-dropdown-icon-size);
+  flex: 0 0 auto;
+  fill: none;
+  stroke: var(--interactive);
+  stroke-width: 1.8;
+}
+
+.settings-refinement-primary,
+.settings-refinement-preference {
+  display: flex;
+  min-height: var(--settings-refinement-row-min-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--settings-refinement-row-gap);
+  padding: 0 var(--settings-row-padding);
+  border-bottom: var(--border-width-hairline) solid var(--border-weak);
+}
+
+.settings-refinement-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--settings-refinement-copy-gap);
+}
+
+.settings-refinement-copy strong {
+  color: var(--text-strong);
+  font-size: var(--settings-refinement-copy-title-size);
+  font-weight: 500;
+}
+
+.settings-refinement-copy span {
+  color: var(--text-weak);
+  font-size: var(--settings-refinement-copy-description-size);
+  line-height: var(--settings-refinement-copy-line-height);
+}
+
+.settings-refinement-backups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--settings-refinement-backups-gap);
+  padding: var(--settings-refinement-row-padding-block) var(--settings-row-padding);
+}
+
+.settings-refinement-backups-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--settings-refinement-row-gap);
+}
+
+.settings-refinement-empty {
+  padding: var(--settings-refinement-empty-padding);
+  border-radius: var(--radius-md);
+  background: var(--background-weak);
+  color: var(--text-weaker);
+  font-size: var(--settings-refinement-copy-description-size);
+  text-align: center;
+}
+
+.settings-refinement-backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--settings-refinement-control-gap);
+}
+
+.settings-refinement-backup {
+  display: grid;
+  grid-template-columns: var(--settings-refinement-backup-order-size) minmax(0, 1fr) var(--settings-refinement-remove-size);
+  align-items: center;
+  gap: var(--settings-refinement-control-gap);
+}
+
+.settings-refinement-backup .settings-select {
+  width: 100%;
+}
+
+.settings-refinement-backup-order {
+  display: grid;
+  width: var(--settings-refinement-backup-order-size);
+  height: var(--settings-refinement-backup-order-size);
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--background-weak);
+  color: var(--text-weak);
+  font-size: var(--settings-dropdown-option-detail-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-panel .settings-refinement-remove {
+  width: var(--settings-refinement-remove-size);
+  min-height: var(--settings-refinement-remove-size);
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.settings-panel .settings-refinement-remove svg {
+  width: var(--settings-dropdown-icon-size);
+  height: var(--settings-dropdown-icon-size);
+}
+
+.settings-refinement-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--settings-refinement-note-gap);
+  padding: var(--settings-refinement-note-padding-block) var(--settings-row-padding);
+  border-top: var(--border-width-hairline) solid var(--border-weak);
+  background: var(--settings-refinement-note-background);
+  color: var(--text-weak);
+  font-size: var(--settings-refinement-note-font-size);
+  line-height: var(--settings-refinement-note-line-height);
+}
+
+.settings-refinement-note svg {
+  width: var(--settings-refinement-note-icon-size);
+  height: var(--settings-refinement-note-icon-size);
+  flex: 0 0 auto;
+  margin-top: var(--settings-refinement-note-icon-offset);
+  fill: none;
+  stroke: var(--interactive);
 }
 
 .settings-custom-style-row textarea {
@@ -818,5 +1155,11 @@ button.settings-empty-row {
     gap: 10px;
     padding-top: 13px;
     padding-bottom: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-select-menu {
+    transition-duration: 1ms;
   }
 }
