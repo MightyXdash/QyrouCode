@@ -472,6 +472,12 @@
   border-radius: var(--radius-md) var(--radius-md) 0 0;
 }
 
+.settings-panel .settings-select-trigger.attached.opens-upward {
+  border-top-color: transparent;
+  border-bottom-color: var(--settings-dropdown-open-border);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
 .settings-panel .settings-select-trigger:focus-visible {
   border-color: var(--interactive);
   outline: 2px solid color-mix(in srgb, var(--interactive) 22%, transparent);
@@ -518,6 +524,12 @@
 .settings-select-menu.expanded {
   grid-template-rows: 1fr;
   pointer-events: auto;
+}
+
+.settings-select-menu.opens-upward {
+  border-top: var(--border-width-hairline) solid var(--settings-dropdown-open-border);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 .settings-select-menu-clip {

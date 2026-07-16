@@ -22,7 +22,6 @@ interface SettingsSelectProps {
 interface MenuPosition extends CSSProperties {
   '--settings-select-menu-max-height': string
   left: number
-  top: number
   width: number
 }
 
@@ -53,6 +52,7 @@ export default function SettingsSelect({
   const [rendered, setRendered] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
   const [position, setPosition] = useState<MenuPosition | null>(null)
+  const [opensUpward, setOpensUpward] = useState(false)
   const selectedOption = options.find((option) => option.value === value)
 
   const finishClose = (): void => {
@@ -67,13 +67,20 @@ export default function SettingsSelect({
     const trigger = triggerRef.current
     if (!trigger) return
     const rect = trigger.getBoundingClientRect()
-    const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_INSET
-    const maxHeight = Math.min(MENU_MAX_HEIGHT, Math.max(MENU_MIN_HEIGHT, spaceBelow + MENU_BORDER_OVERLAP))
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - VIEWPORT_INSET)
+    const spaceAbove = Math.max(0, rect.top - VIEWPORT_INSET)
+    const shouldOpenUpward = spaceBelow < MENU_MIN_HEIGHT && spaceAbove > spaceBelow
+    const availableSpace = shouldOpenUpward ? spaceAbove : spaceBelow
+    const width = Math.min(rect.width, window.innerWidth - (VIEWPORT_INSET * 2))
+    const left = Math.max(VIEWPORT_INSET, Math.min(rect.left, window.innerWidth - width - VIEWPORT_INSET))
+    const maxHeight = Math.min(MENU_MAX_HEIGHT, availableSpace)
+    setOpensUpward(shouldOpenUpward)
     setPosition({
       '--settings-select-menu-max-height': `${maxHeight}px`,
-      left: Math.min(rect.left, window.innerWidth - rect.width - VIEWPORT_INSET),
-      top: rect.bottom - MENU_BORDER_OVERLAP,
-      width: rect.width,
+      left,
+      top: shouldOpenUpward ? 'auto' : rect.bottom - MENU_BORDER_OVERLAP,
+      bottom: shouldOpenUpward ? window.innerHeight - rect.top - MENU_BORDER_OVERLAP : 'auto',
+      width,
     })
   }
 
@@ -190,9 +197,10 @@ export default function SettingsSelect({
   return (
     <div className={compact ? 'settings-select compact' : 'settings-select'}>
       <button
-        className={rendered ? 'settings-select-trigger attached' : 'settings-select-trigger'}
+        className={`${rendered ? 'settings-select-trigger attached' : 'settings-select-trigger'}${opensUpward ? ' opens-upward' : ''}`}
         ref={triggerRef}
         type="button"
+        role="combobox"
         aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -207,7 +215,7 @@ export default function SettingsSelect({
       </button>
       {rendered && position && createPortal(
         <div
-          className={open ? 'settings-select-menu expanded' : 'settings-select-menu'}
+          className={`${open ? 'settings-select-menu expanded' : 'settings-select-menu'}${opensUpward ? ' opens-upward' : ''}`}
           ref={menuRef}
           aria-hidden={!open}
           style={position}
