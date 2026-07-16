@@ -2025,12 +2025,7 @@ export default function MainApp(): JSX.Element {
               <div ref={conversationEndRef} />
             </div>
           </div>
-        ) : (
-          <div className="empty-state" aria-hidden="true">
-            <h1>What should we build?</h1>
-            <p>Start a new thread with a local model.</p>
-          </div>
-        )}
+        ) : null}
 
         {activeThread && !autoScrollEnabled && (
           <button

@@ -458,6 +458,7 @@
   color: var(--text-strong);
   font-weight: 500;
   text-align: left;
+  transition: border-color var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing), border-radius var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing);
 }
 
 .settings-panel .settings-select-trigger:hover:not(:disabled),
@@ -476,6 +477,16 @@
   border-top-color: transparent;
   border-bottom-color: var(--settings-dropdown-open-border);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.settings-panel .settings-select-trigger.attached.closing {
+  border-bottom-color: var(--settings-dropdown-open-border);
+  border-radius: var(--radius-md);
+}
+
+.settings-panel .settings-select-trigger.attached.closing.opens-upward {
+  border-top-color: var(--settings-dropdown-open-border);
+  border-radius: var(--radius-md);
 }
 
 .settings-panel .settings-select-trigger:focus-visible {
@@ -510,26 +521,40 @@
   box-sizing: border-box;
   grid-template-rows: 0fr;
   overflow: hidden;
-  border: var(--border-width-hairline) solid var(--settings-dropdown-open-border);
-  border-top: 0;
+  border: 0;
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   background: var(--settings-dropdown-background);
-  box-shadow: var(--settings-dropdown-shadow);
+  box-shadow: none;
   color: var(--text-base);
   font-family: 'DM Sans', sans-serif;
   pointer-events: none;
-  transition: grid-template-rows var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing);
+  transition: grid-template-rows var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing), box-shadow var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing);
+}
+
+.settings-select-menu::after {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: var(--border-width-hairline) solid var(--settings-dropdown-open-border);
+  border-top: 0;
+  border-radius: inherit;
+  content: '';
+  pointer-events: none;
 }
 
 .settings-select-menu.expanded {
   grid-template-rows: 1fr;
+  box-shadow: var(--settings-dropdown-shadow);
   pointer-events: auto;
 }
 
 .settings-select-menu.opens-upward {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.settings-select-menu.opens-upward::after {
   border-top: var(--border-width-hairline) solid var(--settings-dropdown-open-border);
   border-bottom: 0;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 .settings-select-menu-clip {

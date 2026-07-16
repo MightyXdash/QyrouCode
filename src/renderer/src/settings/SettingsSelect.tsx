@@ -50,6 +50,7 @@ export default function SettingsSelect({
   const closingRef = useRef(false)
   const [open, setOpen] = useState(false)
   const [rendered, setRendered] = useState(false)
+  const [closing, setClosing] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
   const [position, setPosition] = useState<MenuPosition | null>(null)
   const [opensUpward, setOpensUpward] = useState(false)
@@ -59,6 +60,7 @@ export default function SettingsSelect({
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     closeTimerRef.current = null
     closingRef.current = false
+    setClosing(false)
     setRendered(false)
     setPosition(null)
   }
@@ -89,6 +91,7 @@ export default function SettingsSelect({
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     openFrameRef.current = null
     closingRef.current = true
+    setClosing(true)
     setOpen(false)
     closeTimerRef.current = setTimeout(finishClose, MENU_ANIMATION_FALLBACK_MS)
   }
@@ -101,6 +104,7 @@ export default function SettingsSelect({
     }
     if (openFrameRef.current !== null) cancelAnimationFrame(openFrameRef.current)
     closingRef.current = false
+    setClosing(false)
     placeMenu()
     const selectedIndex = options.findIndex((option) => option.value === value && !option.disabled)
     setActiveIndex(preferredIndex ?? (selectedIndex >= 0 ? selectedIndex : options.findIndex((option) => !option.disabled)))
@@ -197,7 +201,7 @@ export default function SettingsSelect({
   return (
     <div className={compact ? 'settings-select compact' : 'settings-select'}>
       <button
-        className={`${rendered ? 'settings-select-trigger attached' : 'settings-select-trigger'}${opensUpward ? ' opens-upward' : ''}`}
+        className={`${rendered ? 'settings-select-trigger attached' : 'settings-select-trigger'}${closing ? ' closing' : ''}${opensUpward ? ' opens-upward' : ''}`}
         ref={triggerRef}
         type="button"
         role="combobox"
