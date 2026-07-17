@@ -25,6 +25,7 @@ import { RemoteCompletionClient } from './remoteCompletionClient'
 import { getExternalProjectorSource, isModelProjectorFile, isModelWeightsFile, selectModelProjectorFile, type ModelTreeEntry } from '../shared/modelProjector'
 import { MAX_PROMPT_REFINEMENT_BACKUPS, MAX_PROMPT_REFINEMENT_MODEL_ID_CHARACTERS, type PromptRefinementTarget } from '../shared/promptRefinement'
 import { refinePrompt, type PromptRefinementCandidate } from './promptRefiner'
+import { disposeTerminals, registerTerminalIpc } from './terminalManager'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -480,6 +481,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  registerTerminalIpc()
   electronApp.setAppUserModelId('com.suprarcode')
   llamaRuntime = new LlamaRuntime()
   titleRuntime = new LlamaRuntime(LLAMA_TITLE_SERVER_PORT)
@@ -923,5 +925,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  disposeTerminals()
   void llamaRuntime?.stop()
 })

@@ -44,6 +44,13 @@
   --titlebar-menu-trigger-height: 25px;
   --titlebar-dropdown-width: 240px;
   --titlebar-dropdown-item-height: 30px;
+  --terminal-panel-height: min(34dvh, 320px);
+  --terminal-tabs-height: 32px;
+  --terminal-tab-width: 190px;
+  --terminal-padding-block: 8px;
+  --terminal-padding-inline: 12px;
+  --terminal-scrollbar-width: 4px;
+  --chat-scrollbar-width: 4px;
   --project-menu-width: 184px;
   --project-dialog-width: 420px;
   --project-dialog-padding: 24px;
@@ -76,7 +83,6 @@
   --tool-call-preview-padding: 9px 10px;
   --tool-call-preview-font-size: 11px;
   --tool-call-progress-margin-bottom: 12px;
-  --progress-character-fade-duration: 0.45s;
   --tool-bundle-list-gap: 2px;
   --tool-bundle-list-indent: 22px;
   --user-message-expand-gap: 5px;
@@ -436,7 +442,15 @@
   border-top-left-radius: 0;
 }
 
-.conversation { position: absolute; inset: 0; overflow-y: auto; scrollbar-color: var(--surface-selected) transparent; }
+.conversation { position: absolute; inset: 0; overflow-y: overlay; scrollbar-gutter: auto; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.conversation.scrollbar-visible { scrollbar-color: var(--surface-selected) transparent; }
+.conversation::-webkit-scrollbar { width: var(--chat-scrollbar-width); }
+.conversation::-webkit-scrollbar-track { background: transparent; }
+.conversation::-webkit-scrollbar-thumb { border-radius: var(--radius-md); background: transparent; }
+.conversation.scrollbar-visible::-webkit-scrollbar-thumb { background: var(--surface-selected); }
+.terminal-open .conversation { bottom: var(--terminal-panel-height); }
+.terminal-open .composer-stack { bottom: calc(var(--terminal-panel-height) + var(--app-composer-bottom)); }
+.terminal-open .jump-to-latest { bottom: calc(var(--terminal-panel-height) + var(--app-composer-bottom) + var(--app-composer-min-height) + 12px); }
 .conversation-inner { width: min(calc(100% - (var(--app-page-padding) * 2)), var(--app-content-max-width)); min-height: 100%; margin: 0 auto; padding: 54px 0 var(--conversation-bottom-clearance); }
 .conversation h1 { margin: 0 0 34px; color: var(--text-strong); font-size: 18px; font-weight: 500; line-height: 1.2; }
 .composer-stack { position: absolute; z-index: 4; right: 0; bottom: var(--app-composer-bottom); left: 0; display: flex; flex-direction: column; align-items: center; width: var(--composer-stack-width); margin: auto; }
@@ -449,6 +463,10 @@
   margin: 0 auto var(--todo-dock-bottom-gap);
   overflow: hidden;
 }
+
+.workspace-terminal-button { position: absolute; z-index: 8; top: 10px; right: 10px; display: grid; width: var(--app-control-height); height: var(--app-control-height); padding: 0; place-items: center; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-weak); cursor: pointer; }
+.workspace-terminal-button:hover, .workspace-terminal-button.active { background: var(--surface-hover); color: var(--text-strong); }
+
 .todo-dock-header {
   display: flex;
   align-items: center;
@@ -541,7 +559,6 @@
 .tool-call-summary:hover .tool-call-icon-check, .tool-call-summary:hover .tool-call-icon-error, .tool-call[open] .tool-call-icon-check, .tool-call[open] .tool-call-icon-error { color: var(--text-base); }
 .tool-call-preview { max-height: var(--tool-call-preview-max-height); margin: var(--tool-call-preview-margin); padding: var(--tool-call-preview-padding); overflow: auto; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-sm); background: var(--background-weak); color: var(--text-base); font: var(--tool-call-preview-font-size)/1.5 var(--font-code); white-space: pre-wrap; }
 .progress-message { margin: 0 0 var(--tool-call-progress-margin-bottom); color: var(--text-base); font-size: 13px; line-height: 1.55; }
-.progress-message-character { animation: progressCharacterFade var(--progress-character-fade-duration) ease-out both; }
 
 .files-changed { margin: 22px 0 0; }
 .files-changed-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; color: var(--text-strong); font-size: 13px; font-weight: 600; }
@@ -837,13 +854,10 @@
 @keyframes menuEnter { from { opacity: 0; transform: translateY(2px) scale(0.94); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @keyframes dialogEnter { from { opacity: 0; transform: scale(1.05); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @keyframes activitySweep { from { -webkit-mask-position: -75% 0; mask-position: -75% 0; } to { -webkit-mask-position: 175% 0; mask-position: 175% 0; } }
-@keyframes progressCharacterFade { from { opacity: 0; } to { opacity: 1; } }
-
 @media (prefers-reduced-motion: reduce) {
   .app-workspace, .project-threads-shell, .project-thread, .project-show-more, .project-thread-rename-input { transition-duration: 0ms; transition-delay: 0ms; }
   .sidebar-collapsed .app-sidebar { transition-delay: 0ms; }
   .todo-dock-list-shell, .todo-dock-chevron { transition-duration: 0ms; }
-  .progress-message-character { animation: none; }
   .prompt-refinement-button.busy svg { animation: none; }
 }
 

@@ -11,6 +11,7 @@ import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, Conn
 import type { ConnectionSecurityStatus } from '../main/connectionStore'
 import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../shared/conversationExport'
 import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinementTarget } from '../shared/promptRefinement'
+import type { TerminalExitEvent, TerminalOutputEvent, TerminalSessionInfo } from '../shared/terminal'
 
 const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
@@ -92,6 +93,21 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, completionEvent: LocalCompletionEvent) => callback(completionEvent)
     ipcRenderer.on('local-completion-event', handler)
     return () => { ipcRenderer.removeListener('local-completion-event', handler) }
+  },
+  createTerminal: (cwd?: string): Promise<TerminalSessionInfo> => ipcRenderer.invoke('terminal-create', cwd),
+  attachTerminal: (sessionId: string) => ipcRenderer.send('terminal-ready', sessionId),
+  writeTerminal: (sessionId: string, data: string) => ipcRenderer.send('terminal-input', sessionId, data),
+  resizeTerminal: (sessionId: string, columns: number, rows: number) => ipcRenderer.send('terminal-resize', sessionId, columns, rows),
+  closeTerminal: (sessionId: string): Promise<boolean> => ipcRenderer.invoke('terminal-close', sessionId),
+  onTerminalOutput: (callback: (event: TerminalOutputEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, output: TerminalOutputEvent) => callback(output)
+    ipcRenderer.on('terminal-output', handler)
+    return () => { ipcRenderer.removeListener('terminal-output', handler) }
+  },
+  onTerminalExit: (callback: (event: TerminalExitEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, exit: TerminalExitEvent) => callback(exit)
+    ipcRenderer.on('terminal-exit', handler)
+    return () => { ipcRenderer.removeListener('terminal-exit', handler) }
   }
 }
 

@@ -15,7 +15,7 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, PencilSparkles, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, Ligature, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
@@ -28,6 +28,7 @@ import SettingsDialog, {
   type SettingsExportState
 } from './settings/SettingsDialog'
 import './MainApp.css'
+import TerminalPanel from './TerminalPanel'
 
 const AUTO_SCROLL_THRESHOLD = 72
 const WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND = 150
@@ -41,6 +42,7 @@ const ESTIMATED_CHARACTERS_PER_TOKEN = 4
 const USER_MESSAGE_LINE_LIMITS = [20, 40] as const
 const PROMPT_REFINEMENT_SHORTCUT = 'Ctrl/Cmd+Shift+Enter'
 const TODO_VISIBLE_ITEM_COUNT = 3
+const CHAT_SCROLLBAR_REVEAL_RATIO = 0.1
 
 interface ComposerModel {
   id: string
@@ -166,6 +168,10 @@ const TASK_STATE_CHARACTERS_PER_SECOND = 170
 function ProgressMessage({ content, animate }: { content: string; animate: boolean }): JSX.Element {
   const characters = useMemo(() => Array.from(content), [content])
   const [revealedCharacters, setRevealedCharacters] = useState(animate ? 0 : characters.length)
+  const visibleContent = useMemo(
+    () => characters.slice(0, revealedCharacters).join(''),
+    [characters, revealedCharacters]
+  )
 
   useEffect(() => {
     if (!animate) {
@@ -187,9 +193,7 @@ function ProgressMessage({ content, animate }: { content: string; animate: boole
 
   return (
     <div className="chat-message progress-message">
-      {characters.slice(0, revealedCharacters).map((character, index) => (
-        <span className="progress-message-character" key={`${index}-${character}`}>{character}</span>
-      ))}
+      <MarkdownMessage content={visibleContent} />
     </div>
   )
 }
@@ -430,6 +434,9 @@ export default function MainApp(): JSX.Element {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
   const [openTitlebarMenu, setOpenTitlebarMenu] = useState<TitlebarMenuId | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [terminalOpen, setTerminalOpen] = useState(false)
+  const [terminalMounted, setTerminalMounted] = useState(false)
+  const [chatScrollbarVisible, setChatScrollbarVisible] = useState(false)
   const [theme, setTheme] = useState<ThemePreference>('system')
   const [responseStylePreference, setResponseStylePreference] = useState<ResponseStylePreference>({ style: DEFAULT_RESPONSE_STYLE, customInstruction: '' })
   const [promptRefinementPreferences, setPromptRefinementPreferences] = useState<PromptRefinementPreferences>(DEFAULT_PROMPT_REFINEMENT_PREFERENCES)
@@ -1752,7 +1759,11 @@ export default function MainApp(): JSX.Element {
         <div className="titlebar-drag-region" aria-hidden="true" />
       </header>
       <WindowControls showMaximize />
-      <main className={sidebarOpen ? 'app-shell' : 'app-shell sidebar-collapsed'}>
+      <main
+        className={sidebarOpen ? 'app-shell' : 'app-shell sidebar-collapsed'}
+        onPointerMove={(event) => setChatScrollbarVisible(event.clientX >= window.innerWidth * (1 - CHAT_SCROLLBAR_REVEAL_RATIO))}
+        onPointerLeave={() => setChatScrollbarVisible(false)}
+      >
         <aside className="app-sidebar">
         <nav className="sidebar-nav" aria-label="Primary navigation">
           <button className="sidebar-action" type="button" onClick={startNewThread}>
@@ -1849,10 +1860,11 @@ export default function MainApp(): JSX.Element {
         </div>
         </aside>
 
-        <section className="app-workspace">
+        <section className={terminalOpen ? 'app-workspace terminal-open' : 'app-workspace'}>
+        <button className={terminalOpen ? 'workspace-terminal-button active' : 'workspace-terminal-button'} type="button" aria-label="Toggle terminal" aria-expanded={terminalOpen} title="Toggle terminal" onClick={() => { setTerminalMounted(true); setTerminalOpen((current) => !current) }}><SquareTerminal size={16} /></button>
         {activeThread ? (
           <div
-            className="conversation"
+            className={chatScrollbarVisible ? 'conversation scrollbar-visible' : 'conversation'}
             aria-live="polite"
             ref={conversationRef}
             onWheel={(event) => { if (event.deltaY < 0) setAutoScrollEnabled(false) }}
@@ -2027,6 +2039,8 @@ export default function MainApp(): JSX.Element {
           </div>
         ) : null}
 
+        {terminalMounted && <TerminalPanel cwd={selectedProjectPath || undefined} onClose={() => setTerminalOpen(false)} visible={terminalOpen} />}
+
         {activeThread && !autoScrollEnabled && (
           <button
             className="jump-to-latest"
@@ -2123,7 +2137,7 @@ export default function MainApp(): JSX.Element {
                 disabled={!prompt.trim() || promptRefinementBusy || completionState !== 'idle' || promptRefinementTargets.length === 0}
                 onClick={() => void refineCurrentPrompt()}
               >
-                {promptRefinementBusy ? <LoaderCircle size={14} /> : <PencilSparkles size={14} />}
+                {promptRefinementBusy ? <LoaderCircle size={14} /> : <Ligature size={14} />}
               </button>
             </div>
             <div className="composer-controls">
