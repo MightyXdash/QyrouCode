@@ -15,7 +15,7 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, ChevronLeft, ChevronRight, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, Ligature, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
+import { Search, Plus, ChevronDown, ArrowUp, PanelLeft, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, Ligature, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
@@ -428,6 +428,7 @@ function normalizeRestoredThread(thread: ChatThread): ChatThread {
 
 export default function MainApp(): JSX.Element {
   const nativeWindowControls = usesNativeWindowControls(window.api.platform)
+  const isMacOS = window.api.platform === DESKTOP_PLATFORMS.macOS
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [promptEditorRevision, setPromptEditorRevision] = useState(0)
@@ -1145,7 +1146,7 @@ export default function MainApp(): JSX.Element {
     }
     const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight
     setAutoScrollEnabled(distanceFromBottom <= AUTO_SCROLL_THRESHOLD)
-  }, [activeThread, todoCollapsed])
+  }, [activeThread, terminalHeight, terminalOpen, todoCollapsed])
 
   useEffect(() => {
     if (!projectDialogOpen && !renamingProject) return
@@ -1725,12 +1726,10 @@ export default function MainApp(): JSX.Element {
 
   return (
     <>
-      <header className={nativeWindowControls ? 'app-titlebar native-window-controls' : 'app-titlebar'}>
+      <header className={isMacOS ? 'app-titlebar macos-titlebar' : nativeWindowControls ? 'app-titlebar native-window-controls' : 'app-titlebar'}>
         <div className="titlebar-actions">
           <button className="titlebar-icon-button" type="button" aria-label="Toggle sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((current) => !current)}><PanelLeft size={16} /></button>
-          <button className="titlebar-icon-button" type="button" aria-label="Go back" disabled><ChevronLeft size={16} /></button>
-          <button className="titlebar-icon-button" type="button" aria-label="Go forward" disabled><ChevronRight size={16} /></button>
-          {window.api.platform !== DESKTOP_PLATFORMS.macOS && <nav className="titlebar-menu" aria-label="Application menu" ref={titlebarMenuRef}>
+          {!isMacOS && <nav className="titlebar-menu" aria-label="Application menu" ref={titlebarMenuRef}>
             {(Object.keys(TITLEBAR_MENUS) as TitlebarMenuId[]).map((menuId) => (
               <div className="titlebar-menu-group" key={menuId}>
                 <button
@@ -1772,7 +1771,7 @@ export default function MainApp(): JSX.Element {
       </header>
       <WindowControls showMaximize />
       <main
-        className={sidebarOpen ? 'app-shell' : 'app-shell sidebar-collapsed'}
+        className={`${sidebarOpen ? 'app-shell' : 'app-shell sidebar-collapsed'}${isMacOS ? ' macos-window' : ''}`}
         onPointerMove={(event) => setChatScrollbarVisible(event.clientX >= window.innerWidth * (1 - CHAT_SCROLLBAR_REVEAL_RATIO))}
         onPointerLeave={() => setChatScrollbarVisible(false)}
       >

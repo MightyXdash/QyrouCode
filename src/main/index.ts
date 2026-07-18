@@ -26,7 +26,7 @@ import { getExternalProjectorSource, isModelProjectorFile, isModelWeightsFile, s
 import { MAX_PROMPT_REFINEMENT_BACKUPS, MAX_PROMPT_REFINEMENT_MODEL_ID_CHARACTERS, type PromptRefinementTarget } from '../shared/promptRefinement'
 import { refinePrompt, type PromptRefinementCandidate } from './promptRefiner'
 import { createAgentTerminalController, disposeTerminals, registerTerminalIpc } from './terminalManager'
-import { usesNativeWindowControls } from '../shared/platform'
+import { DESKTOP_PLATFORMS, usesNativeWindowControls } from '../shared/platform'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -36,6 +36,7 @@ const MAIN_WINDOW_QUERY_KEY = 'window'
 const MAIN_WINDOW_QUERY_VALUE = 'app'
 const MAIN_APP_WINDOW_WIDTH = 1440
 const MAIN_APP_WINDOW_HEIGHT = 900
+const MACOS_TRAFFIC_LIGHT_INSET = 20
 const GGUF_FILE_EXTENSION = '.gguf'
 const TITLE_MODEL_REPOSITORY = 'SupraLabs/supra-title-50M-pre-gguf'
 const TITLE_MODEL_FILENAME = 'SupraTitle-50M-Q4_K_M.gguf'
@@ -327,6 +328,10 @@ function createMainAppWindow(): BrowserWindow {
     maximizable: true,
     minimizable: true,
     frame: usesNativeWindowControls(process.platform),
+    titleBarStyle: process.platform === DESKTOP_PLATFORMS.macOS ? 'hiddenInset' : 'default',
+    trafficLightPosition: process.platform === DESKTOP_PLATFORMS.macOS
+      ? { x: MACOS_TRAFFIC_LIGHT_INSET, y: MACOS_TRAFFIC_LIGHT_INSET }
+      : undefined,
     title: 'SupraCode',
     show: false,
     icon: appIconPath(),
@@ -375,6 +380,10 @@ function createWindow(): void {
     resizable: nativeWindowControls,
     maximizable: nativeWindowControls,
     minimizable: true,
+    titleBarStyle: process.platform === DESKTOP_PLATFORMS.macOS ? 'hiddenInset' : 'default',
+    trafficLightPosition: process.platform === DESKTOP_PLATFORMS.macOS
+      ? { x: MACOS_TRAFFIC_LIGHT_INSET, y: MACOS_TRAFFIC_LIGHT_INSET }
+      : undefined,
     title: 'SupraCode',
     show: false,
     icon: appIconPath(),

@@ -1,6 +1,7 @@
 :root {
   color-scheme: light dark;
   --app-sidebar-width: 272px;
+  --app-sidebar-content-offset: 13px;
   --app-sidebar-motion-duration: 750ms;
   --app-sidebar-motion-ease-out: cubic-bezier(0.12, 1, 0.22, 1);
   --app-content-max-width: 740px;
@@ -41,6 +42,10 @@
   --app-titlebar-height: var(--window-control-height);
   --app-titlebar-control-width: 34px;
   --app-titlebar-drag-start: 300px;
+  --macos-titlebar-height: 54px;
+  --macos-sidebar-content-start: 48px;
+  --macos-traffic-light-clearance: 104px;
+  --macos-titlebar-drag-start: 146px;
   --titlebar-menu-trigger-height: 25px;
   --titlebar-dropdown-width: 240px;
   --titlebar-dropdown-item-height: 30px;
@@ -87,6 +92,7 @@
   --new-thread-composer-center: 50%;
   --new-thread-heading-offset: 112px;
   --conversation-bottom-clearance: 180px;
+  --conversation-terminal-clearance: 0px;
   --jump-to-latest-size: 30px;
   --activity-sweep-duration: 2s;
   --activity-text-base: var(--text-base);
@@ -204,6 +210,23 @@
   padding-right: 0;
 }
 
+.app-titlebar.macos-titlebar {
+  right: auto;
+  width: var(--app-sidebar-width);
+  height: var(--macos-titlebar-height);
+  padding-right: 0;
+  background: transparent;
+}
+
+.macos-titlebar .titlebar-actions {
+  margin-left: var(--macos-traffic-light-clearance);
+}
+
+.macos-titlebar .titlebar-icon-button {
+  height: var(--app-control-height);
+  border-radius: var(--radius-md);
+}
+
 .titlebar-actions {
   position: relative;
   display: flex;
@@ -224,6 +247,11 @@
 
 .native-window-controls .titlebar-drag-region {
   right: 0;
+}
+
+.macos-titlebar .titlebar-drag-region {
+  right: 0;
+  left: var(--macos-titlebar-drag-start);
 }
 
 .titlebar-icon-button,
@@ -358,7 +386,7 @@
 
 .app-sidebar {
   position: relative;
-  padding: calc(var(--app-titlebar-height) + 13px) 8px 18px;
+  padding: calc(var(--app-titlebar-height) + var(--app-sidebar-content-offset)) 8px 18px;
   background: var(--background-weak);
   border-radius: 0 var(--radius-xl) var(--radius-xl) 0;
   overflow-x: hidden;
@@ -369,6 +397,10 @@
 }
 
 .sidebar-collapsed .app-sidebar { visibility: hidden; transition-delay: var(--app-sidebar-motion-duration); }
+
+.macos-window .app-sidebar {
+  padding-top: var(--macos-sidebar-content-start);
+}
 
 .sidebar-nav { display: grid; gap: 2px; }
 
@@ -473,6 +505,11 @@
   transition: left var(--app-sidebar-motion-duration) var(--app-sidebar-motion-ease-out), border-color var(--app-sidebar-motion-duration) var(--app-sidebar-motion-ease-out), border-radius var(--app-sidebar-motion-duration) var(--app-sidebar-motion-ease-out);
 }
 
+.macos-window .app-workspace {
+  top: 0;
+  border-top-color: transparent;
+}
+
 .sidebar-collapsed .app-workspace {
   left: 0;
   border-left-color: transparent;
@@ -487,9 +524,10 @@
 .conversation.scrollbar-visible::-webkit-scrollbar-thumb { background: var(--surface-selected); }
 .terminal-open .composer-stack { bottom: calc(var(--terminal-panel-height) + var(--app-composer-bottom)); }
 .terminal-open .jump-to-latest { bottom: calc(var(--terminal-panel-height) + var(--app-composer-bottom) + var(--app-composer-min-height) + var(--jump-to-latest-todo-clearance) + 12px); }
-.conversation-inner { width: min(calc(100% - (var(--app-page-padding) * 2)), var(--app-content-max-width)); min-height: 100%; margin: 0 auto; padding: 54px 0 var(--conversation-bottom-clearance); }
-.conversation-inner.with-todo-dock { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--todo-dock-expanded-clearance)); }
-.conversation-inner.with-todo-dock.todo-dock-collapsed { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--todo-dock-collapsed-clearance)); }
+.terminal-open { --conversation-terminal-clearance: var(--terminal-panel-height); }
+.conversation-inner { width: min(calc(100% - (var(--app-page-padding) * 2)), var(--app-content-max-width)); min-height: 100%; margin: 0 auto; padding: 54px 0 calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance)); }
+.conversation-inner.with-todo-dock { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance) + var(--todo-dock-expanded-clearance)); }
+.conversation-inner.with-todo-dock.todo-dock-collapsed { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance) + var(--todo-dock-collapsed-clearance)); }
 .conversation h1 { margin: 0 0 34px; color: var(--text-strong); font-size: 18px; font-weight: 500; line-height: 1.2; }
 .composer-stack { position: absolute; z-index: 4; right: 0; bottom: var(--app-composer-bottom); left: 0; display: flex; flex-direction: column; align-items: center; width: var(--composer-stack-width); margin: auto; transition: bottom var(--terminal-panel-motion-duration) var(--terminal-panel-motion-ease-out); }
 .composer-stack.new-thread { display: contents; }
