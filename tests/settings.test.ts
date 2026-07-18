@@ -75,8 +75,9 @@ test('validates response style updates from settings', () => {
 })
 
 test('validates supported native languages', () => {
-  assert.equal(validateNativeLanguage('Malayalam'), 'Malayalam')
+  assert.equal(validateNativeLanguage('Sinhala'), 'Sinhala')
   assert.ok(NATIVE_LANGUAGES.includes('English'))
+  assert.ok(NATIVE_LANGUAGES.length >= 180)
   assert.throws(() => validateNativeLanguage('Klingon'), /Invalid native language/)
 })
 
