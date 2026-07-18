@@ -608,7 +608,7 @@ export default function MainApp(): JSX.Element {
             durationMs: Math.max(0, completedAt - (message.startedAt ?? run.startedAt))
           }
         : message)
-      const completedThread = { ...current, messages, updatedAt: completedAt }
+      const completedThread = { ...current, messages, todos: [], updatedAt: completedAt }
       replaceThread(completedThread)
       void window.api.saveChatThread(completedThread)
       requestThreadIdsRef.current.delete(requestId)
@@ -638,7 +638,7 @@ export default function MainApp(): JSX.Element {
             durationMs: Math.max(0, completedAt - (message.startedAt ?? run.startedAt))
           }
         : message)
-      const stoppedThread = { ...current, messages, updatedAt: completedAt }
+      const stoppedThread = { ...current, messages, todos: [], updatedAt: completedAt }
       replaceThread(stoppedThread)
       void window.api.saveChatThread(stoppedThread)
     }
@@ -1101,7 +1101,7 @@ export default function MainApp(): JSX.Element {
             durationMs: Math.max(0, completedAt - (message.startedAt ?? run?.startedAt ?? completedAt))
           }
         : message)
-      const finalThread = { ...completed, messages, updatedAt: completedAt }
+      const finalThread = { ...completed, messages, todos: [], updatedAt: completedAt }
       const completedAssistantId = completed.messages.at(-1)?.role === 'assistant' ? completed.messages.at(-1)?.id : undefined
       if (completedAssistantId) setExpandedWorkIds((current) => {
         const next = new Set(current)
@@ -1131,9 +1131,13 @@ export default function MainApp(): JSX.Element {
   useLayoutEffect(() => {
     const target = conversationRef.current
     if (!target) return
+    if (autoScrollEnabled) {
+      target.scrollTop = target.scrollHeight
+      return
+    }
     const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight
     setAutoScrollEnabled(distanceFromBottom <= AUTO_SCROLL_THRESHOLD)
-  }, [activeThread])
+  }, [activeThread, todoCollapsed])
 
   useEffect(() => {
     if (!projectDialogOpen && !renamingProject) return
@@ -1874,7 +1878,7 @@ export default function MainApp(): JSX.Element {
               setAutoScrollEnabled(distanceFromBottom <= AUTO_SCROLL_THRESHOLD)
             }}
           >
-            <div className="conversation-inner">
+            <div className={(activeThread.todos?.length ?? 0) > 0 ? `conversation-inner with-todo-dock${todoCollapsed ? ' todo-dock-collapsed' : ''}` : 'conversation-inner'}>
               {activeThread.messages.map((message, messageIndex) => {
                 if (message.role === 'user') {
                   return (
@@ -2055,7 +2059,7 @@ export default function MainApp(): JSX.Element {
           </button>
         )}
 
-        <div className={activeThread ? 'composer-stack' : 'composer-stack new-thread'}>
+        <div className={activeThread ? `composer-stack${(activeThread.todos?.length ?? 0) > 0 ? ' with-todo-dock' : ''}` : 'composer-stack new-thread'}>
           {activeThread && (activeThread.todos?.length ?? 0) > 0 && (() => {
             const todos = activeThread.todos ?? []
             const completed = todos.filter((todo) => todo.status === 'completed').length
@@ -2067,10 +2071,10 @@ export default function MainApp(): JSX.Element {
                   <ChevronDown className="todo-dock-chevron" aria-hidden="true" />
                 </button>
                 <div className={todos.length > TODO_VISIBLE_ITEM_COUNT ? 'todo-dock-list-shell scrollable' : 'todo-dock-list-shell'} aria-hidden={todoCollapsed}>
-                  <div className="todo-dock-list">
+                  <div className="todo-dock-list" role="list">
                     {todos.map((todo, index) => {
-                      return <div className={`todo-dock-item ${todo.status}`} key={`${index}-${todo.content}`}>
-                        {todo.status === 'completed' ? <Check aria-hidden="true" /> : todo.status === 'cancelled' ? <X aria-hidden="true" /> : <Circle aria-hidden="true" />}
+                      return <div className={`todo-dock-item ${todo.status}`} role="listitem" key={`${index}-${todo.content}`}>
+                        {todo.status === 'completed' ? <Check aria-hidden="true" /> : todo.status === 'cancelled' ? <X aria-hidden="true" /> : todo.status === 'in_progress' ? <LoaderCircle aria-hidden="true" /> : <Circle aria-hidden="true" />}
                         <span>{todo.content}</span>
                       </div>
                     })}
