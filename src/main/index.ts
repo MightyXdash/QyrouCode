@@ -6,7 +6,8 @@ import { writeFile } from 'fs/promises'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
+import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getNativeLanguage, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setNativeLanguage, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
+import { DEFAULT_NATIVE_LANGUAGE, validateNativeLanguage } from '../shared/settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
@@ -537,6 +538,8 @@ app.whenReady().then(() => {
   ipcMain.handle('get-theme', () => getTheme())
   ipcMain.handle('get-response-style-preference', () => getResponseStylePreference())
   ipcMain.handle('set-response-style-preference', (_event, preference: unknown) => setResponseStylePreference(preference))
+  ipcMain.handle('get-native-language', () => getNativeLanguage())
+  ipcMain.handle('set-native-language', (_event, nativeLanguage: unknown) => setNativeLanguage(nativeLanguage))
   ipcMain.handle('get-prompt-refinement-preferences', () => getPromptRefinementPreferences())
   ipcMain.handle('set-prompt-refinement-preferences', (_event, preference: unknown) => setPromptRefinementPreferences(preference))
   ipcMain.handle('set-theme', (_event, theme: unknown) => setTheme(theme))
@@ -771,6 +774,7 @@ app.whenReady().then(() => {
     runner: AgentRunner
   ): LocalCompletionStart => {
     if (!request || typeof request.threadId !== 'string' || !request.threadId) throw new Error('A chat thread is required for the agent')
+    const nativeLanguage = validateNativeLanguage(request.nativeLanguage ?? DEFAULT_NATIVE_LANGUAGE)
     const project = getProjects().find((item) => item.path === request.projectPath)
     if (!project || !existsSync(project.path) || !statSync(project.path).isDirectory()) throw new Error('Select a valid project before running an agent')
     if (model.source === 'local' && [...activeCompletionRequests.values()].some((request) => request.source === 'local')) {
@@ -793,6 +797,7 @@ app.whenReady().then(() => {
       : request.messages
     const agentRequest = {
       ...request,
+      nativeLanguage,
       messages: resumedMessages,
       projectPath: project.path,
       signal: controller.signal,

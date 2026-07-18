@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { MODEL_LIST } from './modelCatalog'
-import { DEFAULT_RESPONSE_STYLE, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
+import { DEFAULT_NATIVE_LANGUAGE, DEFAULT_RESPONSE_STYLE, type NativeLanguage, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
 import {
   DEFAULT_PROMPT_REFINEMENT_PREFERENCES,
   orderPromptRefinementModels,
@@ -448,6 +448,7 @@ export default function MainApp(): JSX.Element {
   const [chatScrollbarVisible, setChatScrollbarVisible] = useState(false)
   const [theme, setTheme] = useState<ThemePreference>('system')
   const [responseStylePreference, setResponseStylePreference] = useState<ResponseStylePreference>({ style: DEFAULT_RESPONSE_STYLE, customInstruction: '' })
+  const [nativeLanguage, setNativeLanguage] = useState<NativeLanguage>(DEFAULT_NATIVE_LANGUAGE)
   const [promptRefinementPreferences, setPromptRefinementPreferences] = useState<PromptRefinementPreferences>(DEFAULT_PROMPT_REFINEMENT_PREFERENCES)
   const [promptRefinementBusy, setPromptRefinementBusy] = useState(false)
   const [promptRefinementError, setPromptRefinementError] = useState('')
@@ -757,6 +758,7 @@ export default function MainApp(): JSX.Element {
   useEffect(() => {
     void window.api.getTheme().then(setTheme)
     void window.api.getResponseStylePreference().then(setResponseStylePreference)
+    void window.api.getNativeLanguage().then(setNativeLanguage)
     void window.api.getPromptRefinementPreferences().then(setPromptRefinementPreferences)
     void window.api.getConnections().then(setConnections).catch(() => setConnections([]))
     void Promise.all([window.api.getProjects(), window.api.getExpandedProjectPaths(), window.api.getChatThreads(), window.api.getWorkspaceViewState()]).then(async ([storedProjects, storedExpandedPaths, storedThreads, storedViewState]) => {
@@ -1537,6 +1539,16 @@ export default function MainApp(): JSX.Element {
     }
   }
 
+  const changeNativeLanguage = async (nextNativeLanguage: NativeLanguage): Promise<void> => {
+    const previous = nativeLanguage
+    setNativeLanguage(nextNativeLanguage)
+    try {
+      setNativeLanguage(await window.api.setNativeLanguage(nextNativeLanguage))
+    } catch {
+      setNativeLanguage(previous)
+    }
+  }
+
   const changePromptRefinementPreferences = async (preferences: PromptRefinementPreferences): Promise<void> => {
     const previous = promptRefinementPreferences
     setPromptRefinementPreferences(preferences)
@@ -1686,6 +1698,7 @@ export default function MainApp(): JSX.Element {
       const start = await window.api.startAgentCompletion(target, {
         threadId,
         projectPath,
+        nativeLanguage,
         messages: [
           { role: 'system', content: systemPrompt },
           ...messages
@@ -2317,6 +2330,7 @@ export default function MainApp(): JSX.Element {
           theme={theme}
           reasoningEffort={reasoningEffort}
           responseStyle={responseStylePreference}
+          nativeLanguage={nativeLanguage}
           promptRefinementPreferences={promptRefinementPreferences}
           promptRefinementModels={promptRefinementModels}
           exportOptions={exportRequest(exportOptions)}
@@ -2324,6 +2338,7 @@ export default function MainApp(): JSX.Element {
           onThemeChange={selectTheme}
           onReasoningEffortChange={setReasoningEffort}
           onResponseStyleChange={changeResponseStyle}
+          onNativeLanguageChange={changeNativeLanguage}
           onPromptRefinementPreferencesChange={changePromptRefinementPreferences}
           onSaveConnection={saveProviderConnection}
           onTestConnection={testProviderConnection}

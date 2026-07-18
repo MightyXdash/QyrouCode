@@ -1,6 +1,6 @@
 import type { PromptRefinementPreferences } from './promptRefinement'
 
-export const SETTINGS_VERSION = 3
+export const SETTINGS_VERSION = 4
 export const MAX_CUSTOM_RESPONSE_STYLE_LENGTH = 600
 
 export const CONTEXT_WINDOW_TOKENS = [32000, 72000, 145000, 256000] as const
@@ -10,6 +10,8 @@ export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'extra-hig
 export const EXECUTION_APPROVAL_POLICIES = ['always', 'high-risk', 'full'] as const
 export const RESPONSE_STYLES = ['warm', 'gen-z', 'sarcastic', 'pragmatic', 'custom'] as const
 export const DEFAULT_RESPONSE_STYLE: ResponseStyle = 'pragmatic'
+export const NATIVE_LANGUAGES = ['English', 'Arabic', 'Bengali', 'Chinese (Simplified)', 'Chinese (Traditional)', 'Dutch', 'French', 'German', 'Hindi', 'Indonesian', 'Italian', 'Japanese', 'Korean', 'Malayalam', 'Persian', 'Portuguese', 'Russian', 'Spanish', 'Tamil', 'Turkish', 'Urdu', 'Vietnamese'] as const
+export const DEFAULT_NATIVE_LANGUAGE: NativeLanguage = 'English'
 
 export type ThemePreference = typeof THEMES[number]
 export type ContextWindowTokens = typeof CONTEXT_WINDOW_TOKENS[number]
@@ -17,6 +19,7 @@ export type ModelTier = typeof MODEL_TIERS[number]
 export type ReasoningEffort = typeof REASONING_EFFORTS[number]
 export type ExecutionApprovalPolicy = typeof EXECUTION_APPROVAL_POLICIES[number]
 export type ResponseStyle = typeof RESPONSE_STYLES[number]
+export type NativeLanguage = typeof NATIVE_LANGUAGES[number]
 
 export interface OnboardingPreferences {
   selectedRoles: string[]
@@ -42,6 +45,7 @@ export interface SettingsStoreData {
   agentSessions?: Record<string, import('./agent').PersistedAgentSession>
   workspaceViewState?: import('./agent').WorkspaceViewState
   promptRefinementPreferences?: PromptRefinementPreferences
+  nativeLanguage?: NativeLanguage
 }
 
 export interface OnboardingState {
@@ -69,6 +73,11 @@ export const validateResponseStylePreference = (value: unknown): ResponseStylePr
     style: value.style,
     customInstruction: value.style === 'custom' ? customInstruction : ''
   }
+}
+
+export const validateNativeLanguage = (value: unknown): NativeLanguage => {
+  if (!includes(NATIVE_LANGUAGES, value)) throw new Error('Invalid native language')
+  return value
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

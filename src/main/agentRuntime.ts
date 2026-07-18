@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve } from 'path'
 import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall } from './localCompletionClient'
 import type { FileChangeDisplay, TodoDisplay, ToolUiMessage } from '../shared/chat'
 import type { AgentModelProvenance } from '../shared/agent'
+import { DEFAULT_NATIVE_LANGUAGE, type NativeLanguage } from '../shared/settings'
 import { COMPACTION_SYSTEM_PROMPT, buildAgentSystemPrompt } from './agentPrompt'
 import { AgentToolbox, TASK_STATE_TOOL_NAME, type AgentTaskRequest } from './agentTools'
 import type { AgentTerminalController } from './terminalManager'
@@ -19,6 +20,7 @@ export interface AgentRunRequest extends Omit<LocalCompletionRequest, 'signal' |
   projectPath: string
   signal?: AbortSignal
   model?: AgentModelProvenance
+  nativeLanguage?: NativeLanguage
   terminalController?: AgentTerminalController
 }
 
@@ -152,6 +154,7 @@ export class AgentRuntime {
     const systemPrompt = buildAgentSystemPrompt({
       projectPath: request.projectPath,
       additionalInstructions: additionalSystemInstructions(request.messages),
+      nativeLanguage: request.nativeLanguage ?? DEFAULT_NATIVE_LANGUAGE,
       readOnly
     })
     let messages = conversationMessages(request.messages)

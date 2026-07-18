@@ -2,12 +2,15 @@ import Store from 'electron-store'
 import {
   SETTINGS_VERSION,
   DEFAULT_RESPONSE_STYLE,
+  DEFAULT_NATIVE_LANGUAGE,
+  type NativeLanguage,
   type OnboardingPreferences,
   type OnboardingState,
   type SettingsStoreData,
   type ThemePreference,
   type ResponseStylePreference,
   validateOnboardingPreferences,
+  validateNativeLanguage,
   validateResponseStylePreference,
   validateThemePreference
 } from '../shared/settings'
@@ -79,6 +82,15 @@ export const setResponseStylePreference = (value: unknown): ResponseStylePrefere
     })
   }
   return responseStyle
+}
+
+export const getNativeLanguage = (): NativeLanguage =>
+  settingsStore.get('nativeLanguage') ?? DEFAULT_NATIVE_LANGUAGE
+
+export const setNativeLanguage = (value: unknown): NativeLanguage => {
+  const nativeLanguage = validateNativeLanguage(value)
+  settingsStore.set('nativeLanguage', nativeLanguage)
+  return nativeLanguage
 }
 
 export const getPromptRefinementPreferences = (): PromptRefinementPreferences =>

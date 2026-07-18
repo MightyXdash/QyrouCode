@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { OnboardingPreferences, OnboardingState, ResponseStylePreference, ThemePreference } from '../shared/settings'
+import type { NativeLanguage, OnboardingPreferences, OnboardingState, ResponseStylePreference, ThemePreference } from '../shared/settings'
 import type { LlamaRuntimeStatus } from '../shared/llama'
 import type { WindowCommand } from '../shared/windowCommands'
 import type { LocalCompletionEvent, LocalCompletionStart } from '../main/localCompletionClient'
@@ -37,6 +37,8 @@ const api = {
   getTheme: (): Promise<ThemePreference> => ipcRenderer.invoke('get-theme'),
   getResponseStylePreference: (): Promise<ResponseStylePreference> => ipcRenderer.invoke('get-response-style-preference'),
   setResponseStylePreference: (preference: ResponseStylePreference): Promise<ResponseStylePreference> => ipcRenderer.invoke('set-response-style-preference', preference),
+  getNativeLanguage: (): Promise<NativeLanguage> => ipcRenderer.invoke('get-native-language'),
+  setNativeLanguage: (nativeLanguage: NativeLanguage): Promise<NativeLanguage> => ipcRenderer.invoke('set-native-language', nativeLanguage),
   setTheme: (theme: ThemePreference): Promise<ThemePreference> => ipcRenderer.invoke('set-theme', theme),
   getPromptRefinementPreferences: (): Promise<PromptRefinementPreferences> => ipcRenderer.invoke('get-prompt-refinement-preferences'),
   setPromptRefinementPreferences: (preference: PromptRefinementPreferences): Promise<PromptRefinementPreferences> => ipcRenderer.invoke('set-prompt-refinement-preferences', preference),

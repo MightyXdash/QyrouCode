@@ -1,6 +1,6 @@
 import { useEffect, useState, type JSX } from 'react'
 import { HardDrive, X } from 'lucide-react'
-import { MAX_CUSTOM_RESPONSE_STYLE_LENGTH, RESPONSE_STYLES, type ResponseStylePreference } from '../../../shared/settings'
+import { MAX_CUSTOM_RESPONSE_STYLE_LENGTH, NATIVE_LANGUAGES, RESPONSE_STYLES, type NativeLanguage, type ResponseStylePreference } from '../../../shared/settings'
 import { MAX_PROMPT_REFINEMENT_BACKUPS, type PromptRefinementModelOption, type PromptRefinementPreferences } from '../../../shared/promptRefinement'
 import { REASONING_EFFORTS, type ReasoningEffort } from '../reasoningProfiles'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsControls'
@@ -9,10 +9,12 @@ import SettingsSelect, { type SettingsSelectOption } from './SettingsSelect'
 interface GeneralSettingsProps {
   reasoningEffort: ReasoningEffort
   responseStyle: ResponseStylePreference
+  nativeLanguage: NativeLanguage
   promptRefinementPreferences: PromptRefinementPreferences
   promptRefinementModels: readonly PromptRefinementModelOption[]
   onReasoningEffortChange: (effort: ReasoningEffort) => void
   onResponseStyleChange: (preference: ResponseStylePreference) => Promise<void> | void
+  onNativeLanguageChange: (nativeLanguage: NativeLanguage) => Promise<void> | void
   onPromptRefinementPreferencesChange: (preference: PromptRefinementPreferences) => Promise<void> | void
 }
 
@@ -21,10 +23,12 @@ const label = (value: string): string => value.replace('-', ' ').replace(/^./, (
 export default function GeneralSettings({
   reasoningEffort,
   responseStyle,
+  nativeLanguage,
   promptRefinementPreferences,
   promptRefinementModels,
   onReasoningEffortChange,
   onResponseStyleChange,
+  onNativeLanguageChange,
   onPromptRefinementPreferencesChange
 }: GeneralSettingsProps): JSX.Element {
   const [style, setStyle] = useState(responseStyle.style)
@@ -91,6 +95,14 @@ export default function GeneralSettings({
                 setStyle(nextStyle)
                 if (nextStyle !== 'custom') void onResponseStyleChange({ style: nextStyle, customInstruction: '' })
               }}
+            />
+          </SettingsRow>
+          <SettingsRow title="Native language" description="Used for task updates, activity messages, and final responses.">
+            <SettingsSelect
+              value={nativeLanguage}
+              label="Native language"
+              options={NATIVE_LANGUAGES.map((language) => ({ value: language, label: language }))}
+              onChange={(value) => void onNativeLanguageChange(value as NativeLanguage)}
             />
           </SettingsRow>
           {style === 'custom' && (

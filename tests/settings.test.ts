@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   MAX_CUSTOM_RESPONSE_STYLE_LENGTH,
+  NATIVE_LANGUAGES,
+  validateNativeLanguage,
   validateOnboardingPreferences,
   validateResponseStylePreference,
   validateThemePreference
@@ -70,6 +72,12 @@ test('validates response style updates from settings', () => {
   assert.deepEqual(validateResponseStylePreference({ style: 'warm', customInstruction: 'ignored' }), { style: 'warm', customInstruction: '' })
   assert.deepEqual(validateResponseStylePreference({ style: 'custom', customInstruction: '  Keep it direct.  ' }), { style: 'custom', customInstruction: 'Keep it direct.' })
   assert.throws(() => validateResponseStylePreference({ style: 'custom', customInstruction: '' }), /Invalid custom response instruction/)
+})
+
+test('validates supported native languages', () => {
+  assert.equal(validateNativeLanguage('Malayalam'), 'Malayalam')
+  assert.ok(NATIVE_LANGUAGES.includes('English'))
+  assert.throws(() => validateNativeLanguage('Klingon'), /Invalid native language/)
 })
 
 test('validates prompt refinement preferences', () => {

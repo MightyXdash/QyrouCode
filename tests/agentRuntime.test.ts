@@ -77,6 +77,7 @@ test('runs native and healed local-model tools end to end before returning a fin
     await new AgentRuntime(provider).run({
       threadId: 'thread-1',
       projectPath,
+      nativeLanguage: 'Spanish',
       messages: [
         { role: 'system', content: 'Use a high reasoning effort internally and return a concise final summary.' },
         { role: 'user', content: 'Create the result module.' }
@@ -90,8 +91,16 @@ test('runs native and healed local-model tools end to end before returning a fin
     const system = textContent(provider.requests[0].messages[0].content)
     assert.match(system, /You are SupraCode/)
     assert.match(system, /Use a high reasoning effort internally/)
+    assert.match(system, /User's native language is Spanish/)
+    assert.match(system, /always use pure Spanish/)
+    assert.match(system, /saved preference is authoritative/)
     assert.match(system, /Always create files under src/)
     assert.match(system, /Treat the open workspace as the project/)
+    assert.match(system, /Greetings, thanks, acknowledgements, casual conversation, capability questions/)
+    assert.match(system, /do not call cur_task_state or any other tool/)
+    assert.match(system, /The presence of an open workspace does not make a conversational prompt into a project task/)
+    assert.match(system, /Use cur_task_state only when you have determined that at least one real tool call is necessary/)
+    assert.match(system, /<non_agentic_examples>[\s\S]*USER: Hi[\s\S]*ASSISTANT FINAL: Hi! What can I help you with\?/)
     assert.doesNotMatch(system, /\bOpenCode\b/i)
     assert.equal(provider.requests[0].toolChoice, 'auto')
     assert.ok(provider.requests[0].tools?.some((tool) => tool.name === 'web_search'))
