@@ -13,10 +13,12 @@ import type { ConnectionSecurityStatus } from '../../main/connectionStore'
 import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../../shared/conversationExport'
 import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinementTarget } from '../../shared/promptRefinement'
 import type { TerminalExitEvent, TerminalInterventionRequest, TerminalInterventionResolution, TerminalOutputEvent, TerminalRevealEvent, TerminalSessionEvent, TerminalSessionInfo } from '../../shared/terminal'
+import { usesNativeWindowControls } from '../../shared/platform'
 
 declare global {
   interface Window {
     api: {
+      platform: string
       minimize: () => void
       toggleMaximize: () => void
       runWindowCommand: (command: WindowCommand) => void
@@ -94,7 +96,9 @@ interface WindowControlsProps {
   showMaximize?: boolean
 }
 
-export default function WindowControls({ showMaximize = false }: WindowControlsProps): JSX.Element {
+export default function WindowControls({ showMaximize = false }: WindowControlsProps): JSX.Element | null {
+  if (usesNativeWindowControls(window.api.platform)) return null
+
   return (
     <div className="window-controls">
       <button className="win-btn win-btn-minimize" onClick={() => window.api.minimize()} aria-label="Minimize">

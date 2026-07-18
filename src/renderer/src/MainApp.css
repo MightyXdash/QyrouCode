@@ -200,6 +200,10 @@
   z-index: 90;
 }
 
+.app-titlebar.native-window-controls {
+  padding-right: 0;
+}
+
 .titlebar-actions {
   position: relative;
   display: flex;
@@ -216,6 +220,10 @@
   bottom: 0;
   left: var(--app-titlebar-drag-start);
   -webkit-app-region: drag;
+}
+
+.native-window-controls .titlebar-drag-region {
+  right: 0;
 }
 
 .titlebar-icon-button,

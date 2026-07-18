@@ -20,6 +20,7 @@ import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/ag
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
 import type { ConversationExportRequest } from '../../shared/conversationExport'
+import { DESKTOP_PLATFORMS, usesNativeWindowControls } from '../../shared/platform'
 import SettingsDialog, {
   type LocalModelDownloadState,
   type SettingsConnectionRequest,
@@ -426,6 +427,7 @@ function normalizeRestoredThread(thread: ChatThread): ChatThread {
 }
 
 export default function MainApp(): JSX.Element {
+  const nativeWindowControls = usesNativeWindowControls(window.api.platform)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [promptEditorRevision, setPromptEditorRevision] = useState(0)
@@ -1723,12 +1725,12 @@ export default function MainApp(): JSX.Element {
 
   return (
     <>
-      <header className="app-titlebar">
+      <header className={nativeWindowControls ? 'app-titlebar native-window-controls' : 'app-titlebar'}>
         <div className="titlebar-actions">
           <button className="titlebar-icon-button" type="button" aria-label="Toggle sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((current) => !current)}><PanelLeft size={16} /></button>
           <button className="titlebar-icon-button" type="button" aria-label="Go back" disabled><ChevronLeft size={16} /></button>
           <button className="titlebar-icon-button" type="button" aria-label="Go forward" disabled><ChevronRight size={16} /></button>
-          {!navigator.userAgent.includes('Mac OS X') && <nav className="titlebar-menu" aria-label="Application menu" ref={titlebarMenuRef}>
+          {window.api.platform !== DESKTOP_PLATFORMS.macOS && <nav className="titlebar-menu" aria-label="Application menu" ref={titlebarMenuRef}>
             {(Object.keys(TITLEBAR_MENUS) as TitlebarMenuId[]).map((menuId) => (
               <div className="titlebar-menu-group" key={menuId}>
                 <button

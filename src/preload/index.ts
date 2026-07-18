@@ -14,6 +14,7 @@ import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinem
 import type { TerminalExitEvent, TerminalInterventionRequest, TerminalInterventionResolution, TerminalOutputEvent, TerminalRevealEvent, TerminalSessionEvent, TerminalSessionInfo } from '../shared/terminal'
 
 const api = {
+  platform: process.platform,
   minimize: () => ipcRenderer.send('minimize-window'),
   toggleMaximize: () => ipcRenderer.send('toggle-maximize-window'),
   runWindowCommand: (command: WindowCommand) => ipcRenderer.send('run-window-command', command),

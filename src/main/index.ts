@@ -26,6 +26,7 @@ import { getExternalProjectorSource, isModelProjectorFile, isModelWeightsFile, s
 import { MAX_PROMPT_REFINEMENT_BACKUPS, MAX_PROMPT_REFINEMENT_MODEL_ID_CHARACTERS, type PromptRefinementTarget } from '../shared/promptRefinement'
 import { refinePrompt, type PromptRefinementCandidate } from './promptRefiner'
 import { createAgentTerminalController, disposeTerminals, registerTerminalIpc } from './terminalManager'
+import { usesNativeWindowControls } from '../shared/platform'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -325,7 +326,7 @@ function createMainAppWindow(): BrowserWindow {
     resizable: true,
     maximizable: true,
     minimizable: true,
-    frame: false,
+    frame: usesNativeWindowControls(process.platform),
     title: 'SupraCode',
     show: false,
     icon: appIconPath(),
@@ -365,15 +366,16 @@ function createMacApplicationMenu(): void {
 
 function createWindow(): void {
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+  const nativeWindowControls = usesNativeWindowControls(process.platform)
 
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    frame: false,
-    resizable: false,
-    maximizable: false,
+    frame: nativeWindowControls,
+    resizable: nativeWindowControls,
+    maximizable: nativeWindowControls,
     minimizable: true,
-    title: '',
+    title: 'SupraCode',
     show: false,
     icon: appIconPath(),
     webPreferences: {
