@@ -48,6 +48,7 @@
   "build": {
     "appId": "com.supracode.app",
     "productName": "SupraCode",
+    "afterPack": "scripts/afterPack.cjs",
     "directories": {
       "buildResources": "build",
       "output": "dist"
@@ -55,6 +56,9 @@
     "files": [
       "out/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
     ],
     "extraResources": [
       {

@@ -1,7 +1,9 @@
 import { randomUUID } from 'crypto'
-import { existsSync } from 'fs'
+import { chmodSync, existsSync, statSync } from 'fs'
 import { homedir } from 'os'
-import { basename } from 'path'
+import { basename, dirname, join } from 'path'
+import { createRequire } from 'module'
+import { execFile } from 'child_process'
 import { ipcMain, type WebContents } from 'electron'
 import { spawn, type IPty } from 'node-pty'
 import type { TerminalSessionInfo } from '../shared/terminal'
@@ -10,6 +12,9 @@ const DEFAULT_COLUMNS = 80
 const DEFAULT_ROWS = 24
 const MIN_TERMINAL_DIMENSION = 1
 const MAX_TERMINAL_DIMENSION = 1000
+const UNIX_EXECUTABLE_MODE = 0o755
+const UNIX_EXECUTABLE_BITS = 0o111
+const require = createRequire(__filename)
 
 interface ManagedTerminal {
   ownerId: number
@@ -23,6 +28,19 @@ const terminals = new Map<string, ManagedTerminal>()
 function shellCommand(): string {
   if (process.platform === 'win32') return 'powershell.exe'
   return process.env['SHELL'] || '/bin/bash'
+}
+
+function ensureUnixPtyHelperExecutable(): void {
+  if (process.platform === 'win32') return
+  const nodePtyRoot = dirname(dirname(require.resolve('node-pty')))
+  const helperPaths = [
+    join(nodePtyRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+    join(nodePtyRoot, 'build', 'Release', 'spawn-helper')
+  ].map((helperPath) => helperPath
+    .replace('app.asar', 'app.asar.unpacked')
+    .replace('node_modules.asar', 'node_modules.asar.unpacked'))
+  const helperPath = helperPaths.find((candidate) => existsSync(candidate))
+  if (helperPath && !(statSync(helperPath).mode & UNIX_EXECUTABLE_BITS)) chmodSync(helperPath, UNIX_EXECUTABLE_MODE)
 }
 
 function workingDirectory(value: unknown): string {
@@ -43,10 +61,28 @@ function closeOwnedTerminals(ownerId: number): void {
   }
 }
 
+function hasChildProcess(pid: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') {
+      const command = `if (Get-CimInstance Win32_Process -Filter "ParentProcessId = ${pid}") { exit 0 } else { exit 1 }`
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { windowsHide: true }, (error) => resolve(!error))
+      return
+    }
+    execFile('/bin/ps', ['-axo', 'ppid='], { windowsHide: true }, (error, stdout) => {
+      if (error) {
+        resolve(false)
+        return
+      }
+      resolve(stdout.split(/\r?\n/u).some((parentPid) => Number(parentPid.trim()) === pid))
+    })
+  })
+}
+
 export function registerTerminalIpc(): void {
   ipcMain.handle('terminal-create', (event, cwd: unknown): TerminalSessionInfo => {
     const id = randomUUID()
     const shell = shellCommand()
+    ensureUnixPtyHelperExecutable()
     const terminal = spawn(shell, [], {
       name: 'xterm-256color',
       cols: DEFAULT_COLUMNS,
@@ -93,6 +129,10 @@ export function registerTerminalIpc(): void {
     terminals.delete(sessionId)
     terminal.process.kill()
     return true
+  })
+  ipcMain.handle('terminal-busy', async (event, sessionId: unknown): Promise<boolean> => {
+    const terminal = terminalFor(event.sender, sessionId)
+    return terminal ? hasChildProcess(terminal.process.pid) : false
   })
   ipcMain.on('terminal-dispose-all', (event) => closeOwnedTerminals(event.sender.id))
 }

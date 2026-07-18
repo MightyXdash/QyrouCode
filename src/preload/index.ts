@@ -98,6 +98,7 @@ const api = {
   attachTerminal: (sessionId: string) => ipcRenderer.send('terminal-ready', sessionId),
   writeTerminal: (sessionId: string, data: string) => ipcRenderer.send('terminal-input', sessionId, data),
   resizeTerminal: (sessionId: string, columns: number, rows: number) => ipcRenderer.send('terminal-resize', sessionId, columns, rows),
+  isTerminalBusy: (sessionId: string): Promise<boolean> => ipcRenderer.invoke('terminal-busy', sessionId),
   closeTerminal: (sessionId: string): Promise<boolean> => ipcRenderer.invoke('terminal-close', sessionId),
   onTerminalOutput: (callback: (event: TerminalOutputEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, output: TerminalOutputEvent) => callback(output)

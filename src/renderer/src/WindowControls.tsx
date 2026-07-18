@@ -75,6 +75,7 @@ declare global {
       attachTerminal: (sessionId: string) => void
       writeTerminal: (sessionId: string, data: string) => void
       resizeTerminal: (sessionId: string, columns: number, rows: number) => void
+      isTerminalBusy: (sessionId: string) => Promise<boolean>
       closeTerminal: (sessionId: string) => Promise<boolean>
       onTerminalOutput: (callback: (event: TerminalOutputEvent) => void) => () => void
       onTerminalExit: (callback: (event: TerminalExitEvent) => void) => () => void

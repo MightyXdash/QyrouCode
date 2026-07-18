@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { Plus, Terminal as TerminalIcon, X } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -8,6 +8,30 @@ import './TerminalPanel.css'
 
 const TERMINAL_FONT_SIZE = 13
 const TERMINAL_SCROLLBAR_REVEAL_RATIO = 0.1
+const TERMINAL_MIN_HEIGHT = 120
+const TERMINAL_WORKSPACE_MIN_HEIGHT = 180
+const TERMINAL_KEYBOARD_RESIZE_STEP = 20
+
+interface TerminalPanelProps {
+  cwd?: string
+  height: number
+  onClose: () => void
+  onHeightChange: (height: number) => void
+  visible: boolean
+}
+
+interface TerminalResizeState {
+  pointerId: number
+  startHeight: number
+  startY: number
+  maxHeight: number
+}
+
+interface TerminalTabIndicator {
+  left: number
+  visible: boolean
+  width: number
+}
 
 function resolvedTerminalTheme(element: HTMLElement): { background: string; foreground: string; cursor: string; selectionBackground: string } {
   const styles = getComputedStyle(element)
@@ -53,7 +77,6 @@ function TerminalView({ active, session }: { active: boolean; session: TerminalS
       if (event.sessionId === session.id) terminal.writeln(`\r\n[Process exited with code ${event.exitCode}]`)
     })
     window.api.attachTerminal(session.id)
-    terminal.focus()
     return () => {
       cancelAnimationFrame(frame)
       observer.disconnect()
@@ -67,18 +90,26 @@ function TerminalView({ active, session }: { active: boolean; session: TerminalS
   }, [session.id])
 
   useEffect(() => {
-    if (active) hostRef.current?.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea')?.focus()
+    const textarea = hostRef.current?.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea')
+    if (active) textarea?.focus({ preventScroll: true })
+    else if (document.activeElement === textarea) textarea.blur()
   }, [active])
 
   return <div className={active ? 'terminal-view active' : 'terminal-view'} ref={hostRef} />
 }
 
-export default function TerminalPanel({ cwd, onClose, visible }: { cwd?: string; onClose: () => void; visible: boolean }): JSX.Element {
+export default function TerminalPanel({ cwd, height, onClose, onHeightChange, visible }: TerminalPanelProps): JSX.Element {
   const [sessions, setSessions] = useState<TerminalSessionInfo[]>([])
   const [activeId, setActiveId] = useState('')
   const [scrollbarVisible, setScrollbarVisible] = useState(false)
+  const [tabIndicator, setTabIndicator] = useState<TerminalTabIndicator>({ left: 0, visible: false, width: 0 })
   const sessionIdsRef = useRef<string[]>([])
   const tabListRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLElement>(null)
+  const resizeRef = useRef<TerminalResizeState | null>(null)
+
+  const maximumHeight = (): number => Math.max(TERMINAL_MIN_HEIGHT, (panelRef.current?.parentElement?.clientHeight ?? height) - TERMINAL_WORKSPACE_MIN_HEIGHT)
+  const resizeTo = (nextHeight: number): void => onHeightChange(Math.min(maximumHeight(), Math.max(TERMINAL_MIN_HEIGHT, Math.round(nextHeight))))
 
   const addTerminal = async (): Promise<void> => {
     const session = await window.api.createTerminal(cwd)
@@ -89,7 +120,9 @@ export default function TerminalPanel({ cwd, onClose, visible }: { cwd?: string;
 
   const closeTerminal = async (id: string): Promise<void> => {
     const session = sessions.find((candidate) => candidate.id === id)
-    if (!session || !window.confirm(`Close ${session.title}?\n\nAny command still running in this terminal will be stopped.`)) return
+    if (!session) return
+    const busy = await window.api.isTerminalBusy(id)
+    if (busy && !window.confirm(`Close ${session.title}?\n\nA command is still running and will be stopped.`)) return
     await window.api.closeTerminal(id)
     sessionIdsRef.current = sessionIdsRef.current.filter((sessionId) => sessionId !== id)
     setSessions((current) => {
@@ -117,23 +150,80 @@ export default function TerminalPanel({ cwd, onClose, visible }: { cwd?: string;
   useEffect(() => {
     tabListRef.current?.querySelector<HTMLElement>(`[data-terminal-id="${activeId}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [activeId])
+  useLayoutEffect(() => {
+    const tabList = tabListRef.current
+    const activeTab = tabList?.querySelector<HTMLElement>(`[data-terminal-id="${activeId}"]`)
+    if (!tabList || !activeTab) {
+      setTabIndicator((current) => ({ ...current, visible: false }))
+      return
+    }
+    const syncIndicator = () => setTabIndicator({ left: activeTab.offsetLeft, visible: true, width: activeTab.offsetWidth })
+    syncIndicator()
+    const observer = new ResizeObserver(syncIndicator)
+    observer.observe(tabList)
+    observer.observe(activeTab)
+    return () => observer.disconnect()
+  }, [activeId, sessions.length])
+  useEffect(() => {
+    const constrainHeight = () => resizeTo(panelRef.current?.offsetHeight ?? height)
+    constrainHeight()
+    window.addEventListener('resize', constrainHeight)
+    return () => window.removeEventListener('resize', constrainHeight)
+  }, [])
 
   return (
     <section
       className={`${visible ? 'terminal-panel' : 'terminal-panel hidden'}${scrollbarVisible ? ' scrollbar-visible' : ''}`}
       aria-label="Terminal panel"
       aria-hidden={!visible}
+      ref={panelRef}
       onPointerMove={(event) => {
         const bounds = event.currentTarget.getBoundingClientRect()
         setScrollbarVisible(event.clientX >= bounds.right - bounds.width * TERMINAL_SCROLLBAR_REVEAL_RATIO)
       }}
       onPointerLeave={() => setScrollbarVisible(false)}
     >
+      <div
+        className="terminal-resize-handle"
+        role="separator"
+        aria-label="Resize terminal"
+        aria-orientation="horizontal"
+        aria-valuemin={TERMINAL_MIN_HEIGHT}
+        aria-valuemax={maximumHeight()}
+        aria-valuenow={height}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+          event.preventDefault()
+          resizeTo(height + (event.key === 'ArrowUp' ? TERMINAL_KEYBOARD_RESIZE_STEP : -TERMINAL_KEYBOARD_RESIZE_STEP))
+        }}
+        onPointerDown={(event) => {
+          resizeRef.current = { pointerId: event.pointerId, startHeight: height, startY: event.clientY, maxHeight: maximumHeight() }
+          event.currentTarget.setPointerCapture(event.pointerId)
+        }}
+        onPointerMove={(event) => {
+          const resize = resizeRef.current
+          if (!resize || resize.pointerId !== event.pointerId) return
+          onHeightChange(Math.min(resize.maxHeight, Math.max(TERMINAL_MIN_HEIGHT, Math.round(resize.startHeight + resize.startY - event.clientY))))
+        }}
+        onPointerUp={(event) => {
+          if (resizeRef.current?.pointerId !== event.pointerId) return
+          resizeRef.current = null
+          event.currentTarget.releasePointerCapture(event.pointerId)
+        }}
+        onLostPointerCapture={() => { resizeRef.current = null }}
+        onPointerCancel={() => { resizeRef.current = null }}
+      />
       <div className="terminal-tabs">
         <div className="terminal-tab-list" role="tablist" aria-label="Terminal sessions" ref={tabListRef} onWheel={(event) => {
           if (!event.deltaY || event.deltaX) return
           event.currentTarget.scrollLeft += event.deltaY
         }}>
+          <div
+            className={tabIndicator.visible ? 'terminal-tab-indicator visible' : 'terminal-tab-indicator'}
+            style={{ width: `${tabIndicator.width}px`, transform: `translateX(${tabIndicator.left}px)` } as CSSProperties}
+            aria-hidden="true"
+          />
           {sessions.map((session, index) => (
             <div className={session.id === activeId ? 'terminal-tab active' : 'terminal-tab'} role="presentation" data-terminal-id={session.id} key={session.id}>
               <button className="terminal-tab-select" type="button" role="tab" aria-selected={session.id === activeId} onClick={() => setActiveId(session.id)}>

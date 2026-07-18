@@ -43,6 +43,8 @@ const USER_MESSAGE_LINE_LIMITS = [20, 40] as const
 const PROMPT_REFINEMENT_SHORTCUT = 'Ctrl/Cmd+Shift+Enter'
 const TODO_VISIBLE_ITEM_COUNT = 3
 const CHAT_SCROLLBAR_REVEAL_RATIO = 0.1
+const DEFAULT_TERMINAL_HEIGHT = 320
+const TERMINAL_HEIGHT_STORAGE_KEY = 'supracode.terminal.height'
 
 interface ComposerModel {
   id: string
@@ -436,6 +438,10 @@ export default function MainApp(): JSX.Element {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [terminalMounted, setTerminalMounted] = useState(false)
+  const [terminalHeight, setTerminalHeight] = useState(() => {
+    const storedHeight = Number(localStorage.getItem(TERMINAL_HEIGHT_STORAGE_KEY))
+    return Number.isFinite(storedHeight) && storedHeight > 0 ? storedHeight : DEFAULT_TERMINAL_HEIGHT
+  })
   const [chatScrollbarVisible, setChatScrollbarVisible] = useState(false)
   const [theme, setTheme] = useState<ThemePreference>('system')
   const [responseStylePreference, setResponseStylePreference] = useState<ResponseStylePreference>({ style: DEFAULT_RESPONSE_STYLE, customInstruction: '' })
@@ -1864,8 +1870,15 @@ export default function MainApp(): JSX.Element {
         </div>
         </aside>
 
-        <section className={terminalOpen ? 'app-workspace terminal-open' : 'app-workspace'}>
-        <button className={terminalOpen ? 'workspace-terminal-button active' : 'workspace-terminal-button'} type="button" aria-label="Toggle terminal" aria-expanded={terminalOpen} title="Toggle terminal" onClick={() => { setTerminalMounted(true); setTerminalOpen((current) => !current) }}><SquareTerminal size={16} /></button>
+        <section className={terminalOpen ? 'app-workspace terminal-open' : 'app-workspace'} style={{ '--terminal-panel-height': `${terminalHeight}px` } as CSSProperties}>
+        <button className={terminalOpen ? 'workspace-terminal-button active' : 'workspace-terminal-button'} type="button" aria-label="Toggle terminal" aria-expanded={terminalOpen} title="Toggle terminal" onClick={() => {
+          if (terminalOpen) {
+            setTerminalOpen(false)
+            return
+          }
+          setTerminalMounted(true)
+          requestAnimationFrame(() => setTerminalOpen(true))
+        }}><SquareTerminal size={16} /></button>
         {activeThread ? (
           <div
             className={chatScrollbarVisible ? 'conversation scrollbar-visible' : 'conversation'}
@@ -2043,7 +2056,10 @@ export default function MainApp(): JSX.Element {
           </div>
         ) : null}
 
-        {terminalMounted && <TerminalPanel cwd={selectedProjectPath || undefined} onClose={() => setTerminalOpen(false)} visible={terminalOpen} />}
+        {terminalMounted && <TerminalPanel cwd={selectedProjectPath || undefined} height={terminalHeight} onClose={() => setTerminalOpen(false)} onHeightChange={(height) => {
+          setTerminalHeight(height)
+          localStorage.setItem(TERMINAL_HEIGHT_STORAGE_KEY, String(height))
+        }} visible={terminalOpen} />}
 
         {activeThread && !autoScrollEnabled && (
           <button

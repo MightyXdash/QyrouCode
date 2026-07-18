@@ -45,11 +45,25 @@
   --titlebar-dropdown-width: 240px;
   --titlebar-dropdown-item-height: 30px;
   --terminal-panel-height: min(34dvh, 320px);
-  --terminal-tabs-height: 32px;
-  --terminal-tab-width: 190px;
+  --terminal-tabs-height: 40px;
+  --terminal-tabs-padding-top: 7px;
+  --terminal-tab-min-width: 150px;
+  --terminal-tab-label-max-width: 128px;
+  --terminal-tab-height: 28px;
+  --terminal-tab-gap: 4px;
+  --terminal-tab-icon-gap: 9px;
+  --terminal-tab-padding-inline: 9px;
+  --terminal-tab-close-size: 24px;
+  --terminal-tab-indicator-duration: 160ms;
+  --terminal-panel-motion-duration: 300ms;
+  --terminal-panel-motion-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --terminal-padding-block: 8px;
   --terminal-padding-inline: 12px;
   --terminal-scrollbar-width: 4px;
+  --terminal-resize-handle-height: 7px;
+  --terminal-resize-indicator-width: 36px;
+  --terminal-resize-indicator-height: 2px;
+  --terminal-resize-indicator-offset: 2px;
   --chat-scrollbar-width: 4px;
   --project-menu-width: 184px;
   --project-dialog-width: 420px;
@@ -457,14 +471,13 @@
 .conversation::-webkit-scrollbar-track { background: transparent; }
 .conversation::-webkit-scrollbar-thumb { border-radius: var(--radius-md); background: transparent; }
 .conversation.scrollbar-visible::-webkit-scrollbar-thumb { background: var(--surface-selected); }
-.terminal-open .conversation { bottom: var(--terminal-panel-height); }
 .terminal-open .composer-stack { bottom: calc(var(--terminal-panel-height) + var(--app-composer-bottom)); }
 .terminal-open .jump-to-latest { bottom: calc(var(--terminal-panel-height) + var(--app-composer-bottom) + var(--app-composer-min-height) + var(--jump-to-latest-todo-clearance) + 12px); }
 .conversation-inner { width: min(calc(100% - (var(--app-page-padding) * 2)), var(--app-content-max-width)); min-height: 100%; margin: 0 auto; padding: 54px 0 var(--conversation-bottom-clearance); }
 .conversation-inner.with-todo-dock { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--todo-dock-expanded-clearance)); }
 .conversation-inner.with-todo-dock.todo-dock-collapsed { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--todo-dock-collapsed-clearance)); }
 .conversation h1 { margin: 0 0 34px; color: var(--text-strong); font-size: 18px; font-weight: 500; line-height: 1.2; }
-.composer-stack { position: absolute; z-index: 4; right: 0; bottom: var(--app-composer-bottom); left: 0; display: flex; flex-direction: column; align-items: center; width: var(--composer-stack-width); margin: auto; }
+.composer-stack { position: absolute; z-index: 4; right: 0; bottom: var(--app-composer-bottom); left: 0; display: flex; flex-direction: column; align-items: center; width: var(--composer-stack-width); margin: auto; transition: bottom var(--terminal-panel-motion-duration) var(--terminal-panel-motion-ease-out); }
 .composer-stack.new-thread { display: contents; }
 .app-workspace:has(.todo-dock:not(.collapsed)) { --jump-to-latest-todo-clearance: var(--todo-dock-expanded-clearance); }
 .app-workspace:has(.todo-dock.collapsed) { --jump-to-latest-todo-clearance: var(--todo-dock-collapsed-clearance); }
@@ -887,7 +900,7 @@
 @media (prefers-reduced-motion: reduce) {
   .app-workspace, .project-threads-shell, .project-thread, .project-show-more, .project-thread-rename-input { transition-duration: 0ms; transition-delay: 0ms; }
   .sidebar-collapsed .app-sidebar { transition-delay: 0ms; }
-  .todo-dock-list-shell, .todo-dock-chevron { transition-duration: 0ms; }
+  .todo-dock-list-shell, .todo-dock-chevron, .composer-stack { transition-duration: 0ms; }
   .todo-dock-item.in_progress svg { animation: none; }
   .prompt-refinement-button.busy svg { animation: none; }
 }
