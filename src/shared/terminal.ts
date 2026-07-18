@@ -1,6 +1,6 @@
 export type TerminalCreator = 'user' | 'agent'
 export type TerminalState = 'idle' | 'busy' | 'exited'
-export type TerminalInterventionKind = 'approval' | 'busy-close' | 'user-input'
+export type TerminalInterventionKind = 'busy-close' | 'user-input'
 
 export interface TerminalSessionInfo {
   id: string

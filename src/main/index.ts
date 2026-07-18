@@ -6,7 +6,7 @@ import { writeFile } from 'fs/promises'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExecutionApprovalPolicy, getExpandedProjectPaths, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
+import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
@@ -798,7 +798,7 @@ app.whenReady().then(() => {
       projectPath: project.path,
       signal: controller.signal,
       model,
-      terminalController: createAgentTerminalController(event.sender, project.path, request.threadId, getExecutionApprovalPolicy(), controller.signal)
+      terminalController: createAgentTerminalController(event.sender, project.path, request.threadId, controller.signal)
     }
     void runner(
       agentRequest,

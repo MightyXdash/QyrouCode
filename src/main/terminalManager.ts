@@ -6,7 +6,6 @@ import { createRequire } from 'module'
 import { execFile, spawn as spawnProcess } from 'child_process'
 import { ipcMain, shell as electronShell, type WebContents } from 'electron'
 import { spawn, type IPty } from 'node-pty'
-import type { ExecutionApprovalPolicy } from '../shared/settings'
 import type {
   TerminalCreator,
   TerminalInterventionRequest,
@@ -34,7 +33,6 @@ const COMMAND_START_GRACE_MS = 750
 const UNIX_EXECUTABLE_MODE = 0o755
 const UNIX_EXECUTABLE_BITS = 0o111
 const CATASTROPHIC_COMMAND = /(?:\brm\s+-rf\s+(?:\/|~)|\bRemove-Item\b[^\r\n]*-Recurse[^\r\n]*(?:[A-Za-z]:\\|\s\/)|\b(?:shutdown|reboot|format)\b|\bgit\s+(?:reset\s+--hard|clean\s+-[^\s]*f))/i
-const HIGH_RISK_COMMAND = /(?:\bsudo\b|\brunas\b|\bnpm\s+(?:install|uninstall|publish)\b|\b(?:pip|pip3|uv)\s+install\b|\b(?:curl|wget)\b|\bhf\s+download\b|\bhuggingface-cli\s+download\b|\bdocker\s+(?:run|push|login)\b|\bgit\s+push\b)/i
 const nodeRequire = createRequire(__filename)
 
 interface ManagedTerminal {
@@ -59,16 +57,15 @@ interface CreateTerminalInput {
 export interface AgentTerminalController {
   create(title?: string): TerminalSessionInfo
   list(): Promise<TerminalSessionInfo[]>
-  show(sessionId: string): void
   setTitle(sessionId: string, title: string): TerminalSessionInfo
-  run(sessionId: string, command: string, userMessage?: TerminalUserMessage): Promise<TerminalSessionInfo>
-  write(sessionId: string, data: string, userMessage?: TerminalUserMessage): Promise<void>
-  sendKey(sessionId: string, key: string, userMessage: TerminalUserMessage): Promise<void>
+  run(sessionId: string, command: string): Promise<TerminalSessionInfo>
+  write(sessionId: string, data: string): Promise<void>
+  sendKey(sessionId: string, key: string): Promise<void>
   read(sessionId: string, cursor?: number, limit?: number): TerminalTranscriptResult
   wait(sessionId: string, cursor: number, until: 'output' | 'pattern' | 'idle' | 'exit', timeoutMs: number, pattern?: string): Promise<TerminalWaitResult>
   status(sessionId: string): Promise<TerminalSessionInfo>
-  interrupt(sessionId: string, userMessage: TerminalUserMessage): Promise<void>
-  clear(sessionId: string, userMessage: TerminalUserMessage): Promise<void>
+  interrupt(sessionId: string): Promise<void>
+  clear(sessionId: string): Promise<void>
   close(sessionId: string, userMessage: TerminalUserMessage): Promise<'closed' | 'denied'>
   requestUserInput(sessionId: string, userMessage: TerminalUserMessage, mode: 'pause' | 'continue'): Promise<'completed' | 'cancelled' | 'continuing'>
   openUrl(url: string, userMessage: TerminalUserMessage, sessionId?: string): Promise<void>
@@ -252,15 +249,6 @@ function requestIntervention(owner: WebContents, request: Omit<TerminalIntervent
   })
 }
 
-function shouldApprove(policy: ExecutionApprovalPolicy, highRisk: boolean): boolean {
-  return policy === 'always' || (policy === 'high-risk' && highRisk)
-}
-
-async function approved(owner: WebContents, policy: ExecutionApprovalPolicy, request: Omit<TerminalInterventionRequest, 'id' | 'waitsForResolution'>, highRisk: boolean, signal?: AbortSignal): Promise<boolean> {
-  if (!shouldApprove(policy, highRisk)) return true
-  return requestIntervention(owner, { ...request, waitsForResolution: true }, signal)
-}
-
 function workspacePath(projectPath: string, value: string): string {
   const target = resolve(projectPath, value)
   const relation = relative(projectPath, target)
@@ -348,27 +336,17 @@ function closeOwnedTerminals(ownerId: number): void {
 }
 
 function createNoticeTerminal(owner: WebContents, projectPath: string, threadId: string, sessionId?: string): ManagedTerminal {
-  return sessionId ? requireProjectSession(owner.id, projectPath, sessionId) : createTerminal(owner, { projectPath, threadId, creator: 'agent', title: 'Activity', reveal: true })
+  return sessionId ? requireProjectSession(owner.id, projectPath, sessionId) : createTerminal(owner, { projectPath, threadId, creator: 'agent', title: 'Activity', reveal: false })
 }
 
-export function createAgentTerminalController(owner: WebContents, projectPath: string, threadId: string, policy: ExecutionApprovalPolicy, signal?: AbortSignal): AgentTerminalController {
+export function createAgentTerminalController(owner: WebContents, projectPath: string, threadId: string, signal?: AbortSignal): AgentTerminalController {
   const ensureActive = (): void => signal?.throwIfAborted()
-  const approveAction = (terminal: ManagedTerminal | undefined, userMessage: TerminalUserMessage | undefined, title: string, impact: string, highRisk: boolean): Promise<boolean> => approved(owner, policy, {
-    kind: 'approval', terminalId: terminal?.info.id, title,
-    reason: safeText(userMessage?.reason, 'This action is needed to continue the task.'),
-    instruction: userMessage?.instruction ? safeText(userMessage.instruction, '') : undefined,
-    impact, approveLabel: 'Continue', cancelLabel: 'Cancel'
-  }, highRisk, signal)
   return {
-    create: (title) => ({ ...createTerminal(owner, { projectPath, threadId, creator: 'agent', title, reveal: true }).info }),
+    create: (title) => ({ ...createTerminal(owner, { projectPath, threadId, creator: 'agent', title, reveal: false }).info }),
     list: async () => {
       const matches = [...terminals.values()].filter((terminal) => terminal.owner.id === owner.id && terminal.info.projectPath === projectPath)
       await Promise.all(matches.map(refreshState))
       return matches.map((terminal) => ({ ...terminal.info }))
-    },
-    show: (sessionId) => {
-      requireProjectSession(owner.id, projectPath, sessionId)
-      if (!owner.isDestroyed()) owner.send('terminal-reveal', { sessionId })
     },
     setTitle: (sessionId, title) => {
       const terminal = requireProjectSession(owner.id, projectPath, sessionId)
@@ -376,14 +354,13 @@ export function createAgentTerminalController(owner: WebContents, projectPath: s
       emitSession(terminal, 'updated')
       return { ...terminal.info }
     },
-    run: async (sessionId, command, userMessage) => {
+    run: async (sessionId, command) => {
       ensureActive()
       const terminal = requireWritableSession(owner.id, projectPath, sessionId)
       if (!command.trim() || command.includes('\0')) throw new Error('Command must be non-empty text')
       if (CATASTROPHIC_COMMAND.test(command)) throw new Error('Command is blocked because it could destructively remove system or repository data')
       if (await refreshState(terminal) === 'busy') throw new Error('A command is already running in this terminal; use terminal_write or create another terminal')
-      if (!await approveAction(terminal, userMessage, 'Run this command?', `Run “${commandSummary(command)}” in ${terminal.info.title}.`, HIGH_RISK_COMMAND.test(command))) throw new Error('The user denied the terminal command')
-      if (terminal.inputBuffer || await refreshState(terminal) === 'busy') throw new Error('The terminal changed while approval was pending; inspect it before sending another command')
+      if (terminal.inputBuffer) throw new Error('The user is currently typing in this terminal; inspect it before sending another command')
       terminal.info.currentCommand = command.trim().slice(0, 500)
       terminal.commandStartedAt = Date.now()
       terminal.info.state = 'busy'
@@ -392,17 +369,15 @@ export function createAgentTerminalController(owner: WebContents, projectPath: s
       terminal.process.write(`${command}\r`)
       return { ...terminal.info }
     },
-    write: async (sessionId, data, userMessage) => {
+    write: async (sessionId, data) => {
       ensureActive()
       const terminal = requireWritableSession(owner.id, projectPath, sessionId)
-      if (!await approveAction(terminal, userMessage, 'Send terminal input?', 'The text will be entered into the active terminal.', false)) throw new Error('The user denied terminal input')
       recordUserInput(terminal, data)
       terminal.process.write(data)
     },
-    sendKey: async (sessionId, key, userMessage) => {
+    sendKey: async (sessionId, key) => {
       ensureActive()
       const terminal = requireWritableSession(owner.id, projectPath, sessionId)
-      if (!await approveAction(terminal, userMessage, 'Send a terminal key?', `The ${key} key will be sent to ${terminal.info.title}.`, ['CTRL_C', 'CTRL_D', 'CTRL_Z'].includes(key))) throw new Error('The user denied the terminal key')
       const data = keyData(key)
       recordUserInput(terminal, data)
       terminal.process.write(data)
@@ -449,15 +424,13 @@ export function createAgentTerminalController(owner: WebContents, projectPath: s
       await refreshState(terminal)
       return { ...terminal.info }
     },
-    interrupt: async (sessionId, userMessage) => {
+    interrupt: async (sessionId) => {
       const terminal = requireWritableSession(owner.id, projectPath, sessionId)
       if (await refreshState(terminal) !== 'busy') throw new Error('This terminal does not have a running command to interrupt')
-      if (!await approveAction(terminal, userMessage, 'Interrupt this command?', 'The running command will be interrupted while the terminal stays open.', true)) throw new Error('The user denied the interrupt')
       terminal.process.write('\u0003')
     },
-    clear: async (sessionId, userMessage) => {
+    clear: async (sessionId) => {
       const terminal = requireProjectSession(owner.id, projectPath, sessionId)
-      if (!await approveAction(terminal, userMessage, 'Clear this terminal?', 'Visible terminal output will be cleared.', false)) throw new Error('The user denied clearing the terminal')
       appendOutput(terminal, '\u001b[2J\u001b[H')
     },
     close: async (sessionId, userMessage) => {
@@ -489,38 +462,30 @@ export function createAgentTerminalController(owner: WebContents, projectPath: s
     openUrl: async (url, userMessage, sessionId) => {
       const parsed = new URL(url)
       if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only HTTP and HTTPS URLs can be opened')
-      const existing = sessionId ? createNoticeTerminal(owner, projectPath, threadId, sessionId) : undefined
-      if (!await approveAction(existing, userMessage, 'Open this website?', parsed.toString(), true)) throw new Error('The user denied opening the website')
-      const terminal = existing ?? createNoticeTerminal(owner, projectPath, threadId)
-      systemOutput(terminal, `Opening ${parsed.hostname} in the default browser.`)
+      const terminal = createNoticeTerminal(owner, projectPath, threadId, sessionId)
+      systemOutput(terminal, `${safeText(userMessage.reason, 'The requested website is being opened.')} Opening ${parsed.hostname} in the default browser.`)
       await electronShell.openExternal(parsed.toString())
     },
     openPath: async (path, userMessage, sessionId) => {
       const target = workspacePath(projectPath, path)
       if (!existsSync(target)) throw new Error('The requested path does not exist')
-      const existing = sessionId ? createNoticeTerminal(owner, projectPath, threadId, sessionId) : undefined
-      if (!await approveAction(existing, userMessage, 'Open this item?', `The operating system will open ${basename(target)}.`, true)) throw new Error('The user denied opening the item')
-      const terminal = existing ?? createNoticeTerminal(owner, projectPath, threadId)
-      systemOutput(terminal, `Opening ${basename(target)}.`)
+      const terminal = createNoticeTerminal(owner, projectPath, threadId, sessionId)
+      systemOutput(terminal, `${safeText(userMessage.reason, 'The requested item is being opened.')} Opening ${basename(target)}.`)
       const error = await electronShell.openPath(target)
       if (error) throw new Error(error)
     },
     revealPath: async (path, userMessage, sessionId) => {
       const target = workspacePath(projectPath, path)
       if (!existsSync(target)) throw new Error('The requested path does not exist')
-      const existing = sessionId ? createNoticeTerminal(owner, projectPath, threadId, sessionId) : undefined
-      if (!await approveAction(existing, userMessage, 'Reveal this item?', `The file manager will show ${basename(target)}.`, true)) throw new Error('The user denied revealing the item')
-      const terminal = existing ?? createNoticeTerminal(owner, projectPath, threadId)
-      systemOutput(terminal, `Revealing ${basename(target)} in the file manager.`)
+      const terminal = createNoticeTerminal(owner, projectPath, threadId, sessionId)
+      systemOutput(terminal, `${safeText(userMessage.reason, 'The requested item is being revealed.')} Revealing ${basename(target)} in the file manager.`)
       electronShell.showItemInFolder(target)
     },
     launchApp: async (target, userMessage, sessionId) => {
       const application = safeText(target, '', 160)
       if (!application) throw new Error('An application name or executable is required')
-      const existing = sessionId ? createNoticeTerminal(owner, projectPath, threadId, sessionId) : undefined
-      if (!await approveAction(existing, userMessage, 'Launch this application?', `The operating system will launch ${application}.`, true)) throw new Error('The user denied launching the application')
-      const terminal = existing ?? createNoticeTerminal(owner, projectPath, threadId)
-      systemOutput(terminal, `Launching ${application}.`)
+      const terminal = createNoticeTerminal(owner, projectPath, threadId, sessionId)
+      systemOutput(terminal, `${safeText(userMessage.reason, 'The requested application is being launched.')} Launching ${application}.`)
       if (process.platform === 'darwin') await new Promise<void>((resolvePromise, reject) => execFile('/usr/bin/open', ['-a', application], (error) => error ? reject(error) : resolvePromise()))
       else if (process.platform === 'linux' && existsSync('/usr/bin/gtk-launch')) await new Promise<void>((resolvePromise, reject) => execFile('/usr/bin/gtk-launch', [application], (error) => error ? reject(error) : resolvePromise()))
       else {

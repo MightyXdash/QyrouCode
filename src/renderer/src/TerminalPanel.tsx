@@ -148,6 +148,7 @@ export default function TerminalPanel({ cwd, height, onClose, onHeightChange, on
       })
       return
     }
+    if (event.type === 'created') setActiveId((current) => current || event.session.id)
     setSessions((current) => current.some((session) => session.id === event.session.id)
       ? current.map((session) => session.id === event.session.id ? event.session : session)
       : [...current, event.session])
@@ -171,7 +172,7 @@ export default function TerminalPanel({ cwd, height, onClose, onHeightChange, on
   useEffect(() => {
     if (!sessionsLoaded) return
     window.api.updateTerminalUiState(visible, activeId)
-  }, [activeId, sessionsLoaded, visible])
+  }, [activeId, sessions.length, sessionsLoaded, visible])
   useEffect(() => {
     tabListRef.current?.querySelector<HTMLElement>(`[data-terminal-id="${activeId}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [activeId])

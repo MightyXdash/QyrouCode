@@ -823,6 +823,21 @@
   object-fit: contain;
 }
 
+.settings-provider-brand-icon {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--text-on-color);
+}
+
+.settings-provider-brand-icon img {
+  width: 20px;
+  height: 20px;
+}
+
 .settings-provider-copy {
   display: flex;
   min-width: 0;

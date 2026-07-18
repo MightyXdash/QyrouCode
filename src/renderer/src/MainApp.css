@@ -44,8 +44,8 @@
   --app-titlebar-drag-start: 300px;
   --macos-titlebar-height: 54px;
   --macos-sidebar-content-start: 48px;
-  --macos-traffic-light-clearance: 104px;
-  --macos-titlebar-drag-start: 146px;
+  --macos-traffic-light-clearance: 92px;
+  --macos-titlebar-drag-start: 134px;
   --titlebar-menu-trigger-height: 25px;
   --titlebar-dropdown-width: 240px;
   --titlebar-dropdown-item-height: 30px;
@@ -222,11 +222,6 @@
   margin-left: var(--macos-traffic-light-clearance);
 }
 
-.macos-titlebar .titlebar-icon-button {
-  height: var(--app-control-height);
-  border-radius: var(--radius-md);
-}
-
 .titlebar-actions {
   position: relative;
   display: flex;
@@ -270,7 +265,8 @@
 
 .titlebar-icon-button {
   width: var(--app-titlebar-control-width);
-  height: 100%;
+  height: var(--app-control-height);
+  border-radius: var(--radius-md);
 }
 
 .titlebar-icon-button:first-child {
@@ -530,6 +526,7 @@
 .conversation-inner.with-todo-dock.todo-dock-collapsed { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance) + var(--todo-dock-collapsed-clearance)); }
 .conversation h1 { margin: 0 0 34px; color: var(--text-strong); font-size: 18px; font-weight: 500; line-height: 1.2; }
 .composer-stack { position: absolute; z-index: 4; right: 0; bottom: var(--app-composer-bottom); left: 0; display: flex; flex-direction: column; align-items: center; width: var(--composer-stack-width); margin: auto; transition: bottom var(--terminal-panel-motion-duration) var(--terminal-panel-motion-ease-out); }
+.app-workspace:has(.terminal-resize-handle:active) .composer-stack { transition: none; }
 .composer-stack.new-thread { display: contents; }
 .app-workspace:has(.todo-dock:not(.collapsed)) { --jump-to-latest-todo-clearance: var(--todo-dock-expanded-clearance); }
 .app-workspace:has(.todo-dock.collapsed) { --jump-to-latest-todo-clearance: var(--todo-dock-collapsed-clearance); }

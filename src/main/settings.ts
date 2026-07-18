@@ -4,7 +4,6 @@ import {
   DEFAULT_RESPONSE_STYLE,
   type OnboardingPreferences,
   type OnboardingState,
-  type ExecutionApprovalPolicy,
   type SettingsStoreData,
   type ThemePreference,
   type ResponseStylePreference,
@@ -53,9 +52,6 @@ export const getTheme = (): ThemePreference =>
 
 export const getSelectedContextWindowTokens = (): number =>
   settingsStore.get('onboardingPreferences')?.contextWindowTokens ?? FIRST_LOAD_CONTEXT_TOKENS
-
-export const getExecutionApprovalPolicy = (): ExecutionApprovalPolicy =>
-  settingsStore.get('onboardingPreferences')?.executionApproval ?? 'high-risk'
 
 export const getResponseStylePreference = (): ResponseStylePreference => {
   const preferences = settingsStore.get('onboardingPreferences')

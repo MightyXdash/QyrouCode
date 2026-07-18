@@ -41,6 +41,13 @@ test('visible terminal tools are available only to the root toolbox with a termi
       assert.equal(ordinaryNames.has(name), false)
       assert.equal(readOnlyNames.has(name), false)
     }
+    assert.equal(rootNames.has('terminal_show'), false)
+    const rootDefinitions = new Map(new AgentToolbox({ projectPath, terminalController }).definitions.map((tool) => [tool.name, tool]))
+    const runParameters = rootDefinitions.get('terminal_run')?.parameters as { properties: Record<string, unknown>; required: string[] }
+    const launchParameters = rootDefinitions.get('launch_app')?.parameters as { properties: Record<string, unknown>; required: string[] }
+    assert.equal(runParameters.properties.user_message, undefined)
+    assert.equal(runParameters.required.includes('user_message'), false)
+    assert.equal(launchParameters.required.includes('user_message'), true)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

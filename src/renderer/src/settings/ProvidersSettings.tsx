@@ -60,7 +60,9 @@ export default function ProvidersSettings({ connections, onConfigure }: Provider
               return (
                 <button className="settings-provider-row" type="button" key={provider.kind} onClick={() => onConfigure(provider, connection)}>
                   <span className="settings-provider-icon" aria-hidden="true">
-                    {providerImageIcons[provider.kind] ? <img src={providerImageIcons[provider.kind]} alt="" /> : fallbackProviderIcons[provider.kind] ?? provider.kind.toUpperCase()}
+                    {providerImageIcons[provider.kind] ? (
+                      <span className="settings-provider-brand-icon"><img src={providerImageIcons[provider.kind]} alt="" /></span>
+                    ) : fallbackProviderIcons[provider.kind] ?? provider.kind.toUpperCase()}
                   </span>
                   <span className="settings-provider-copy">
                     <strong>{provider.displayName}</strong>

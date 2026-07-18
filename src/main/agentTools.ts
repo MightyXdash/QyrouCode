@@ -45,7 +45,7 @@ const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules', 'dist', 'out', 'bui
 const DANGEROUS_COMMAND = /(?:\brm\s+-rf\s+(?:\/|~)|\bRemove-Item\b[^\r\n]*-Recurse[^\r\n]*(?:[A-Za-z]:\\|\s\/)|\b(?:shutdown|reboot|format)\b|\bgit\s+(?:reset\s+--hard|clean\s+-[^\s]*f))/i
 const READ_ONLY_COMMAND = /^\s*(?:git\s+(?:status|diff|log|show|branch|rev-parse|ls-files)\b|rg\b|grep\b|find\b|ls\b|pwd\b|cat\b|head\b|tail\b|wc\b|Get-ChildItem\b|Get-Content\b|Select-String\b)/i
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
-const TERMINAL_TOOL_NAMES = new Set(['terminal_create', 'terminal_list', 'terminal_show', 'terminal_set_title', 'terminal_run', 'terminal_write', 'terminal_send_key', 'terminal_read', 'terminal_wait', 'terminal_status', 'terminal_interrupt', 'terminal_clear', 'terminal_close', 'terminal_request_user_input', 'open_url', 'open_path', 'reveal_path', 'launch_app'])
+const TERMINAL_TOOL_NAMES = new Set(['terminal_create', 'terminal_list', 'terminal_set_title', 'terminal_run', 'terminal_write', 'terminal_send_key', 'terminal_read', 'terminal_wait', 'terminal_status', 'terminal_interrupt', 'terminal_clear', 'terminal_close', 'terminal_request_user_input', 'open_url', 'open_path', 'reveal_path', 'launch_app'])
 export const TASK_STATE_TOOL_NAME = 'cur_task_state'
 const UI_MESSAGE_PROPERTY = {
   type: 'object',
@@ -121,27 +121,23 @@ const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
     command: { type: 'string' },
     timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_COMMAND_TIMEOUT_MS }
   }, ['command']),
-  definition('terminal_create', 'Create a visible interactive terminal for long-running, inspectable, background, or human-assisted work. The new tab opens once.', {
+  definition('terminal_create', 'Create an interactive background terminal. It appears as a tab if the terminal panel is already open, but never opens the panel.', {
     title: { type: 'string', description: 'Short friendly tab title' }
   }),
-  definition('terminal_list', 'List visible terminal sessions for this project with their IDs, state, commands, and transcript cursors.', {}),
-  definition('terminal_show', 'Open the terminal panel and activate a session. Do not repeatedly reopen a panel the user hid.', {
-    sessionId: { type: 'string' }
-  }, ['sessionId']),
+  definition('terminal_list', 'List terminal sessions for this project with their IDs, state, commands, transcript cursors, and panel visibility.', {}),
   definition('terminal_set_title', 'Rename a visible terminal tab.', {
     sessionId: { type: 'string' }, title: { type: 'string' }
   }, ['sessionId', 'title']),
-  definition('terminal_run', 'Type an exact command into a visible terminal and press Enter. This starts the command without waiting for completion.', {
-    sessionId: { type: 'string' }, command: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
-  }, ['sessionId', 'command', 'user_message']),
-  definition('terminal_write', 'Type exact text into an interactive visible terminal without pressing Enter.', {
-    sessionId: { type: 'string' }, data: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
-  }, ['sessionId', 'data', 'user_message']),
+  definition('terminal_run', 'Type an exact command into an interactive terminal and press Enter. This starts the command without waiting for completion or permission.', {
+    sessionId: { type: 'string' }, command: { type: 'string' }
+  }, ['sessionId', 'command']),
+  definition('terminal_write', 'Type exact text into an interactive terminal without pressing Enter.', {
+    sessionId: { type: 'string' }, data: { type: 'string' }
+  }, ['sessionId', 'data']),
   definition('terminal_send_key', 'Send a human keyboard key to a visible terminal.', {
     sessionId: { type: 'string' },
-    key: { type: 'string', enum: ['ENTER', 'TAB', 'ESCAPE', 'ARROW_UP', 'ARROW_DOWN', 'ARROW_LEFT', 'ARROW_RIGHT', 'HOME', 'END', 'PAGE_UP', 'PAGE_DOWN', 'BACKSPACE', 'DELETE', 'CTRL_C', 'CTRL_D', 'CTRL_Z', 'CTRL_L'] },
-    user_message: USER_MESSAGE_PROPERTY
-  }, ['sessionId', 'key', 'user_message']),
+    key: { type: 'string', enum: ['ENTER', 'TAB', 'ESCAPE', 'ARROW_UP', 'ARROW_DOWN', 'ARROW_LEFT', 'ARROW_RIGHT', 'HOME', 'END', 'PAGE_UP', 'PAGE_DOWN', 'BACKSPACE', 'DELETE', 'CTRL_C', 'CTRL_D', 'CTRL_Z', 'CTRL_L'] }
+  }, ['sessionId', 'key']),
   definition('terminal_read', 'Read ANSI-free terminal output from a transcript cursor without blocking.', {
     sessionId: { type: 'string' }, cursor: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: MAX_OUTPUT_CHARACTERS }
   }, ['sessionId']),
@@ -152,11 +148,11 @@ const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
     sessionId: { type: 'string' }
   }, ['sessionId']),
   definition('terminal_interrupt', 'Send Ctrl-C to interrupt a running command while keeping its terminal open.', {
-    sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
-  }, ['sessionId', 'user_message']),
+    sessionId: { type: 'string' }
+  }, ['sessionId']),
   definition('terminal_clear', 'Clear the visible terminal display.', {
-    sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
-  }, ['sessionId', 'user_message']),
+    sessionId: { type: 'string' }
+  }, ['sessionId']),
   definition('terminal_close', 'Close a terminal. A busy terminal always asks the user first and shows this friendly reason plus the impact.', {
     sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
   }, ['sessionId', 'user_message']),
@@ -377,16 +373,15 @@ export class AgentToolbox {
       case 'bash': return this.bash(args)
       case 'terminal_create': return JSON.stringify(this.terminal().create(stringArgument(args, 'title', false) || undefined))
       case 'terminal_list': return JSON.stringify(await this.terminal().list())
-      case 'terminal_show': this.terminal().show(stringArgument(args, 'sessionId')); return 'Terminal is visible.'
       case 'terminal_set_title': return JSON.stringify(this.terminal().setTitle(stringArgument(args, 'sessionId'), stringArgument(args, 'title')))
-      case 'terminal_run': return JSON.stringify(await this.terminal().run(stringArgument(args, 'sessionId'), stringArgument(args, 'command'), userMessageArgument(args)))
-      case 'terminal_write': await this.terminal().write(stringArgument(args, 'sessionId'), stringArgument(args, 'data', false), userMessageArgument(args)); return 'Terminal input was sent.'
-      case 'terminal_send_key': await this.terminal().sendKey(stringArgument(args, 'sessionId'), stringArgument(args, 'key'), userMessageArgument(args)); return 'Terminal key was sent.'
+      case 'terminal_run': return JSON.stringify(await this.terminal().run(stringArgument(args, 'sessionId'), stringArgument(args, 'command')))
+      case 'terminal_write': await this.terminal().write(stringArgument(args, 'sessionId'), stringArgument(args, 'data', false)); return 'Terminal input was sent.'
+      case 'terminal_send_key': await this.terminal().sendKey(stringArgument(args, 'sessionId'), stringArgument(args, 'key')); return 'Terminal key was sent.'
       case 'terminal_read': return JSON.stringify(this.terminal().read(stringArgument(args, 'sessionId'), optionalIntegerArgument(args, 'cursor'), optionalIntegerArgument(args, 'limit')))
       case 'terminal_wait': return JSON.stringify(await this.terminal().wait(stringArgument(args, 'sessionId'), integerArgument(args, 'cursor', 0, 0, Number.MAX_SAFE_INTEGER), stringArgument(args, 'until') as 'output' | 'pattern' | 'idle' | 'exit', integerArgument(args, 'timeoutMs', 10000, 1000, 120000), stringArgument(args, 'pattern', false) || undefined))
       case 'terminal_status': return JSON.stringify(await this.terminal().status(stringArgument(args, 'sessionId')))
-      case 'terminal_interrupt': await this.terminal().interrupt(stringArgument(args, 'sessionId'), userMessageArgument(args)); return 'Terminal command was interrupted.'
-      case 'terminal_clear': await this.terminal().clear(stringArgument(args, 'sessionId'), userMessageArgument(args)); return 'Terminal was cleared.'
+      case 'terminal_interrupt': await this.terminal().interrupt(stringArgument(args, 'sessionId')); return 'Terminal command was interrupted.'
+      case 'terminal_clear': await this.terminal().clear(stringArgument(args, 'sessionId')); return 'Terminal was cleared.'
       case 'terminal_close': return await this.terminal().close(stringArgument(args, 'sessionId'), userMessageArgument(args))
       case 'terminal_request_user_input': return await this.terminal().requestUserInput(stringArgument(args, 'sessionId'), userMessageArgument(args), stringArgument(args, 'mode') as 'pause' | 'continue')
       case 'open_url': await this.terminal().openUrl(stringArgument(args, 'url'), userMessageArgument(args), stringArgument(args, 'sessionId', false) || undefined); return 'Website was opened.'
