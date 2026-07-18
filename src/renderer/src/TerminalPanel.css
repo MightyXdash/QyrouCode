@@ -34,3 +34,17 @@
 .terminal-view .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
 .terminal-view .xterm-viewport::-webkit-scrollbar-thumb { border-radius: var(--radius-md); background: transparent; }
 .terminal-panel.scrollbar-visible .terminal-view .xterm-viewport::-webkit-scrollbar-thumb { background: var(--surface-selected); }
+.terminal-handoff { position: absolute; z-index: 4; top: var(--terminal-handoff-inset); right: var(--terminal-handoff-inset); left: var(--terminal-handoff-inset); display: flex; align-items: center; justify-content: space-between; gap: var(--terminal-handoff-gap); padding: var(--terminal-handoff-padding); border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: var(--shadow-md); color: var(--text-base); font: 12px/1.4 'DM Sans', sans-serif; }
+.terminal-handoff strong, .terminal-handoff span { display: block; }
+.terminal-handoff strong { color: var(--text-strong); font-weight: 500; }
+.terminal-handoff-actions, .terminal-confirm-actions { display: flex; flex: 0 0 auto; gap: var(--terminal-tab-gap); }
+.terminal-handoff button, .terminal-confirm button { min-height: var(--app-control-height); padding: 0 var(--app-menu-item-padding-inline); border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-md); background: transparent; color: var(--text-base); font: 12px 'DM Sans', sans-serif; cursor: pointer; }
+.terminal-handoff button:hover, .terminal-confirm button:hover { background: var(--surface-hover); color: var(--text-strong); }
+.terminal-handoff button.primary { background: var(--text-strong); color: var(--background-base); }
+.terminal-confirm-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: var(--app-page-padding); background: var(--terminal-confirm-backdrop); backdrop-filter: var(--filter-backdrop-todo); }
+.terminal-confirm { width: min(100%, var(--terminal-confirm-width)); padding: var(--terminal-confirm-padding); border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-lg); background: var(--surface-raised); box-shadow: var(--shadow-lg); color: var(--text-base); font: 13px/1.5 'DM Sans', sans-serif; }
+.terminal-confirm h2 { margin: 0 0 var(--terminal-handoff-gap); color: var(--text-strong); font-size: 15px; font-weight: 500; }
+.terminal-confirm p { margin: 0 0 var(--terminal-handoff-gap); }
+.terminal-confirm-impact { color: var(--text-weak); }
+.terminal-confirm-actions { justify-content: flex-end; margin-top: var(--terminal-confirm-padding); }
+.terminal-confirm button.danger { border-color: var(--surface-error); color: var(--surface-error); }

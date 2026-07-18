@@ -12,7 +12,7 @@ import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, Conn
 import type { ConnectionSecurityStatus } from '../../main/connectionStore'
 import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../../shared/conversationExport'
 import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinementTarget } from '../../shared/promptRefinement'
-import type { TerminalExitEvent, TerminalOutputEvent, TerminalSessionInfo } from '../../shared/terminal'
+import type { TerminalExitEvent, TerminalInterventionRequest, TerminalInterventionResolution, TerminalOutputEvent, TerminalRevealEvent, TerminalSessionEvent, TerminalSessionInfo } from '../../shared/terminal'
 
 declare global {
   interface Window {
@@ -71,12 +71,19 @@ declare global {
       cancelLocalCompletion: (requestId: string) => Promise<boolean>
       onLocalCompletionEvent: (callback: (event: LocalCompletionEvent) => void) => () => void
       stopLlamaServer: () => Promise<LlamaRuntimeStatus>
-      createTerminal: (cwd?: string) => Promise<TerminalSessionInfo>
+      listTerminals: () => Promise<TerminalSessionInfo[]>
+      listTerminalInterventions: () => Promise<TerminalInterventionRequest[]>
+      createTerminal: (cwd?: string, projectPath?: string) => Promise<TerminalSessionInfo>
       attachTerminal: (sessionId: string) => void
       writeTerminal: (sessionId: string, data: string) => void
       resizeTerminal: (sessionId: string, columns: number, rows: number) => void
-      isTerminalBusy: (sessionId: string) => Promise<boolean>
+      updateTerminalUiState: (visible: boolean, activeId: string) => void
       closeTerminal: (sessionId: string) => Promise<boolean>
+      resolveTerminalIntervention: (resolution: TerminalInterventionResolution) => Promise<boolean>
+      onTerminalSessionEvent: (callback: (event: TerminalSessionEvent) => void) => () => void
+      onTerminalReveal: (callback: (event: TerminalRevealEvent) => void) => () => void
+      onTerminalIntervention: (callback: (request: TerminalInterventionRequest) => void) => () => void
+      onTerminalInterventionDismissed: (callback: (id: string) => void) => () => void
       onTerminalOutput: (callback: (event: TerminalOutputEvent) => void) => () => void
       onTerminalExit: (callback: (event: TerminalExitEvent) => void) => () => void
     }

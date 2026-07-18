@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { AgentToolbox } from '../src/main/agentTools.js'
+import type { AgentTerminalController } from '../src/main/terminalManager.js'
+
+const terminalController = {} as AgentTerminalController
 
 test('non-web tools require a compact UI message while web tools do not', () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
@@ -21,6 +24,22 @@ test('non-web tools require a compact UI message while web tools do not', () => 
         assert.deepEqual(Object.keys(uiMessage.properties ?? {}), ['uim_prt', 'uim_pat'])
         assert.ok(parameters.required.includes('ui_message'))
       }
+    }
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('visible terminal tools are available only to the root toolbox with a terminal controller', () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  try {
+    const rootNames = new Set(new AgentToolbox({ projectPath, terminalController }).definitions.map((tool) => tool.name))
+    const ordinaryNames = new Set(new AgentToolbox({ projectPath }).definitions.map((tool) => tool.name))
+    const readOnlyNames = new Set(new AgentToolbox({ projectPath, terminalController, readOnly: true }).definitions.map((tool) => tool.name))
+    for (const name of ['terminal_create', 'terminal_run', 'terminal_read', 'terminal_wait', 'terminal_request_user_input', 'open_url', 'launch_app']) {
+      assert.equal(rootNames.has(name), true)
+      assert.equal(ordinaryNames.has(name), false)
+      assert.equal(readOnlyNames.has(name), false)
     }
   } finally {
     rmSync(projectPath, { recursive: true, force: true })

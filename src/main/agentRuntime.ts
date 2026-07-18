@@ -6,6 +6,7 @@ import type { FileChangeDisplay, TodoDisplay, ToolUiMessage } from '../shared/ch
 import type { AgentModelProvenance } from '../shared/agent'
 import { COMPACTION_SYSTEM_PROMPT, buildAgentSystemPrompt } from './agentPrompt'
 import { AgentToolbox, TASK_STATE_TOOL_NAME, type AgentTaskRequest } from './agentTools'
+import type { AgentTerminalController } from './terminalManager'
 import { parseHealedToolCalls, stripToolCallMarkup } from './toolCallParser'
 
 export interface AgentCompletionProvider {
@@ -18,6 +19,7 @@ export interface AgentRunRequest extends Omit<LocalCompletionRequest, 'signal' |
   projectPath: string
   signal?: AbortSignal
   model?: AgentModelProvenance
+  terminalController?: AgentTerminalController
 }
 
 export type AgentStateListener = (messages: readonly LocalChatMessage[]) => void
@@ -165,6 +167,7 @@ export class AgentRuntime {
       projectPath: request.projectPath,
       signal: request.signal,
       readOnly,
+      terminalController: depth === 0 && !readOnly ? request.terminalController : undefined,
       runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, originalFiles, onToolEvent, visibleTaskStates) : undefined,
       onTodosChanged: (todos) => onToolEvent?.({ type: 'todos-updated', todos })
     })

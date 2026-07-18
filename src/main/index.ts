@@ -6,7 +6,7 @@ import { writeFile } from 'fs/promises'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
+import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExecutionApprovalPolicy, getExpandedProjectPaths, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
@@ -25,7 +25,7 @@ import { RemoteCompletionClient } from './remoteCompletionClient'
 import { getExternalProjectorSource, isModelProjectorFile, isModelWeightsFile, selectModelProjectorFile, type ModelTreeEntry } from '../shared/modelProjector'
 import { MAX_PROMPT_REFINEMENT_BACKUPS, MAX_PROMPT_REFINEMENT_MODEL_ID_CHARACTERS, type PromptRefinementTarget } from '../shared/promptRefinement'
 import { refinePrompt, type PromptRefinementCandidate } from './promptRefiner'
-import { disposeTerminals, registerTerminalIpc } from './terminalManager'
+import { createAgentTerminalController, disposeTerminals, registerTerminalIpc } from './terminalManager'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -781,7 +781,14 @@ app.whenReady().then(() => {
     const resumedMessages = persisted
       ? [...systemMessages, ...persisted.messages, ...(latestUserMessage && (persistedFinished || !messageContentEquals(latestUserMessage.content, persistedLastUser?.content)) ? [latestUserMessage] : [])]
       : request.messages
-    const agentRequest = { ...request, messages: resumedMessages, projectPath: project.path, signal: controller.signal, model }
+    const agentRequest = {
+      ...request,
+      messages: resumedMessages,
+      projectPath: project.path,
+      signal: controller.signal,
+      model,
+      terminalController: createAgentTerminalController(event.sender, project.path, request.threadId, getExecutionApprovalPolicy(), controller.signal)
+    }
     void runner(
       agentRequest,
       (delta) => send({ requestId, type: 'delta', delta }),

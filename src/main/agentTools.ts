@@ -5,6 +5,8 @@ import type { LocalToolDefinition } from './localCompletionClient'
 import type { TodoDisplay } from '../shared/chat'
 import { availableSkills } from './agentPrompt'
 import { formatWebSearchResults, NoApiWebClient, type WebFetchFormat } from './webSearch'
+import type { AgentTerminalController } from './terminalManager'
+import type { TerminalUserMessage } from '../shared/terminal'
 
 export interface AgentTaskRequest {
   description: string
@@ -19,6 +21,7 @@ export interface AgentToolboxOptions {
   runTask?: (request: AgentTaskRequest) => Promise<string>
   webClient?: NoApiWebClient
   onTodosChanged?: (todos: TodoDisplay[]) => void
+  terminalController?: AgentTerminalController
 }
 
 type TodoItem = TodoDisplay
@@ -42,6 +45,7 @@ const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules', 'dist', 'out', 'bui
 const DANGEROUS_COMMAND = /(?:\brm\s+-rf\s+(?:\/|~)|\bRemove-Item\b[^\r\n]*-Recurse[^\r\n]*(?:[A-Za-z]:\\|\s\/)|\b(?:shutdown|reboot|format)\b|\bgit\s+(?:reset\s+--hard|clean\s+-[^\s]*f))/i
 const READ_ONLY_COMMAND = /^\s*(?:git\s+(?:status|diff|log|show|branch|rev-parse|ls-files)\b|rg\b|grep\b|find\b|ls\b|pwd\b|cat\b|head\b|tail\b|wc\b|Get-ChildItem\b|Get-Content\b|Select-String\b)/i
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
+const TERMINAL_TOOL_NAMES = new Set(['terminal_create', 'terminal_list', 'terminal_show', 'terminal_set_title', 'terminal_run', 'terminal_write', 'terminal_send_key', 'terminal_read', 'terminal_wait', 'terminal_status', 'terminal_interrupt', 'terminal_clear', 'terminal_close', 'terminal_request_user_input', 'open_url', 'open_path', 'reveal_path', 'launch_app'])
 export const TASK_STATE_TOOL_NAME = 'cur_task_state'
 const UI_MESSAGE_PROPERTY = {
   type: 'object',
@@ -51,6 +55,16 @@ const UI_MESSAGE_PROPERTY = {
     uim_pat: { type: 'string', description: 'Past-tense label describing the completed action. Stay under six words.' }
   },
   required: ['uim_prt', 'uim_pat'],
+  additionalProperties: false
+}
+const USER_MESSAGE_PROPERTY = {
+  type: 'object',
+  description: 'Plain-language context shown to the user when approval or intervention is needed.',
+  properties: {
+    reason: { type: 'string', description: 'A short, non-technical explanation of why this helps the user.' },
+    instruction: { type: 'string', description: 'An optional plain-language action for the user.' }
+  },
+  required: ['reason'],
   additionalProperties: false
 }
 
@@ -107,6 +121,60 @@ const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
     command: { type: 'string' },
     timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_COMMAND_TIMEOUT_MS }
   }, ['command']),
+  definition('terminal_create', 'Create a visible interactive terminal for long-running, inspectable, background, or human-assisted work. The new tab opens once.', {
+    title: { type: 'string', description: 'Short friendly tab title' }
+  }),
+  definition('terminal_list', 'List visible terminal sessions for this project with their IDs, state, commands, and transcript cursors.', {}),
+  definition('terminal_show', 'Open the terminal panel and activate a session. Do not repeatedly reopen a panel the user hid.', {
+    sessionId: { type: 'string' }
+  }, ['sessionId']),
+  definition('terminal_set_title', 'Rename a visible terminal tab.', {
+    sessionId: { type: 'string' }, title: { type: 'string' }
+  }, ['sessionId', 'title']),
+  definition('terminal_run', 'Type an exact command into a visible terminal and press Enter. This starts the command without waiting for completion.', {
+    sessionId: { type: 'string' }, command: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
+  }, ['sessionId', 'command', 'user_message']),
+  definition('terminal_write', 'Type exact text into an interactive visible terminal without pressing Enter.', {
+    sessionId: { type: 'string' }, data: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
+  }, ['sessionId', 'data', 'user_message']),
+  definition('terminal_send_key', 'Send a human keyboard key to a visible terminal.', {
+    sessionId: { type: 'string' },
+    key: { type: 'string', enum: ['ENTER', 'TAB', 'ESCAPE', 'ARROW_UP', 'ARROW_DOWN', 'ARROW_LEFT', 'ARROW_RIGHT', 'HOME', 'END', 'PAGE_UP', 'PAGE_DOWN', 'BACKSPACE', 'DELETE', 'CTRL_C', 'CTRL_D', 'CTRL_Z', 'CTRL_L'] },
+    user_message: USER_MESSAGE_PROPERTY
+  }, ['sessionId', 'key', 'user_message']),
+  definition('terminal_read', 'Read ANSI-free terminal output from a transcript cursor without blocking.', {
+    sessionId: { type: 'string' }, cursor: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: MAX_OUTPUT_CHARACTERS }
+  }, ['sessionId']),
+  definition('terminal_wait', 'Pause this agent tool until terminal output, a text pattern, idle state, process exit, or timeout. Background terminal work continues while other agent tools run.', {
+    sessionId: { type: 'string' }, cursor: { type: 'integer', minimum: 0 }, until: { type: 'string', enum: ['output', 'pattern', 'idle', 'exit'] }, pattern: { type: 'string' }, timeoutMs: { type: 'integer', minimum: 1000, maximum: 120000 }
+  }, ['sessionId', 'cursor', 'until', 'timeoutMs']),
+  definition('terminal_status', 'Inspect whether a terminal is idle, busy, or exited and get its latest transcript cursor.', {
+    sessionId: { type: 'string' }
+  }, ['sessionId']),
+  definition('terminal_interrupt', 'Send Ctrl-C to interrupt a running command while keeping its terminal open.', {
+    sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
+  }, ['sessionId', 'user_message']),
+  definition('terminal_clear', 'Clear the visible terminal display.', {
+    sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
+  }, ['sessionId', 'user_message']),
+  definition('terminal_close', 'Close a terminal. A busy terminal always asks the user first and shows this friendly reason plus the impact.', {
+    sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
+  }, ['sessionId', 'user_message']),
+  definition('terminal_request_user_input', 'Hand an interactive terminal to the user with a friendly banner. Pause waits for Done or Cancel; continue lets agent work proceed.', {
+    sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY, mode: { type: 'string', enum: ['pause', 'continue'] }
+  }, ['sessionId', 'user_message', 'mode']),
+  definition('open_url', 'Open an HTTP or HTTPS website with the default browser and mirror the action in a visible terminal.', {
+    url: { type: 'string' }, sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
+  }, ['url', 'user_message']),
+  definition('open_path', 'Open a workspace file or folder with its default desktop application and mirror the action visibly.', {
+    path: { type: 'string' }, sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
+  }, ['path', 'user_message']),
+  definition('reveal_path', 'Reveal a workspace file or folder in the operating system file manager and mirror the action visibly.', {
+    path: { type: 'string' }, sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
+  }, ['path', 'user_message']),
+  definition('launch_app', 'Launch a desktop application through a cross-platform adapter and mirror the action in a visible terminal.', {
+    target: { type: 'string' }, sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
+  }, ['target', 'user_message']),
   definition('web_search', 'Search the public web through DuckDuckGo without an API key. Returns titles, URLs, and short snippets.', {
     query: { type: 'string' },
     maxResults: { type: 'integer', minimum: 1, maximum: 10 }
@@ -174,6 +242,22 @@ function integerArgument(args: Record<string, unknown>, name: string, fallback: 
   return Number(value)
 }
 
+function optionalIntegerArgument(args: Record<string, unknown>, name: string): number | undefined {
+  const value = args[name]
+  if (value === undefined) return undefined
+  if (!Number.isInteger(value) || Number(value) < 0) throw new Error(`${name} must be a non-negative integer`)
+  return Number(value)
+}
+
+function userMessageArgument(args: Record<string, unknown>): TerminalUserMessage {
+  const value = args['user_message']
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('user_message must be an object')
+  const candidate = value as Partial<TerminalUserMessage>
+  if (typeof candidate.reason !== 'string' || !candidate.reason.trim()) throw new Error('user_message.reason must be non-empty text')
+  if (candidate.instruction !== undefined && typeof candidate.instruction !== 'string') throw new Error('user_message.instruction must be text')
+  return { reason: candidate.reason, instruction: candidate.instruction }
+}
+
 function parsePatch(value: string): PatchOperation[] {
   const lines = value.replace(/\r\n/g, '\n').split('\n')
   if (lines[0] !== '*** Begin Patch' || lines.at(-1) !== '*** End Patch') throw new Error('Patch must start with *** Begin Patch and end with *** End Patch')
@@ -237,6 +321,7 @@ export class AgentToolbox {
     const mutable = new Set(['edit', 'write', 'apply_patch'])
     this.definitions = TOOL_DEFINITIONS.filter((tool) => !options.readOnly || !mutable.has(tool.name))
       .filter((tool) => tool.name !== 'task' || options.runTask)
+      .filter((tool) => !TERMINAL_TOOL_NAMES.has(tool.name) || (!options.readOnly && options.terminalController))
   }
 
   private path(value = '.'): string {
@@ -290,6 +375,24 @@ export class AgentToolbox {
       case 'write': return this.write(args)
       case 'apply_patch': return this.applyPatch(args)
       case 'bash': return this.bash(args)
+      case 'terminal_create': return JSON.stringify(this.terminal().create(stringArgument(args, 'title', false) || undefined))
+      case 'terminal_list': return JSON.stringify(await this.terminal().list())
+      case 'terminal_show': this.terminal().show(stringArgument(args, 'sessionId')); return 'Terminal is visible.'
+      case 'terminal_set_title': return JSON.stringify(this.terminal().setTitle(stringArgument(args, 'sessionId'), stringArgument(args, 'title')))
+      case 'terminal_run': return JSON.stringify(await this.terminal().run(stringArgument(args, 'sessionId'), stringArgument(args, 'command'), userMessageArgument(args)))
+      case 'terminal_write': await this.terminal().write(stringArgument(args, 'sessionId'), stringArgument(args, 'data', false), userMessageArgument(args)); return 'Terminal input was sent.'
+      case 'terminal_send_key': await this.terminal().sendKey(stringArgument(args, 'sessionId'), stringArgument(args, 'key'), userMessageArgument(args)); return 'Terminal key was sent.'
+      case 'terminal_read': return JSON.stringify(this.terminal().read(stringArgument(args, 'sessionId'), optionalIntegerArgument(args, 'cursor'), optionalIntegerArgument(args, 'limit')))
+      case 'terminal_wait': return JSON.stringify(await this.terminal().wait(stringArgument(args, 'sessionId'), integerArgument(args, 'cursor', 0, 0, Number.MAX_SAFE_INTEGER), stringArgument(args, 'until') as 'output' | 'pattern' | 'idle' | 'exit', integerArgument(args, 'timeoutMs', 10000, 1000, 120000), stringArgument(args, 'pattern', false) || undefined))
+      case 'terminal_status': return JSON.stringify(await this.terminal().status(stringArgument(args, 'sessionId')))
+      case 'terminal_interrupt': await this.terminal().interrupt(stringArgument(args, 'sessionId'), userMessageArgument(args)); return 'Terminal command was interrupted.'
+      case 'terminal_clear': await this.terminal().clear(stringArgument(args, 'sessionId'), userMessageArgument(args)); return 'Terminal was cleared.'
+      case 'terminal_close': return await this.terminal().close(stringArgument(args, 'sessionId'), userMessageArgument(args))
+      case 'terminal_request_user_input': return await this.terminal().requestUserInput(stringArgument(args, 'sessionId'), userMessageArgument(args), stringArgument(args, 'mode') as 'pause' | 'continue')
+      case 'open_url': await this.terminal().openUrl(stringArgument(args, 'url'), userMessageArgument(args), stringArgument(args, 'sessionId', false) || undefined); return 'Website was opened.'
+      case 'open_path': await this.terminal().openPath(stringArgument(args, 'path'), userMessageArgument(args), stringArgument(args, 'sessionId', false) || undefined); return 'Item was opened.'
+      case 'reveal_path': await this.terminal().revealPath(stringArgument(args, 'path'), userMessageArgument(args), stringArgument(args, 'sessionId', false) || undefined); return 'Item was revealed.'
+      case 'launch_app': await this.terminal().launchApp(stringArgument(args, 'target'), userMessageArgument(args), stringArgument(args, 'sessionId', false) || undefined); return 'Application was launched.'
       case 'web_search': return formatWebSearchResults(await this.webClient.search(stringArgument(args, 'query'), integerArgument(args, 'maxResults', 5, 1, 10), this.options.signal))
       case 'web_fetch': return truncate(await this.webClient.fetch(stringArgument(args, 'url'), (args['format'] ?? 'markdown') as WebFetchFormat, this.options.signal))
       case 'todo_write': return this.writeTodos(args)
@@ -298,6 +401,11 @@ export class AgentToolbox {
       case 'task': return this.task(args)
       default: throw new Error(`Unknown tool: ${name}`)
     }
+  }
+
+  private terminal(): AgentTerminalController {
+    if (!this.options.terminalController) throw new Error('Visible terminal tools are unavailable')
+    return this.options.terminalController
   }
 
   private read(args: Record<string, unknown>): string {

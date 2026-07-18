@@ -11,7 +11,7 @@ import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, Conn
 import type { ConnectionSecurityStatus } from '../main/connectionStore'
 import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../shared/conversationExport'
 import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinementTarget } from '../shared/promptRefinement'
-import type { TerminalExitEvent, TerminalOutputEvent, TerminalSessionInfo } from '../shared/terminal'
+import type { TerminalExitEvent, TerminalInterventionRequest, TerminalInterventionResolution, TerminalOutputEvent, TerminalRevealEvent, TerminalSessionEvent, TerminalSessionInfo } from '../shared/terminal'
 
 const api = {
   minimize: () => ipcRenderer.send('minimize-window'),
@@ -94,12 +94,35 @@ const api = {
     ipcRenderer.on('local-completion-event', handler)
     return () => { ipcRenderer.removeListener('local-completion-event', handler) }
   },
-  createTerminal: (cwd?: string): Promise<TerminalSessionInfo> => ipcRenderer.invoke('terminal-create', cwd),
+  listTerminals: (): Promise<TerminalSessionInfo[]> => ipcRenderer.invoke('terminal-list'),
+  listTerminalInterventions: (): Promise<TerminalInterventionRequest[]> => ipcRenderer.invoke('terminal-list-interventions'),
+  createTerminal: (cwd?: string, projectPath?: string): Promise<TerminalSessionInfo> => ipcRenderer.invoke('terminal-create', cwd, projectPath),
   attachTerminal: (sessionId: string) => ipcRenderer.send('terminal-ready', sessionId),
   writeTerminal: (sessionId: string, data: string) => ipcRenderer.send('terminal-input', sessionId, data),
   resizeTerminal: (sessionId: string, columns: number, rows: number) => ipcRenderer.send('terminal-resize', sessionId, columns, rows),
-  isTerminalBusy: (sessionId: string): Promise<boolean> => ipcRenderer.invoke('terminal-busy', sessionId),
+  updateTerminalUiState: (visible: boolean, activeId: string) => ipcRenderer.send('terminal-ui-state', visible, activeId),
   closeTerminal: (sessionId: string): Promise<boolean> => ipcRenderer.invoke('terminal-close', sessionId),
+  resolveTerminalIntervention: (resolution: TerminalInterventionResolution): Promise<boolean> => ipcRenderer.invoke('terminal-resolve-intervention', resolution),
+  onTerminalSessionEvent: (callback: (event: TerminalSessionEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionEvent: TerminalSessionEvent) => callback(sessionEvent)
+    ipcRenderer.on('terminal-session-event', handler)
+    return () => { ipcRenderer.removeListener('terminal-session-event', handler) }
+  },
+  onTerminalReveal: (callback: (event: TerminalRevealEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, reveal: TerminalRevealEvent) => callback(reveal)
+    ipcRenderer.on('terminal-reveal', handler)
+    return () => { ipcRenderer.removeListener('terminal-reveal', handler) }
+  },
+  onTerminalIntervention: (callback: (request: TerminalInterventionRequest) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, request: TerminalInterventionRequest) => callback(request)
+    ipcRenderer.on('terminal-intervention', handler)
+    return () => { ipcRenderer.removeListener('terminal-intervention', handler) }
+  },
+  onTerminalInterventionDismissed: (callback: (id: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, id: string) => callback(id)
+    ipcRenderer.on('terminal-intervention-dismissed', handler)
+    return () => { ipcRenderer.removeListener('terminal-intervention-dismissed', handler) }
+  },
   onTerminalOutput: (callback: (event: TerminalOutputEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, output: TerminalOutputEvent) => callback(output)
     ipcRenderer.on('terminal-output', handler)

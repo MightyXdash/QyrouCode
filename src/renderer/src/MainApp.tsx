@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { MODEL_LIST } from './modelCatalog'
 import { DEFAULT_RESPONSE_STYLE, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
 import {
@@ -437,7 +437,7 @@ export default function MainApp(): JSX.Element {
   const [openTitlebarMenu, setOpenTitlebarMenu] = useState<TitlebarMenuId | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [terminalOpen, setTerminalOpen] = useState(false)
-  const [terminalMounted, setTerminalMounted] = useState(false)
+  const revealTerminal = useCallback(() => setTerminalOpen(true), [])
   const [terminalHeight, setTerminalHeight] = useState(() => {
     const storedHeight = Number(localStorage.getItem(TERMINAL_HEIGHT_STORAGE_KEY))
     return Number.isFinite(storedHeight) && storedHeight > 0 ? storedHeight : DEFAULT_TERMINAL_HEIGHT
@@ -1876,7 +1876,6 @@ export default function MainApp(): JSX.Element {
             setTerminalOpen(false)
             return
           }
-          setTerminalMounted(true)
           requestAnimationFrame(() => setTerminalOpen(true))
         }}><SquareTerminal size={16} /></button>
         {activeThread ? (
@@ -2056,10 +2055,10 @@ export default function MainApp(): JSX.Element {
           </div>
         ) : null}
 
-        {terminalMounted && <TerminalPanel cwd={selectedProjectPath || undefined} height={terminalHeight} onClose={() => setTerminalOpen(false)} onHeightChange={(height) => {
+        <TerminalPanel cwd={selectedProjectPath || undefined} height={terminalHeight} onClose={() => setTerminalOpen(false)} onHeightChange={(height) => {
           setTerminalHeight(height)
           localStorage.setItem(TERMINAL_HEIGHT_STORAGE_KEY, String(height))
-        }} visible={terminalOpen} />}
+        }} onReveal={revealTerminal} visible={terminalOpen} />
 
         {activeThread && !autoScrollEnabled && (
           <button

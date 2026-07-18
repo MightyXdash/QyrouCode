@@ -3,7 +3,7 @@ import { Plus, Terminal as TerminalIcon, X } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import type { TerminalSessionInfo } from '../../shared/terminal'
+import type { TerminalInterventionRequest, TerminalSessionInfo } from '../../shared/terminal'
 import './TerminalPanel.css'
 
 const TERMINAL_FONT_SIZE = 13
@@ -17,6 +17,7 @@ interface TerminalPanelProps {
   height: number
   onClose: () => void
   onHeightChange: (height: number) => void
+  onReveal: () => void
   visible: boolean
 }
 
@@ -98,12 +99,13 @@ function TerminalView({ active, session }: { active: boolean; session: TerminalS
   return <div className={active ? 'terminal-view active' : 'terminal-view'} ref={hostRef} />
 }
 
-export default function TerminalPanel({ cwd, height, onClose, onHeightChange, visible }: TerminalPanelProps): JSX.Element {
+export default function TerminalPanel({ cwd, height, onClose, onHeightChange, onReveal, visible }: TerminalPanelProps): JSX.Element {
   const [sessions, setSessions] = useState<TerminalSessionInfo[]>([])
   const [activeId, setActiveId] = useState('')
+  const [sessionsLoaded, setSessionsLoaded] = useState(false)
+  const [interventions, setInterventions] = useState<TerminalInterventionRequest[]>([])
   const [scrollbarVisible, setScrollbarVisible] = useState(false)
   const [tabIndicator, setTabIndicator] = useState<TerminalTabIndicator>({ left: 0, visible: false, width: 0 })
-  const sessionIdsRef = useRef<string[]>([])
   const tabListRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLElement>(null)
   const resizeRef = useRef<TerminalResizeState | null>(null)
@@ -112,41 +114,64 @@ export default function TerminalPanel({ cwd, height, onClose, onHeightChange, vi
   const resizeTo = (nextHeight: number): void => onHeightChange(Math.min(maximumHeight(), Math.max(TERMINAL_MIN_HEIGHT, Math.round(nextHeight))))
 
   const addTerminal = async (): Promise<void> => {
-    const session = await window.api.createTerminal(cwd)
-    sessionIdsRef.current.push(session.id)
-    setSessions((current) => [...current, session])
+    const session = await window.api.createTerminal(cwd, cwd)
     setActiveId(session.id)
   }
 
   const closeTerminal = async (id: string): Promise<void> => {
-    const session = sessions.find((candidate) => candidate.id === id)
-    if (!session) return
-    const busy = await window.api.isTerminalBusy(id)
-    if (busy && !window.confirm(`Close ${session.title}?\n\nA command is still running and will be stopped.`)) return
     await window.api.closeTerminal(id)
-    sessionIdsRef.current = sessionIdsRef.current.filter((sessionId) => sessionId !== id)
-    setSessions((current) => {
-      const index = current.findIndex((session) => session.id === id)
-      const next = current.filter((session) => session.id !== id)
-      if (activeId === id) setActiveId(next[Math.min(index, next.length - 1)]?.id ?? '')
-      return next
-    })
   }
 
   useEffect(() => {
     let disposed = false
-    void window.api.createTerminal(cwd).then((session) => {
-      if (disposed) {
-        void window.api.closeTerminal(session.id)
-        return
-      }
-      sessionIdsRef.current.push(session.id)
-      setSessions([session])
-      setActiveId(session.id)
+    void Promise.all([window.api.listTerminals(), window.api.listTerminalInterventions()]).then(([existing, pending]) => {
+      if (disposed) return
+      setSessions((current) => {
+        const byId = new Map(existing.map((session) => [session.id, session]))
+        for (const session of current) byId.set(session.id, session)
+        return [...byId.values()]
+      })
+      setActiveId((current) => current || existing.find((session) => session.active)?.id || existing[0]?.id || '')
+      setInterventions(pending)
+      setSessionsLoaded(true)
+      if (existing.some((session) => session.panelVisible)) onReveal()
     })
     return () => { disposed = true }
-  }, [])
-  useEffect(() => () => { for (const id of sessionIdsRef.current) void window.api.closeTerminal(id) }, [])
+  }, [onReveal])
+  useEffect(() => window.api.onTerminalSessionEvent((event) => {
+    if (event.type === 'closed') {
+      setSessions((current) => {
+        const index = current.findIndex((session) => session.id === event.session.id)
+        const next = current.filter((session) => session.id !== event.session.id)
+        setActiveId((active) => active === event.session.id ? next[Math.min(Math.max(index, 0), next.length - 1)]?.id ?? '' : active)
+        return next
+      })
+      return
+    }
+    setSessions((current) => current.some((session) => session.id === event.session.id)
+      ? current.map((session) => session.id === event.session.id ? event.session : session)
+      : [...current, event.session])
+  }), [])
+  useEffect(() => window.api.onTerminalReveal((event) => {
+    setActiveId(event.sessionId)
+    onReveal()
+  }), [onReveal])
+  useEffect(() => window.api.onTerminalIntervention((request) => {
+    setInterventions((current) => [...current.filter((candidate) => candidate.id !== request.id), request])
+    if (request.terminalId) setActiveId(request.terminalId)
+    if (request.kind === 'user-input') onReveal()
+  }), [onReveal])
+  useEffect(() => window.api.onTerminalInterventionDismissed((id) => {
+    setInterventions((current) => current.filter((request) => request.id !== id))
+  }), [])
+  useEffect(() => {
+    if (!visible || !sessionsLoaded || sessions.length > 0) return
+    void addTerminal()
+  }, [sessionsLoaded, sessions.length, visible])
+  useEffect(() => {
+    if (!sessionsLoaded) return
+    window.api.updateTerminalUiState(visible, activeId)
+  }, [activeId, sessionsLoaded, visible])
   useEffect(() => {
     tabListRef.current?.querySelector<HTMLElement>(`[data-terminal-id="${activeId}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [activeId])
@@ -171,7 +196,14 @@ export default function TerminalPanel({ cwd, height, onClose, onHeightChange, vi
     return () => window.removeEventListener('resize', constrainHeight)
   }, [])
 
-  return (
+  const resolveIntervention = async (request: TerminalInterventionRequest, approved: boolean): Promise<void> => {
+    setInterventions((current) => current.filter((candidate) => candidate.id !== request.id))
+    await window.api.resolveTerminalIntervention({ id: request.id, approved })
+  }
+  const modalIntervention = interventions.find((request) => request.kind !== 'user-input')
+  const handoff = interventions.find((request) => request.kind === 'user-input' && request.terminalId === activeId)
+
+  return <>
     <section
       className={`${visible ? 'terminal-panel' : 'terminal-panel hidden'}${scrollbarVisible ? ' scrollbar-visible' : ''}`}
       aria-label="Terminal panel"
@@ -239,7 +271,29 @@ export default function TerminalPanel({ cwd, height, onClose, onHeightChange, vi
       </div>
       <div className="terminal-views">
         {sessions.map((session) => <TerminalView active={visible && session.id === activeId} session={session} key={session.id} />)}
+        {handoff && (
+          <div className="terminal-handoff" role="status">
+            <div><strong>{handoff.reason}</strong>{handoff.instruction && <span>{handoff.instruction}</span>}</div>
+            <div className="terminal-handoff-actions">
+              <button type="button" onClick={() => void resolveIntervention(handoff, false)}>{handoff.cancelLabel}</button>
+              <button className="primary" type="button" onClick={() => void resolveIntervention(handoff, true)}>{handoff.approveLabel}</button>
+            </div>
+          </div>
+        )}
       </div>
     </section>
-  )
+    {modalIntervention && (
+      <div className="terminal-confirm-backdrop" role="presentation">
+        <div className="terminal-confirm" role="alertdialog" aria-modal="true" aria-labelledby="terminal-confirm-title">
+          <h2 id="terminal-confirm-title">{modalIntervention.title}</h2>
+          <p>{modalIntervention.reason}</p>
+          <p className="terminal-confirm-impact">{modalIntervention.impact}</p>
+          <div className="terminal-confirm-actions">
+            <button type="button" onClick={() => void resolveIntervention(modalIntervention, false)}>{modalIntervention.cancelLabel}</button>
+            <button className="danger" type="button" onClick={() => void resolveIntervention(modalIntervention, true)}>{modalIntervention.approveLabel}</button>
+          </div>
+        </div>
+      </div>
+    )}
+  </>
 }

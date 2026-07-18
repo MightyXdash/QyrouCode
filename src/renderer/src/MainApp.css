@@ -64,6 +64,12 @@
   --terminal-resize-indicator-width: 36px;
   --terminal-resize-indicator-height: 2px;
   --terminal-resize-indicator-offset: 2px;
+  --terminal-handoff-inset: 10px;
+  --terminal-handoff-padding: 10px;
+  --terminal-handoff-gap: 10px;
+  --terminal-confirm-width: 420px;
+  --terminal-confirm-padding: 22px;
+  --terminal-confirm-backdrop: light-dark(rgba(247, 247, 247, 0.72), rgba(31, 31, 31, 0.72));
   --chat-scrollbar-width: 4px;
   --project-menu-width: 184px;
   --project-dialog-width: 420px;
