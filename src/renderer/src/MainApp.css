@@ -25,6 +25,7 @@
   --app-composer-corner-radius: 20px;
   --app-composer-scrollbar-width: 10px;
   --app-composer-scrollbar-inset: 3px;
+  --app-composer-transcript-fade-overlap: 48px;
   --app-icon-size: 18px;
   --app-menu-width: 252px;
   --app-advanced-menu-width: 220px;
@@ -94,9 +95,13 @@
   --conversation-bottom-clearance: 180px;
   --conversation-terminal-clearance: 0px;
   --jump-to-latest-size: 30px;
-  --activity-sweep-duration: 2s;
+  --activity-sweep-duration: 2.5s;
+  --activity-sweep-easing: cubic-bezier(0.45, 0, 0.55, 1);
+  --activity-sweep-start: -180%;
+  --activity-sweep-end: 280%;
+  --activity-sweep-width: 64%;
   --activity-text-base: var(--text-base);
-  --activity-text-highlight: var(--text-strong);
+  --activity-text-highlight: var(--text-invert);
   --activity-mask-opaque: #000000;
   --attachment-preview-size: 52px;
   --attachment-message-size: 112px;
@@ -526,6 +531,7 @@
 .conversation-inner.with-todo-dock.todo-dock-collapsed { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance) + var(--todo-dock-collapsed-clearance)); }
 .conversation h1 { margin: 0 0 34px; color: var(--text-strong); font-size: 18px; font-weight: 500; line-height: 1.2; }
 .composer-stack { position: absolute; z-index: 4; right: 0; bottom: var(--app-composer-bottom); left: 0; display: flex; flex-direction: column; align-items: center; width: var(--composer-stack-width); margin: auto; transition: bottom var(--terminal-panel-motion-duration) var(--terminal-panel-motion-ease-out); }
+.composer-stack:not(.new-thread)::after { position: absolute; z-index: 0; top: calc(100% - var(--app-composer-transcript-fade-overlap)); right: calc(var(--app-page-padding) * -1); bottom: calc(var(--app-composer-bottom) * -1); left: calc(var(--app-page-padding) * -1); background: linear-gradient(to bottom, transparent, var(--background-base)); content: ''; pointer-events: none; }
 .app-workspace:has(.terminal-resize-handle:active) .composer-stack { transition: none; }
 .composer-stack.new-thread { display: contents; }
 .app-workspace:has(.todo-dock:not(.collapsed)) { --jump-to-latest-todo-clearance: var(--todo-dock-expanded-clearance); }
@@ -609,10 +615,10 @@
 .assistant-message { margin: 0 0 34px; }
 .assistant-message.pending { min-height: 22px; color: var(--text-weak); }
 .activity-label { position: relative; display: inline-block; max-width: 100%; overflow: hidden; color: var(--activity-text-base); font-weight: 400; letter-spacing: 0.005em; text-overflow: ellipsis; white-space: nowrap; }
-.activity-label::after { position: absolute; inset: 0; color: var(--activity-text-highlight); content: attr(data-text); pointer-events: none; -webkit-mask-image: linear-gradient(90deg, transparent 0%, var(--activity-mask-opaque) 42%, var(--activity-mask-opaque) 58%, transparent 100%); -webkit-mask-position: -75% 0; -webkit-mask-repeat: no-repeat; -webkit-mask-size: 42% 100%; mask-image: linear-gradient(90deg, transparent 0%, var(--activity-mask-opaque) 42%, var(--activity-mask-opaque) 58%, transparent 100%); mask-position: -75% 0; mask-repeat: no-repeat; mask-size: 42% 100%; animation: activitySweep var(--activity-sweep-duration) linear infinite; }
+.activity-label::after { position: absolute; inset: 0; color: var(--activity-text-highlight); content: attr(data-text); pointer-events: none; -webkit-mask-image: linear-gradient(90deg, transparent 0%, var(--activity-mask-opaque) 50%, transparent 100%); -webkit-mask-position: var(--activity-sweep-start) 0; -webkit-mask-repeat: no-repeat; -webkit-mask-size: var(--activity-sweep-width) 100%; mask-image: linear-gradient(90deg, transparent 0%, var(--activity-mask-opaque) 50%, transparent 100%); mask-position: var(--activity-sweep-start) 0; mask-repeat: no-repeat; mask-size: var(--activity-sweep-width) 100%; animation: activitySweep var(--activity-sweep-duration) var(--activity-sweep-easing) infinite; }
 .activity-label-static { display: inline-block; max-width: 100%; overflow: hidden; color: var(--text-weaker); font-weight: 400; letter-spacing: 0.005em; text-overflow: ellipsis; white-space: nowrap; }
 .assistant-activity { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 0; border: 0; background: transparent; color: var(--text-weak); }
-.assistant-activity.tool-active { --activity-text-base: var(--text-weaker); --activity-text-highlight: var(--text-weak); }
+.assistant-activity.tool-active { --activity-text-base: var(--text-weaker); }
 .activity-tool-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-weak); }
 .assistant-activity.tool-active .activity-tool-icon { color: var(--text-weaker); }
 .web-search-detail { max-width: var(--web-search-detail-max-width); overflow: hidden; color: var(--text-weaker); font-size: 13px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
@@ -945,7 +951,7 @@
 
 @keyframes menuEnter { from { opacity: 0; transform: translateY(2px) scale(0.94); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @keyframes dialogEnter { from { opacity: 0; transform: scale(1.05); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
-@keyframes activitySweep { from { -webkit-mask-position: -75% 0; mask-position: -75% 0; } to { -webkit-mask-position: 175% 0; mask-position: 175% 0; } }
+@keyframes activitySweep { 0% { -webkit-mask-position: var(--activity-sweep-start) 0; mask-position: var(--activity-sweep-start) 0; } 40%, 100% { -webkit-mask-position: var(--activity-sweep-end) 0; mask-position: var(--activity-sweep-end) 0; } }
 @media (prefers-reduced-motion: reduce) {
   .app-workspace, .project-threads-shell, .project-thread, .project-show-more, .project-thread-rename-input { transition-duration: 0ms; transition-delay: 0ms; }
   .sidebar-collapsed .app-sidebar { transition-delay: 0ms; }

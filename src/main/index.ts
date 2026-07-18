@@ -53,6 +53,7 @@ let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
 let titleRuntime: LlamaRuntime | null = null
 const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController; source: AgentModelSource }>()
+const activeModelDownloads = new Map<string, () => void>()
 
 function appIconPath(): string {
   const filename = process.platform === 'win32' ? WINDOWS_ICON_FILENAME : DEFAULT_ICON_FILENAME
@@ -369,6 +370,64 @@ function createMacApplicationMenu(): void {
   ]))
 }
 
+function registerModelDownloadIpc(): void {
+  ipcMain.handle('download-model', async (event, repoId: string, ggufFile?: string) => {
+    const folder = 'models--' + repoId.replace(/[/.]/g, '--')
+    const snapshotsDir = join(huggingFaceHubPath(), folder, 'snapshots', 'main')
+    mkdirSync(snapshotsDir, { recursive: true })
+
+    const tree = await fetchModelTree(repoId)
+    const targetWeights = ggufFile ?? tree.find((entry) => isModelWeightsFile(entry.path))?.path
+    if (!targetWeights) throw new Error('No GGUF file found in repo')
+    const projector = await resolveProjectorDownload(repoId, tree)
+    const targets = [
+      { repository: repoId, path: targetWeights, size: tree.find((entry) => entry.path === targetWeights)?.size ?? 0 },
+      ...(projector ? [projector] : [])
+    ]
+
+    let cancelled = false
+    const cancelFns: Array<() => void> = []
+    activeModelDownloads.set(repoId, () => { cancelled = true; cancelFns.forEach((fn) => fn()) })
+
+    const total = targets.reduce((sum, file) => sum + file.size, 0)
+    let downloaded = 0
+    event.sender.send('download-progress', { repoId, downloaded, total })
+
+    for (const file of targets) {
+      if (cancelled) { activeModelDownloads.delete(repoId); throw new Error('Cancelled') }
+      const filename = file.path.split('/').pop() as string
+      const encodedPath = file.path.split('/').map((segment) => encodeURIComponent(segment)).join('/')
+      const filePath = join(snapshotsDir, filename)
+      const partPath = filePath + '.part'
+      if (existsSync(filePath)) { downloaded += file.size; continue }
+
+      let attempt = 0
+      let completed = false
+      while (!completed && !cancelled && attempt < MODEL_DOWNLOAD_ATTEMPTS) {
+        attempt++
+        const resumeFrom = existsSync(partPath) ? statSync(partPath).size : 0
+        try {
+          await downloadGgufFile(file.repository, encodedPath, partPath, resumeFrom, (bytes) => {
+            downloaded += bytes
+            event.sender.send('download-progress', { repoId, downloaded, total })
+          }, cancelFns)
+          renameSync(partPath, filePath)
+          completed = true
+        } catch (error) {
+          if (cancelled) throw new Error('Cancelled')
+          if (attempt >= MODEL_DOWNLOAD_ATTEMPTS) throw error
+        }
+      }
+      if (!completed) { activeModelDownloads.delete(repoId); throw new Error('Download failed after multiple attempts') }
+    }
+    activeModelDownloads.delete(repoId)
+  })
+
+  ipcMain.handle('cancel-download', (_event, repoId: string) => {
+    activeModelDownloads.get(repoId)?.()
+  })
+}
+
 function createWindow(): void {
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
   const nativeWindowControls = usesNativeWindowControls(process.platform)
@@ -420,67 +479,6 @@ function createWindow(): void {
     ipcMain.removeListener('renderer-ready', handleRendererReady)
     ipcMain.removeHandler('get-onboarding-state')
     ipcMain.removeHandler('complete-onboarding')
-    ipcMain.removeHandler('download-model')
-    ipcMain.removeHandler('cancel-download')
-  })
-
-  const activeDownloads = new Map<string, () => void>()
-
-  ipcMain.handle('download-model', async (event, repoId: string, ggufFile?: string) => {
-    const folder = 'models--' + repoId.replace(/[/.]/g, '--')
-    const snapshotsDir = join(huggingFaceHubPath(), folder, 'snapshots', 'main')
-    mkdirSync(snapshotsDir, { recursive: true })
-
-    const tree = await fetchModelTree(repoId)
-    const targetWeights = ggufFile ?? tree.find((entry) => isModelWeightsFile(entry.path))?.path
-    if (!targetWeights) throw new Error('No GGUF file found in repo')
-    const projector = await resolveProjectorDownload(repoId, tree)
-    const targets = [
-      { repository: repoId, path: targetWeights, size: tree.find((entry) => entry.path === targetWeights)?.size ?? 0 },
-      ...(projector ? [projector] : [])
-    ]
-
-    let cancelled = false
-    const cancelFns: Array<() => void> = []
-    activeDownloads.set(repoId, () => { cancelled = true; cancelFns.forEach((fn) => fn()) })
-
-    const total = targets.reduce((sum, file) => sum + file.size, 0)
-    let downloaded = 0
-    event.sender.send('download-progress', { repoId, downloaded, total })
-
-    for (const file of targets) {
-      if (cancelled) { activeDownloads.delete(repoId); throw new Error('Cancelled') }
-      const filename = file.path.split('/').pop() as string
-      const encodedPath = file.path.split('/').map((segment) => encodeURIComponent(segment)).join('/')
-      const filePath = join(snapshotsDir, filename)
-      const partPath = filePath + '.part'
-      if (existsSync(filePath)) { downloaded += file.size; continue }
-
-      let attempt = 0
-      let completed = false
-      while (!completed && !cancelled && attempt < MODEL_DOWNLOAD_ATTEMPTS) {
-        attempt++
-        const resumeFrom = existsSync(partPath) ? statSync(partPath).size : 0
-        try {
-          await downloadGgufFile(file.repository, encodedPath, partPath, resumeFrom, (bytes) => {
-            downloaded += bytes
-            event.sender.send('download-progress', { repoId, downloaded, total })
-          }, cancelFns)
-          renameSync(partPath, filePath)
-          completed = true
-        } catch (error) {
-          if (cancelled) throw new Error('Cancelled')
-          if (attempt >= MODEL_DOWNLOAD_ATTEMPTS) throw error
-        }
-      }
-      if (!completed) { activeDownloads.delete(repoId); throw new Error('Download failed after multiple attempts') }
-    }
-    activeDownloads.delete(repoId)
-  })
-
-  ipcMain.handle('cancel-download', (_event, repoId: string) => {
-    const cancel = activeDownloads.get(repoId)
-    if (cancel) cancel()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -493,6 +491,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   registerTerminalIpc()
+  registerModelDownloadIpc()
   electronApp.setAppUserModelId('com.suprarcode')
   llamaRuntime = new LlamaRuntime()
   titleRuntime = new LlamaRuntime(LLAMA_TITLE_SERVER_PORT)
