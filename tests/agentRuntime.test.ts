@@ -25,7 +25,7 @@ class ScriptedProvider implements AgentCompletionProvider {
   }
 }
 
-test('retries provider errors three times and reports each retry before succeeding', async () => {
+test('retries provider errors without placing hardcoded text in the task-state slot', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
     let attempts = 0
@@ -45,7 +45,7 @@ test('retries provider errors three times and reports each retry before succeedi
     }, () => {}, undefined, (event) => events.push(event))
 
     assert.equal(attempts, 4)
-    assert.equal(events.filter((event) => event.type === 'progress-update').length, 3)
+    assert.equal(events.filter((event) => event.type === 'progress-update').length, 0)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
@@ -85,6 +85,7 @@ test('co-batches progress, mutation, and verification in two provider turns', as
     assert.equal(readFileSync(join(projectPath, 'src/result.ts'), 'utf8'), 'export const result = 1\n')
     const system = textContent(provider.requests[0].messages[0].content)
     assert.match(system, /cur_task_state is optional/)
+    assert.match(system, /8–63 useful words/)
     assert.match(system, /Batch independent tools/)
     assert.doesNotMatch(system, /Call exactly one tool/)
     assert.doesNotMatch(system, /Supra-50M/)
@@ -163,7 +164,7 @@ test('truncates progress, suppresses duplicates, and never reprompts for status'
   }
 })
 
-test('uses local progress and UI fallbacks without a label-only provider call', async () => {
+test('keeps local UI fallbacks inside tool rows without creating task-state progress', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
     const provider = new ScriptedProvider([
@@ -181,13 +182,13 @@ test('uses local progress and UI fallbacks without a label-only provider call', 
     assert.equal(provider.requests.length, 2)
     const toolCall = events.find((event) => event.type === 'tool-call' && event.toolCallId === 'missing_ui')
     assert.deepEqual(toolCall?.type === 'tool-call' ? toolCall.summary : undefined, uiMessage('Using write', 'Used write'))
-    assert.ok(events.some((event) => event.type === 'progress-update' && event.summary === 'Using write'))
+    assert.equal(events.filter((event) => event.type === 'progress-update').length, 0)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
 })
 
-test('adds a local milestone after six actions without blocking the seventh', async () => {
+test('adds a transient cadence reminder without creating hardcoded progress or another request', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
     const writes = Array.from({ length: 7 }, (_, index) => ({
@@ -200,7 +201,7 @@ test('adds a local milestone after six actions without blocking the seventh', as
       }
     }))
     const provider = new ScriptedProvider([
-      { text: '', toolCalls: [{ id: 'state', name: 'cur_task_state', arguments: { message: 'Working through the implementation phase.' } }, ...writes] },
+      { text: '', toolCalls: writes },
       { text: 'Completed every phase.', toolCalls: [] }
     ])
     const events: AgentToolEvent[] = []
@@ -213,10 +214,56 @@ test('adds a local milestone after six actions without blocking the seventh', as
 
     assert.equal(provider.requests.length, 2)
     assert.equal(readFileSync(join(projectPath, 'phase-6.txt'), 'utf8'), '6')
-    assert.deepEqual(events.filter((event) => event.type === 'progress-update').map((event) => event.type === 'progress-update' ? event.summary : ''), [
-      'Working through the implementation phase.',
-      'Writing phase file 6'
+    assert.equal(events.filter((event) => event.type === 'progress-update').length, 0)
+    assert.match(textContent(provider.requests[1].messages[0].content), /continuing after several actions without a recent visible update/)
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('accepts only task states with at least eight Unicode-aware words', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const sevenWords = 'Inspecting relevant files before making safe changes'
+    const eightWords = 'Inspecting relevant files before making one safe change'
+    const unicodeWords = '正在检查相关文件并确认安全修改方案然后继续验证最终结果'
+    const provider = new ScriptedProvider([
+      {
+        text: '',
+        toolCalls: [
+          { id: 'short_state', name: 'cur_task_state', arguments: { message: sevenWords } },
+          { id: 'write_one', name: 'write', arguments: { filePath: 'one.txt', content: 'one' } }
+        ]
+      },
+      {
+        text: '',
+        toolCalls: [
+          { id: 'minimum_state', name: 'cur_task_state', arguments: { message: eightWords } },
+          { id: 'write_two', name: 'write', arguments: { filePath: 'two.txt', content: 'two' } }
+        ]
+      },
+      {
+        text: '',
+        toolCalls: [
+          { id: 'unicode_state', name: 'cur_task_state', arguments: { message: unicodeWords } },
+          { id: 'write_three', name: 'write', arguments: { filePath: 'three.txt', content: 'three' } }
+        ]
+      },
+      { text: 'Completed all work.', toolCalls: [] }
     ])
+    const events: AgentToolEvent[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-minimum-state',
+      projectPath,
+      messages: [{ role: 'user', content: 'Complete the files.' }]
+    }, () => {}, undefined, (event) => events.push(event))
+
+    assert.deepEqual(events.filter((event) => event.type === 'progress-update').map((event) => event.type === 'progress-update' ? event.summary : ''), [
+      eightWords,
+      unicodeWords
+    ])
+    assert.equal(readFileSync(join(projectPath, 'three.txt'), 'utf8'), 'three')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

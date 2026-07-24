@@ -43,6 +43,7 @@ const FINAL_MAX_TOKENS = 8_192
 const MAX_INTENT_REPROMPTS = 3
 const MAX_PROVIDER_RETRIES = 3
 const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
+const TASK_STATE_MIN_WORDS = 8
 const TASK_STATE_MAX_WORDS = 63
 const TASK_STATE_MAX_CHARACTERS = 480
 const TASK_STATE_ACTION_INTERVAL = 6
@@ -50,6 +51,7 @@ const TASK_STATE_SIMILARITY_THRESHOLD = 0.55
 const MAX_PARALLEL_READ_TOOLS = 4
 const PARALLEL_TOOL_NAMES = new Set(['read', 'list', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_read', 'skill', 'terminal_list', 'terminal_read', 'terminal_status'])
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
+const TASK_STATE_REMINDER = 'Agentic work is continuing after several actions without a recent visible update. If more tools are needed, include one fresh cur_task_state of 8–63 words in this same response alongside the actions it describes. Do not call it alone, repeat an earlier update, or add one when returning the final answer.'
 
 function messageContentCharacters(content: LocalChatMessage['content']): number {
   if (typeof content === 'string') return content.length
@@ -84,16 +86,35 @@ function isIntentWithoutAction(value: string): boolean {
   return normalized.length > 0 && normalized.length < 2_000 && INTENT_PATTERN.test(normalized)
 }
 
+interface TaskStateWord {
+  index: number
+  segment: string
+}
+
+function taskStateWords(value: string): TaskStateWord[] {
+  try {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' })
+    return [...segmenter.segment(value)].flatMap((part) => part.isWordLike ? [{ index: part.index, segment: part.segment }] : [])
+  } catch {
+    return [...value.matchAll(/\S+/gu)].map((match) => ({ index: match.index, segment: match[0] }))
+  }
+}
+
 function normalizedTaskState(value: unknown): string {
   if (typeof value !== 'string') return ''
   const paragraph = value.replace(/\s+/g, ' ').trim()
   if (!paragraph) return ''
-  const words = paragraph.split(' ')
-  const wordBounded = words.slice(0, TASK_STATE_MAX_WORDS).join(' ')
+  const words = taskStateWords(paragraph)
+  if (words.length < TASK_STATE_MIN_WORDS) return ''
+  const lastWord = words[Math.min(words.length, TASK_STATE_MAX_WORDS) - 1]
+  const wordBounded = words.length <= TASK_STATE_MAX_WORDS
+    ? paragraph
+    : paragraph.slice(0, lastWord.index + lastWord.segment.length).trimEnd()
   if (wordBounded.length <= TASK_STATE_MAX_CHARACTERS) return wordBounded
   const shortened = wordBounded.slice(0, TASK_STATE_MAX_CHARACTERS).trimEnd()
   const boundary = shortened.lastIndexOf(' ')
-  return boundary > TASK_STATE_MAX_CHARACTERS / 2 ? shortened.slice(0, boundary) : shortened
+  const characterBounded = boundary > TASK_STATE_MAX_CHARACTERS / 2 ? shortened.slice(0, boundary) : shortened
+  return taskStateWords(characterBounded).length >= TASK_STATE_MIN_WORDS ? characterBounded : ''
 }
 
 function taskStatesAreSimilar(left: string, right: string): boolean {
@@ -215,7 +236,6 @@ export class AgentRuntime {
     let intentReprompts = 0
     let emptyCompletionRetries = 0
     let actionsSinceTaskState = 0
-    let lastProgressText = visibleTaskStates.at(-1) ?? ''
     let enableThinking = request.enableThinking ?? false
     const toolbox = new AgentToolbox({
       projectPath: request.projectPath,
@@ -269,15 +289,6 @@ export class AgentRuntime {
       if (execution.error) onToolEvent?.({ type: 'tool-error', toolCallId: execution.call.id, error: execution.error })
       else onToolEvent?.({ type: 'tool-result', toolCallId: execution.call.id, result: execution.result, filePath: execution.filePath })
     }
-    const emitFallbackProgress = (call: LocalToolCall): void => {
-      const fallback = uiMessageForCall(call)?.uim_prt ?? deterministicUiMessage(call.name).uim_prt
-      if (!fallback || fallback === lastProgressText) return
-      lastProgressText = fallback
-      actionsSinceTaskState = 0
-      onToolEvent?.({ type: 'progress-update', summary: fallback })
-      if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] progress', { source: 'fallback', length: fallback.length })
-    }
-
     for (let step = 0; step < MAX_AGENT_STEPS; step += 1) {
       request.signal?.throwIfAborted()
       if (contentCharacters(messages) > COMPACTION_CHARACTER_THRESHOLD) {
@@ -287,7 +298,10 @@ export class AgentRuntime {
       let streamed = false
       const completion = await this.completeWithRetries({
         ...modelSettings(request, enableThinking),
-        messages: [{ role: 'system', content: systemPrompt }, ...messages],
+        messages: [{
+          role: 'system',
+          content: actionsSinceTaskState >= TASK_STATE_ACTION_INTERVAL ? `${systemPrompt}\n\n${TASK_STATE_REMINDER}` : systemPrompt
+        }, ...messages],
         tools: toolbox.definitions,
         toolChoice: 'auto',
         signal: request.signal
@@ -343,7 +357,6 @@ export class AgentRuntime {
         if (!acceptedTaskStateId && !duplicate) {
           acceptedTaskStateId = call.id
           visibleTaskStates.push(message)
-          lastProgressText = message
           actionsSinceTaskState = 0
           onToolEvent?.({ type: 'progress-update', summary: message })
           if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] progress', { source: 'model', length: message.length })
@@ -356,14 +369,12 @@ export class AgentRuntime {
       while (actionIndex < actions.length) {
         request.signal?.throwIfAborted()
         const first = actions[actionIndex]
-        if ((!lastProgressText || actionsSinceTaskState >= TASK_STATE_ACTION_INTERVAL)) emitFallbackProgress(first)
         if (PARALLEL_TOOL_NAMES.has(first.name)) {
-          const roomBeforeProgress = Math.max(1, TASK_STATE_ACTION_INTERVAL - actionsSinceTaskState)
           const batch: LocalToolCall[] = []
           while (
             actionIndex < actions.length &&
             PARALLEL_TOOL_NAMES.has(actions[actionIndex].name) &&
-            batch.length < Math.min(MAX_PARALLEL_READ_TOOLS, roomBeforeProgress)
+            batch.length < MAX_PARALLEL_READ_TOOLS
           ) {
             batch.push(actions[actionIndex])
             actionIndex += 1
@@ -459,7 +470,7 @@ export class AgentRuntime {
         return completion
       } catch (error) {
         if (request.signal?.aborted || emitted || attempt === MAX_PROVIDER_RETRIES) throw error
-        onToolEvent?.({ type: 'progress-update', summary: 'Provider returned error, retrying' })
+        if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] provider retry', { attempt: attempt + 1 })
       }
     }
     throw new Error('Provider retry limit was reached')
