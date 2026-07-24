@@ -49,10 +49,10 @@ const TERMINAL_TOOL_NAMES = new Set(['terminal_create', 'terminal_list', 'termin
 export const TASK_STATE_TOOL_NAME = 'cur_task_state'
 const UI_MESSAGE_PROPERTY = {
   type: 'object',
-  description: 'Required user-facing activity labels for this tool. Do not place a message directly under ui_message.',
+  description: 'Localized activity labels.',
   properties: {
-    uim_prt: { type: 'string', description: 'Present-continuous first-person label describing the action in progress, such as “I’m reading the file”. Stay under six words.' },
-    uim_pat: { type: 'string', description: 'Past-tense label describing the completed action. Stay under six words.' }
+    uim_prt: { type: 'string', description: 'Current action, under six words.' },
+    uim_pat: { type: 'string', description: 'Completed action, under six words.' }
   },
   required: ['uim_prt', 'uim_pat'],
   additionalProperties: false
@@ -83,8 +83,8 @@ const definition = (name: string, description: string, properties: Record<string
 }
 
 const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
-  definition(TASK_STATE_TOOL_NAME, 'Share a user-visible task-state update before agentic work begins and at later runtime-required milestones. This is control-plane status, not an ordinary assistant response.', {
-    message: { type: 'string', description: 'One natural 60–65-word paragraph, written mostly in first person, describing the immediate next substep, why it matters, and what follows. Later updates must contain unique information about the new work phase; the runtime requires another after every four completed agent tools while work continues, up to twelve total.' }
+  definition(TASK_STATE_TOOL_NAME, 'Optional user-visible progress metadata. Include at most one alongside the action tools it describes; never use it as a standalone planning turn.', {
+    message: { type: 'string', description: 'A useful progress update in the configured language, from a few words up to 63 words.' }
   }, ['message']),
   definition('read', 'Read a UTF-8 text file with line numbers. Use this before editing an existing file.', {
     filePath: { type: 'string', description: 'Workspace-relative or absolute file path' },

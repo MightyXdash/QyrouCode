@@ -149,9 +149,9 @@ export class LlamaRuntime {
     return { ...this.status }
   }
 
-  async streamCompletion(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<void> {
+  async streamCompletion(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<LocalCompletion> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
-    await new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).stream(request, onDelta)
+    return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).stream(request, onDelta)
   }
 
   async complete(request: LocalCompletionRequest): Promise<LocalCompletion> {

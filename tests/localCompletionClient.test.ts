@@ -107,11 +107,34 @@ test('emits deltas from a fragmented server-sent event response', async () => {
   try {
     const deltas: string[] = []
     const client = new LocalCompletionClient(server.url)
-    await client.stream(
+    const completion = await client.stream(
       { messages: [{ role: 'user', content: 'Stream a response.' }] },
       (delta) => deltas.push(delta)
     )
     assert.deepEqual(deltas, ['Supra', 'Code'])
+    assert.equal(completion.text, 'SupraCode')
+    assert.deepEqual(completion.toolCalls, [])
+  } finally {
+    await server.close()
+  }
+})
+
+test('reconstructs fragmented streamed reasoning and tool calls', async () => {
+  const server = await startServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.write('data: {"choices":[{"delta":{"reasoning_content":"checking ","tool_calls":[{"index":0,"id":"call_","function":{"name":"re","arguments":"{\\"file"}}]}}]}\n\n')
+    response.write('data: {"choices":[{"delta":{"reasoning_content":"files","tool_calls":[{"index":0,"id":"1","function":{"name":"ad","arguments":"Path\\":\\"src/app.ts\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n')
+    response.end('data: [DONE]\n\n')
+  })
+
+  try {
+    const completion = await new LocalCompletionClient(server.url).stream(
+      { messages: [{ role: 'user', content: 'Inspect the app.' }] },
+      () => {}
+    )
+    assert.equal(completion.reasoningText, 'checking files')
+    assert.equal(completion.finishReason, 'tool_calls')
+    assert.deepEqual(completion.toolCalls, [{ id: 'call_1', name: 'read', arguments: { filePath: 'src/app.ts' } }])
   } finally {
     await server.close()
   }

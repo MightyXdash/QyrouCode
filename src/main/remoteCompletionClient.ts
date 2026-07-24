@@ -1,6 +1,7 @@
 import type { ConnectionKind } from '../shared/connections'
 import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall } from './localCompletionClient'
 import type { AgentCompletionProvider } from './agentRuntime'
+import { consumeOpenAiCompletionStream } from './openAiCompletionStream'
 
 export interface RemoteReasoningConfiguration {
   enabled?: boolean
@@ -110,15 +111,15 @@ function reasoningFields(kind: ConnectionKind, configuration: RemoteReasoningCon
   return {}
 }
 
-function completionBody(request: LocalCompletionRequest, configuration: RemoteCompletionConfiguration): Record<string, unknown> {
-  const messages = configuration.reasoning.fallbackPrompt
+function completionBody(request: LocalCompletionRequest, configuration: RemoteCompletionConfiguration, stream = false): Record<string, unknown> {
+  const messages: readonly LocalChatMessage[] = configuration.reasoning.fallbackPrompt
     ? [{ role: 'system', content: configuration.reasoning.fallbackPrompt }, ...request.messages]
     : request.messages
   const usesNativeReasoning = Boolean(configuration.reasoning.nativeEffort || configuration.reasoning.enabled)
   return {
     model: configuration.modelId,
     messages: messages.map(serializeMessage),
-    stream: false,
+    stream,
     max_tokens: request.maxTokens,
     temperature: usesNativeReasoning ? undefined : request.temperature,
     top_p: usesNativeReasoning ? undefined : request.topP,
@@ -187,6 +188,41 @@ export class RemoteCompletionClient implements AgentCompletionProvider {
         reasoningText,
         finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : undefined
       }
+    } catch (error) {
+      if (controller.signal.aborted) {
+        const reason = controller.signal.reason
+        if (reason instanceof Error) throw reason
+        throw new Error('Remote completion was cancelled')
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout)
+      request.signal?.removeEventListener('abort', abort)
+    }
+  }
+
+  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<LocalCompletion> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(new Error('Remote completion timed out')), this.timeoutMs)
+    const abort = (): void => controller.abort(request.signal?.reason)
+    request.signal?.addEventListener('abort', abort, { once: true })
+    try {
+      const response = await fetch(this.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${this.configuration.apiKey}`,
+          'content-type': JSON_CONTENT_TYPE
+        },
+        body: JSON.stringify(completionBody(request, this.configuration, true)),
+        signal: controller.signal
+      })
+      if (!response.ok) {
+        const detail = responseDetail(await response.text(), this.configuration.apiKey)
+        throw new Error(`Remote completion request failed with ${response.status}${detail ? `: ${detail}` : ''}`)
+      }
+      if (!response.body) throw new Error('Remote completion did not return a response stream')
+      const completion = await consumeOpenAiCompletionStream(response.body, onDelta)
+      return this.configuration.retainReasoning ? completion : { ...completion, reasoningText: undefined }
     } catch (error) {
       if (controller.signal.aborted) {
         const reason = controller.signal.reason

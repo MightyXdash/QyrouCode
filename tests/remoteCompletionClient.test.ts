@@ -98,3 +98,30 @@ test('injects prompt fallback controls for compatible models', async () => {
     assert.equal(completion.text, 'Ready')
   })
 })
+
+test('streams remote text and reconstructs fragmented tool calls', async () => {
+  let requestCount = 0
+  await withServer(async (request, response) => {
+    requestCount += 1
+    const body = await requestBody(request)
+    assert.equal(body.stream, true)
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_","function":{"name":"re","arguments":"{\\"file"}}]}}]}\n\n')
+    response.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"1","function":{"name":"ad","arguments":"Path\\":\\"src/index.ts\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n')
+    response.end('data: [DONE]\n\n')
+  }, async (baseUrl) => {
+    const client = new RemoteCompletionClient({
+      kind: 'openai-compatible',
+      baseUrl,
+      apiKey: 'custom-key',
+      modelId: 'custom/model',
+      retainReasoning: false,
+      reasoning: {}
+    })
+    const deltas: string[] = []
+    const completion = await client.stream({ messages: [{ role: 'user', content: 'Inspect' }] }, (delta) => deltas.push(delta))
+    assert.deepEqual(deltas, [])
+    assert.deepEqual(completion.toolCalls, [{ id: 'call_1', name: 'read', arguments: { filePath: 'src/index.ts' } }])
+  })
+  assert.equal(requestCount, 1)
+})

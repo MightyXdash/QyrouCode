@@ -1,3 +1,5 @@
+import { consumeOpenAiCompletionStream } from './openAiCompletionStream'
+
 export type LocalChatRole = 'system' | 'user' | 'assistant' | 'tool'
 
 export interface LocalToolCall {
@@ -319,7 +321,7 @@ export class LocalCompletionClient {
     return { text: parsed.content.trim(), toolCalls: [] }
   }
 
-  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<void> {
+  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<LocalCompletion> {
     const settings = validateRequest(request)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(new Error('Local completion timed out')), this.timeoutMs)
@@ -338,31 +340,7 @@ export class LocalCompletionClient {
         throw new Error(`Local completion request failed with ${response.status}${detail ? `: ${detail}` : ''}`)
       }
       if (!response.body) throw new Error('Local completion did not return a response stream')
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        buffer += decoder.decode(value, { stream: !done })
-        let boundary = buffer.indexOf('\n\n')
-        while (boundary !== -1) {
-          const event = buffer.slice(0, boundary)
-          buffer = buffer.slice(boundary + 2)
-          boundary = buffer.indexOf('\n\n')
-          const data = event.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n')
-          if (!data) continue
-          if (data === '[DONE]') return
-          let parsed: CompletionResponse
-          try {
-            parsed = JSON.parse(data) as CompletionResponse
-          } catch {
-            throw new Error('Local completion returned malformed stream data')
-          }
-          const delta = parsed.choices?.[0]?.delta?.content
-          if (typeof delta === 'string' && delta.length > 0) onDelta(delta)
-        }
-        if (done) return
-      }
+      return await consumeOpenAiCompletionStream(response.body, onDelta)
     } catch (error) {
       if (controller.signal.aborted) {
         const reason = controller.signal.reason

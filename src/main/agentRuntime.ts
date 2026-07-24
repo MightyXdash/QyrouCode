@@ -12,7 +12,7 @@ import { parseHealedToolCalls, stripToolCallMarkup } from './toolCallParser'
 
 export interface AgentCompletionProvider {
   complete(request: LocalCompletionRequest): Promise<LocalCompletion>
-  stream?(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<string>
+  stream?(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<LocalCompletion>
 }
 
 export interface AgentRunRequest extends Omit<LocalCompletionRequest, 'signal' | 'tools' | 'toolChoice'> {
@@ -43,13 +43,13 @@ const FINAL_MAX_TOKENS = 8_192
 const MAX_INTENT_REPROMPTS = 3
 const MAX_PROVIDER_RETRIES = 3
 const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
-const TASK_STATE_MIN_WORDS = 60
-const TASK_STATE_MAX_WORDS = 65
-const TASK_STATE_MAX_UPDATES = 12
-const TASK_STATE_ACTION_INTERVAL = 4
-const TASK_STATE_SIMILARITY_THRESHOLD = 0.42
+const TASK_STATE_MAX_WORDS = 63
+const TASK_STATE_MAX_CHARACTERS = 480
+const TASK_STATE_ACTION_INTERVAL = 6
+const TASK_STATE_SIMILARITY_THRESHOLD = 0.55
+const MAX_PARALLEL_READ_TOOLS = 4
+const PARALLEL_TOOL_NAMES = new Set(['read', 'list', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_read', 'skill', 'terminal_list', 'terminal_read', 'terminal_status'])
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
-const FIRST_PERSON_PATTERN = /\b(?:i|i'm|i’m|i'll|i’ll|me|my|mine|we|we're|we’re|we'll|we’ll|us|our|ours)\b/i
 
 function messageContentCharacters(content: LocalChatMessage['content']): number {
   if (typeof content === 'string') return content.length
@@ -84,12 +84,20 @@ function isIntentWithoutAction(value: string): boolean {
   return normalized.length > 0 && normalized.length < 2_000 && INTENT_PATTERN.test(normalized)
 }
 
-function taskStateWordCount(value: string): number {
-  return value.trim() ? value.trim().split(/\s+/).length : 0
+function normalizedTaskState(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const paragraph = value.replace(/\s+/g, ' ').trim()
+  if (!paragraph) return ''
+  const words = paragraph.split(' ')
+  const wordBounded = words.slice(0, TASK_STATE_MAX_WORDS).join(' ')
+  if (wordBounded.length <= TASK_STATE_MAX_CHARACTERS) return wordBounded
+  const shortened = wordBounded.slice(0, TASK_STATE_MAX_CHARACTERS).trimEnd()
+  const boundary = shortened.lastIndexOf(' ')
+  return boundary > TASK_STATE_MAX_CHARACTERS / 2 ? shortened.slice(0, boundary) : shortened
 }
 
 function taskStatesAreSimilar(left: string, right: string): boolean {
-  const words = (value: string): Set<string> => new Set(value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((word) => word.length > 2))
+  const words = (value: string): Set<string> => new Set(value.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter((word) => word.length > 2))
   const leftWords = words(left)
   const rightWords = words(right)
   if (!leftWords.size || !rightWords.size) return left.trim().toLowerCase() === right.trim().toLowerCase()
@@ -102,10 +110,43 @@ function persistedMessages(messages: readonly LocalChatMessage[]): LocalChatMess
   const hiddenCallIds = new Set(messages.flatMap((message) => message.role === 'assistant'
     ? (message.toolCalls ?? []).filter((call) => call.name === TASK_STATE_TOOL_NAME).map((call) => call.id)
     : []))
-  return messages.filter((message) => {
-    if (message.role === 'assistant' && message.toolCalls?.some((call) => call.name === TASK_STATE_TOOL_NAME)) return false
-    return message.role !== 'tool' || !message.toolCallId || !hiddenCallIds.has(message.toolCallId)
-  }).map((message) => ({ ...message }))
+  return messages.flatMap((message) => {
+    if (message.role === 'tool' && message.toolCallId && hiddenCallIds.has(message.toolCallId)) return []
+    if (message.role !== 'assistant' || !message.toolCalls?.some((call) => call.name === TASK_STATE_TOOL_NAME)) return [{ ...message }]
+    const toolCalls = message.toolCalls.filter((call) => call.name !== TASK_STATE_TOOL_NAME)
+    if (!toolCalls.length && !message.content) return []
+    return [{ ...message, toolCalls: toolCalls.length ? toolCalls : undefined }]
+  })
+}
+
+function requestNeedsSupraLabsContext(messages: readonly LocalChatMessage[]): boolean {
+  return messages.some((message) => message.role === 'user' && typeof message.content === 'string' && /\b(?:supra\s*labs|supra\s*code|hugging\s*face\s+organization|supra-(?:50m|mini|router|vl|a2a))\b/i.test(message.content))
+}
+
+function compactUiMessage(value: unknown): string {
+  return typeof value === 'string' ? value.trim().split(/\s+/).slice(0, 5).join(' ') : ''
+}
+
+function deterministicUiMessage(name: string): ToolUiMessage {
+  const label = name.replaceAll('_', ' ')
+  return { uim_prt: `Using ${label}`, uim_pat: `Used ${label}` }
+}
+
+function uiMessageForCall(call: LocalToolCall): ToolUiMessage | undefined {
+  if (call.name === TASK_STATE_TOOL_NAME || call.name === 'web_search' || call.name === 'web_fetch') return undefined
+  const supplied = call.arguments.ui_message && typeof call.arguments.ui_message === 'object' && !Array.isArray(call.arguments.ui_message)
+    ? call.arguments.ui_message as Partial<ToolUiMessage>
+    : undefined
+  const present = compactUiMessage(supplied?.uim_prt)
+  const past = compactUiMessage(supplied?.uim_pat)
+  return present && past ? { uim_prt: present, uim_pat: past } : deterministicUiMessage(call.name)
+}
+
+interface ToolExecution {
+  call: LocalToolCall
+  result: string
+  error?: string
+  filePath?: string
 }
 
 function modelSettings(request: AgentRunRequest, enableThinking = request.enableThinking): Omit<LocalCompletionRequest, 'messages'> {
@@ -136,35 +177,45 @@ export class AgentRuntime {
   constructor(private readonly provider: AgentCompletionProvider) {}
 
   async run(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void): Promise<void> {
+    const startedAt = Date.now()
     const modifiedFiles = new Set<string>()
     const originalFiles = new Map<string, string | null>()
     const visibleTaskStates: string[] = []
-    let finalText: string | undefined
-    try {
-      finalText = await this.runInternal(request, 0, false, onState, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates)
-    } finally {
+    let filesEmitted = false
+    const emitFiles = (): void => {
+      if (filesEmitted) return
+      filesEmitted = true
       const files = summarizeFileChanges(request.projectPath, modifiedFiles, originalFiles)
       if (files.length > 0) onToolEvent?.({ type: 'files-changed', files })
     }
-    await this.emitStreamedText(finalText, onDelta)
+    let final: { text: string; streamed: boolean } | undefined
+    try {
+      final = await this.runInternal(request, 0, false, onState, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates, (delta) => {
+        emitFiles()
+        onDelta(delta)
+      })
+    } finally {
+      emitFiles()
+      if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] run', { durationMs: Date.now() - startedAt, modifiedFiles: modifiedFiles.size })
+    }
+    if (final && !final.streamed && final.text) onDelta(final.text)
   }
 
-  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, visibleTaskStates: string[] = []): Promise<string> {
+  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, visibleTaskStates: string[] = [], onFinalDelta?: (delta: string) => void): Promise<{ text: string; streamed: boolean }> {
     request.signal?.throwIfAborted()
     const systemPrompt = buildAgentSystemPrompt({
       projectPath: request.projectPath,
       additionalInstructions: additionalSystemInstructions(request.messages),
       nativeLanguage: request.nativeLanguage ?? DEFAULT_NATIVE_LANGUAGE,
-      readOnly
+      readOnly,
+      includeSupraLabsContext: requestNeedsSupraLabsContext(request.messages)
     })
     let messages = conversationMessages(request.messages)
     const duplicateCalls = new Map<string, number>()
     let intentReprompts = 0
     let emptyCompletionRetries = 0
-    let taskStateProtocolReprompts = 0
-    let taskStateReady = false
-    let completedActionCount = 0
     let actionsSinceTaskState = 0
+    let lastProgressText = visibleTaskStates.at(-1) ?? ''
     let enableThinking = request.enableThinking ?? false
     const toolbox = new AgentToolbox({
       projectPath: request.projectPath,
@@ -175,6 +226,57 @@ export class AgentRuntime {
       onTodosChanged: (todos) => onToolEvent?.({ type: 'todos-updated', todos })
     })
     const allowedNames = new Set(toolbox.definitions.map((tool) => tool.name))
+    const executeAction = async (call: LocalToolCall): Promise<ToolExecution> => {
+      request.signal?.throwIfAborted()
+      const startedAt = Date.now()
+      const uiMessage = uiMessageForCall(call)
+      onToolEvent?.({ type: 'tool-call', toolCallId: call.id, name: call.name, arguments: call.arguments, summary: uiMessage })
+      const candidatePaths = mutationPaths(call, request.projectPath)
+      for (const candidatePath of candidatePaths) captureOriginalFile(request.projectPath, candidatePath, originalFiles)
+      const key = callKey(call)
+      const repeats = (duplicateCalls.get(key) ?? 0) + 1
+      duplicateCalls.set(key, repeats)
+      let result: string
+      let error: string | undefined
+      if (repeats >= 3) {
+        result = 'Error: This exact tool call has already been attempted twice. Do not repeat it. Change approach or provide the best final answer now.'
+        error = result
+      } else {
+        try {
+          result = await toolbox.execute(call.name, call.arguments)
+        } catch (cause) {
+          result = `Error: ${cause instanceof Error ? cause.message : 'Tool execution failed'}. Inspect this result and try a different approach.`
+          error = result
+        }
+      }
+      let filePath: string | undefined
+      if (!error && (call.name === 'write' || call.name === 'edit')) {
+        const raw = typeof call.arguments.filePath === 'string' ? call.arguments.filePath : undefined
+        filePath = raw ? relative(request.projectPath, resolve(request.projectPath, raw)).replace(/\\/g, '/') : undefined
+      }
+      if (!error && call.name === 'apply_patch' && typeof call.arguments.patch === 'string') {
+        const patchPaths = extractPatchPaths(call.arguments.patch, request.projectPath)
+        for (const patchPath of patchPaths) {
+          modifiedFiles?.add(patchPath)
+          if (!filePath) filePath = patchPath
+        }
+      }
+      if (filePath) modifiedFiles?.add(filePath)
+      if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] tool', { name: call.name, durationMs: Date.now() - startedAt, ok: !error })
+      return { call, result, error, filePath }
+    }
+    const emitExecution = (execution: ToolExecution): void => {
+      if (execution.error) onToolEvent?.({ type: 'tool-error', toolCallId: execution.call.id, error: execution.error })
+      else onToolEvent?.({ type: 'tool-result', toolCallId: execution.call.id, result: execution.result, filePath: execution.filePath })
+    }
+    const emitFallbackProgress = (call: LocalToolCall): void => {
+      const fallback = uiMessageForCall(call)?.uim_prt ?? deterministicUiMessage(call.name).uim_prt
+      if (!fallback || fallback === lastProgressText) return
+      lastProgressText = fallback
+      actionsSinceTaskState = 0
+      onToolEvent?.({ type: 'progress-update', summary: fallback })
+      if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] progress', { source: 'fallback', length: fallback.length })
+    }
 
     for (let step = 0; step < MAX_AGENT_STEPS; step += 1) {
       request.signal?.throwIfAborted()
@@ -182,18 +284,21 @@ export class AgentRuntime {
         messages = await this.compact(request, messages, onToolEvent)
         onState?.(persistedMessages(messages))
       }
+      let streamed = false
       const completion = await this.completeWithRetries({
         ...modelSettings(request, enableThinking),
         messages: [{ role: 'system', content: systemPrompt }, ...messages],
         tools: toolbox.definitions,
         toolChoice: 'auto',
         signal: request.signal
-      }, onToolEvent)
+      }, onToolEvent, depth === 0 && onFinalDelta ? (delta) => {
+        streamed = true
+        onFinalDelta(delta)
+      } : undefined)
       const contentCalls = parseHealedToolCalls(completion.text, allowedNames)
       const reasoningCalls = parseHealedToolCalls(completion.reasoningText ?? '', allowedNames)
       const availableCalls = completion.toolCalls.length ? completion.toolCalls : contentCalls.length ? contentCalls : reasoningCalls
-      const healedCalls = availableCalls.slice(0, 1)
-      if (!healedCalls.length) {
+      if (!availableCalls.length) {
         const finalText = stripToolCallMarkup(completion.text)
         if (!finalText && completion.reasoningText && emptyCompletionRetries < MAX_INTENT_REPROMPTS) {
           emptyCompletionRetries += 1
@@ -202,110 +307,90 @@ export class AgentRuntime {
           continue
         }
         if (!finalText) throw new Error('The local model completed a turn without a visible answer or usable tool call')
-        if (!taskStateReady && taskStateProtocolReprompts > 0) {
-          taskStateProtocolReprompts += 1
-          enableThinking = false
-          messages.push({ role: 'user', content: 'Protocol error: cur_task_state is still required before you may continue or provide a final response. Call cur_task_state now as the only tool call. Use one unique 60–65-word, mostly first-person paragraph describing the immediate next substep, why it matters, and what follows.' })
-          continue
-        }
-        if (taskStateReady && completedActionCount === 0 && taskStateProtocolReprompts < MAX_INTENT_REPROMPTS) {
-          taskStateProtocolReprompts += 1
-          messages.push({ role: 'user', content: 'Do not generate an assistant response while agentic work is active. You announced the next substep with cur_task_state but have not performed it. Continue now with exactly one appropriate tool call and its required ui_message.' })
-          continue
-        }
-        if (isIntentWithoutAction(finalText) && intentReprompts < MAX_INTENT_REPROMPTS) {
+        if (!streamed && isIntentWithoutAction(finalText) && intentReprompts < MAX_INTENT_REPROMPTS) {
           intentReprompts += 1
-          messages.push({ role: 'user', content: 'Your previous internal turn described future actions and was not shown to the user. Continue now using exactly one available tool. If no tool is needed, provide only the completed final answer.' })
+          messages.push({ role: 'user', content: 'Your previous internal turn only described future actions. Continue now with the appropriate tool calls, batching independent inspections when useful. If no tool is needed, provide only the completed final answer.' })
           continue
         }
         messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
         onState?.(persistedMessages(messages))
-        return finalText
+        return { text: finalText, streamed }
       }
 
+      if (streamed) throw new Error('The provider mixed visible assistant text with tool calls. No tool calls from that response were executed.')
       intentReprompts = 0
       emptyCompletionRetries = 0
-      const selectedCall = healedCalls[0]
-      if (!taskStateReady && selectedCall.name !== TASK_STATE_TOOL_NAME) {
-        taskStateProtocolReprompts += 1
-        enableThinking = false
-        messages.push({ role: 'user', content: `Protocol error: ${selectedCall.name} was not executed because cur_task_state is required first. Call cur_task_state now as the only tool call. Its message must be one unique 60–65-word paragraph written mostly in first person, explaining the immediate next substep, why it matters, and what follows. Do not generate ordinary assistant prose.` })
-        continue
-      }
-      const selectedCallId = selectedCall.id || randomUUID()
+      const usedCallIds = new Set<string>()
+      const calls = availableCalls.map((call) => {
+        let id = call.id || randomUUID()
+        while (usedCallIds.has(id)) id = randomUUID()
+        usedCallIds.add(id)
+        return { ...call, id }
+      })
       messages.push({
         role: 'assistant',
         content: null,
-        toolCalls: [{ ...selectedCall, id: selectedCallId }],
+        toolCalls: calls,
         reasoningText: retainedReasoning(request, completion.reasoningText),
         ...modelProvenance(request)
       })
-      for (const call of healedCalls) {
-        const callId = selectedCallId
-        const isTaskState = call.name === TASK_STATE_TOOL_NAME
-        const candidatePaths = mutationPaths(call, request.projectPath)
-        for (const candidatePath of candidatePaths) captureOriginalFile(request.projectPath, candidatePath, originalFiles)
-        const key = callKey(call)
-        const repeats = (duplicateCalls.get(key) ?? 0) + 1
-        duplicateCalls.set(key, repeats)
-        let result: string
-        let error: string | undefined
-        if (repeats >= 3) {
-          result = 'Error: This exact tool call has already been attempted twice. Do not repeat it. Change approach or provide the best final answer now.'
-          error = result
+
+      const results = new Map<string, ToolExecution>()
+      let acceptedTaskStateId: string | undefined
+      for (const call of calls.filter((candidate) => candidate.name === TASK_STATE_TOOL_NAME)) {
+        const message = normalizedTaskState(call.arguments.message)
+        const duplicate = !message || visibleTaskStates.some((visible) => taskStatesAreSimilar(visible, message))
+        if (!acceptedTaskStateId && !duplicate) {
+          acceptedTaskStateId = call.id
+          visibleTaskStates.push(message)
+          lastProgressText = message
+          actionsSinceTaskState = 0
+          onToolEvent?.({ type: 'progress-update', summary: message })
+          if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] progress', { source: 'model', length: message.length })
+        }
+        results.set(call.id, { call, result: call.id === acceptedTaskStateId ? 'Task state accepted.' : 'Task state ignored; continue without retrying.' })
+      }
+
+      const actions = calls.filter((call) => call.name !== TASK_STATE_TOOL_NAME)
+      let actionIndex = 0
+      while (actionIndex < actions.length) {
+        request.signal?.throwIfAborted()
+        const first = actions[actionIndex]
+        if ((!lastProgressText || actionsSinceTaskState >= TASK_STATE_ACTION_INTERVAL)) emitFallbackProgress(first)
+        if (PARALLEL_TOOL_NAMES.has(first.name)) {
+          const roomBeforeProgress = Math.max(1, TASK_STATE_ACTION_INTERVAL - actionsSinceTaskState)
+          const batch: LocalToolCall[] = []
+          while (
+            actionIndex < actions.length &&
+            PARALLEL_TOOL_NAMES.has(actions[actionIndex].name) &&
+            batch.length < Math.min(MAX_PARALLEL_READ_TOOLS, roomBeforeProgress)
+          ) {
+            batch.push(actions[actionIndex])
+            actionIndex += 1
+          }
+          const executions = await Promise.all(batch.map(executeAction))
+          for (const execution of executions) {
+            results.set(execution.call.id, execution)
+            emitExecution(execution)
+            actionsSinceTaskState += 1
+          }
         } else {
-          try {
-            if (isTaskState) {
-              const message = typeof call.arguments.message === 'string' ? call.arguments.message.trim() : ''
-              const wordCount = taskStateWordCount(message)
-              if (wordCount < TASK_STATE_MIN_WORDS || wordCount > TASK_STATE_MAX_WORDS) throw new Error(`cur_task_state must contain 60–65 words; received ${wordCount}`)
-              if (/\r?\n\s*\r?\n/.test(message)) throw new Error('cur_task_state must be one paragraph')
-              if (!FIRST_PERSON_PATTERN.test(message)) throw new Error('cur_task_state must be written mostly in first person')
-              if (visibleTaskStates.length >= TASK_STATE_MAX_UPDATES) throw new Error('The task already has twelve cur_task_state updates; continue the work without another')
-              if (visibleTaskStates.some((visible) => taskStatesAreSimilar(visible, message))) throw new Error('This cur_task_state is substantially similar to an earlier update; continue working or report a genuinely new development')
-              visibleTaskStates.push(message)
-              taskStateReady = true
-              actionsSinceTaskState = 0
-              taskStateProtocolReprompts = 0
-              onToolEvent?.({ type: 'progress-update', summary: message })
-            } else {
-              const uiMessage = onToolEvent ? await this.resolveUiMessage(request, messages, call, onToolEvent) : undefined
-              onToolEvent?.({ type: 'tool-call', toolCallId: callId, name: call.name, arguments: call.arguments, summary: uiMessage })
-            }
-            result = await toolbox.execute(call.name, call.arguments)
-            if (!isTaskState) {
-              completedActionCount += 1
-              actionsSinceTaskState += 1
-              if (actionsSinceTaskState >= TASK_STATE_ACTION_INTERVAL && visibleTaskStates.length < TASK_STATE_MAX_UPDATES) taskStateReady = false
-            }
-          } catch (err) {
-            const message = `Error: ${err instanceof Error ? err.message : 'Tool execution failed'}. Inspect this result and try a different approach.`
-            result = message
-            error = message
-          }
+          const execution = await executeAction(first)
+          results.set(first.id, execution)
+          emitExecution(execution)
+          actionsSinceTaskState += 1
+          actionIndex += 1
         }
-        let filePath: string | undefined
-        if (!error && (call.name === 'write' || call.name === 'edit')) {
-          const raw = typeof call.arguments.filePath === 'string' ? call.arguments.filePath : undefined
-          filePath = raw ? relative(request.projectPath, resolve(request.projectPath, raw)).replace(/\\/g, '/') : undefined
-        }
-        if (!error && call.name === 'apply_patch' && typeof call.arguments.patch === 'string') {
-          const patchPaths = extractPatchPaths(call.arguments.patch, request.projectPath)
-          for (const patchPath of patchPaths) {
-            modifiedFiles?.add(patchPath)
-            if (!filePath) filePath = patchPath
-          }
-        }
-        if (filePath) modifiedFiles?.add(filePath)
-        if (!isTaskState) {
-          if (error) onToolEvent?.({ type: 'tool-error', toolCallId: callId, error })
-          else onToolEvent?.({ type: 'tool-result', toolCallId: callId, result, filePath })
-        }
-        messages.push({ role: 'tool', name: call.name, toolCallId: callId, content: result, filePath })
+      }
+      for (const call of calls) {
+        const execution = results.get(call.id)
+        if (!execution) continue
+        messages.push({ role: 'tool', name: call.name, toolCallId: call.id, content: execution.result, filePath: execution.filePath })
       }
       onState?.(persistedMessages(messages))
     }
 
+    let streamed = false
     const completion = await this.completeWithRetries({
       ...modelSettings(request, false),
       messages: [
@@ -317,11 +402,14 @@ export class AgentRuntime {
       toolChoice: 'none',
       maxTokens: Math.min(request.maxTokens ?? FINAL_MAX_TOKENS, FINAL_MAX_TOKENS),
       signal: request.signal
-    }, onToolEvent)
+    }, onToolEvent, depth === 0 && onFinalDelta ? (delta) => {
+      streamed = true
+      onFinalDelta(delta)
+    } : undefined)
     const finalText = stripToolCallMarkup(completion.text)
     messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
     onState?.(persistedMessages(messages))
-    return finalText
+    return { text: finalText, streamed }
   }
 
   private async compact(request: AgentRunRequest, messages: LocalChatMessage[], onToolEvent?: (event: AgentToolEvent) => void): Promise<LocalChatMessage[]> {
@@ -344,48 +432,33 @@ export class AgentRuntime {
     ]
   }
 
-  private async resolveUiMessage(request: AgentRunRequest, messages: readonly LocalChatMessage[], call: LocalToolCall, onToolEvent?: (event: AgentToolEvent) => void): Promise<ToolUiMessage | undefined> {
-    if (call.name === TASK_STATE_TOOL_NAME || call.name === 'web_search' || call.name === 'web_fetch') return undefined
-    const supplied = call.arguments.ui_message && typeof call.arguments.ui_message === 'object' && !Array.isArray(call.arguments.ui_message)
-      ? call.arguments.ui_message as Partial<ToolUiMessage>
-      : undefined
-    const present = typeof supplied?.uim_prt === 'string' ? supplied.uim_prt.trim() : ''
-    const past = typeof supplied?.uim_pat === 'string' ? supplied.uim_pat.trim() : ''
-    if (present && past) return { uim_prt: present.split(/\s+/).slice(0, 5).join(' '), uim_pat: past.split(/\s+/).slice(0, 5).join(' ') }
-    const completion = await this.completeWithRetries({
-      ...modelSettings(request, false),
-      messages: [
-        ...messages,
-        {
-          role: 'user',
-          content: `Return only compact JSON describing the current ${call.name} tool call. Use exactly this shape: {"uim_prt":"present-tense first-person label","uim_pat":"past-tense completed label"}. Keep each value under six words. Do not add explanation or a tool call.`
-        }
-      ],
-      tools: [],
-      toolChoice: 'none',
-      enableThinking: false,
-      maxTokens: 64,
-      signal: request.signal
-    }, onToolEvent)
-    try {
-      const generated = JSON.parse(stripToolCallMarkup(completion.text)) as Partial<ToolUiMessage>
-      if (typeof generated.uim_prt === 'string' && typeof generated.uim_pat === 'string') {
-        return {
-          uim_prt: generated.uim_prt.trim().split(/\s+/).slice(0, 5).join(' '),
-          uim_pat: generated.uim_pat.trim().split(/\s+/).slice(0, 5).join(' ')
-        }
-      }
-    } catch {}
-    return { uim_prt: `I’m using ${call.name}`, uim_pat: `Used ${call.name}` }
-  }
-
-  private async completeWithRetries(request: LocalCompletionRequest, onToolEvent?: (event: AgentToolEvent) => void): Promise<LocalCompletion> {
+  private async completeWithRetries(request: LocalCompletionRequest, onToolEvent?: (event: AgentToolEvent) => void, onDelta?: (delta: string) => void): Promise<LocalCompletion> {
     for (let attempt = 0; attempt <= MAX_PROVIDER_RETRIES; attempt += 1) {
       request.signal?.throwIfAborted()
+      const startedAt = Date.now()
+      let firstDeltaAt: number | undefined
+      let emitted = false
       try {
-        return await this.provider.complete(request)
+        const completion = this.provider.stream
+          ? await this.provider.stream(request, (delta) => {
+              emitted = true
+              firstDeltaAt ??= Date.now()
+              onDelta?.(delta)
+            })
+          : await this.provider.complete(request)
+        if (process.env.NODE_ENV === 'development') {
+          console.debug('[AgentRuntime] provider', {
+            durationMs: Date.now() - startedAt,
+            firstDeltaMs: firstDeltaAt ? firstDeltaAt - startedAt : undefined,
+            promptCharacters: contentCharacters(request.messages),
+            toolSchemaCharacters: request.tools ? JSON.stringify(request.tools).length : 0,
+            toolCalls: completion.toolCalls.length,
+            attempt
+          })
+        }
+        return completion
       } catch (error) {
-        if (request.signal?.aborted || attempt === MAX_PROVIDER_RETRIES) throw error
+        if (request.signal?.aborted || emitted || attempt === MAX_PROVIDER_RETRIES) throw error
         onToolEvent?.({ type: 'progress-update', summary: 'Provider returned error, retrying' })
       }
     }
@@ -399,15 +472,7 @@ export class AgentRuntime {
         { role: 'system', content: `Subagent task: ${task.description}. Return a single concise result to the parent agent. Include exact paths and evidence. Complete the requested work autonomously.` },
         { role: 'user', content: task.prompt }
       ]
-    }, depth, task.subagentType === 'explore', undefined, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates)
-  }
-
-  private async emitStreamedText(text: string, onDelta: (delta: string) => void): Promise<void> {
-    if (!text) return
-    for (let i = 0; i < text.length; i += 3) {
-      onDelta(text.slice(i, i + 3))
-      await new Promise((resolve) => setTimeout(resolve, 8))
-    }
+    }, depth, task.subagentType === 'explore', undefined, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates).then((result) => result.text)
   }
 }
 
