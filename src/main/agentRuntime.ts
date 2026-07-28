@@ -49,9 +49,36 @@ const TASK_STATE_MAX_CHARACTERS = 480
 const TASK_STATE_ACTION_INTERVAL = 6
 const TASK_STATE_SIMILARITY_THRESHOLD = 0.55
 const MAX_PARALLEL_READ_TOOLS = 4
+const FINAL_RESPONSE_WORDS_PER_SECOND = 200
+const FINAL_RESPONSE_WORD_INTERVAL_MS = 1_000 / FINAL_RESPONSE_WORDS_PER_SECOND
 const PARALLEL_TOOL_NAMES = new Set(['read', 'list', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_read', 'skill', 'terminal_list', 'terminal_read', 'terminal_status'])
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
 const TASK_STATE_REMINDER = 'Agentic work is continuing after several actions without a recent visible update. If more tools are needed, include one fresh cur_task_state of 8–63 words in this same response alongside the actions it describes. Do not call it alone, repeat an earlier update, or add one when returning the final answer.'
+
+interface AgentRuntimeTiming {
+  wait(durationMs: number, signal?: AbortSignal): Promise<void>
+}
+
+function waitFor(durationMs: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
+  return new Promise((resolvePromise, rejectPromise) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abort)
+      resolvePromise()
+    }, durationMs)
+    const abort = (): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+      const reason = signal?.reason
+      rejectPromise(reason instanceof Error ? reason : new Error('Agent completion was cancelled'))
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+  })
+}
+
+const DEFAULT_AGENT_RUNTIME_TIMING: AgentRuntimeTiming = {
+  wait: waitFor
+}
 
 function messageContentCharacters(content: LocalChatMessage['content']): number {
   if (typeof content === 'string') return content.length
@@ -97,6 +124,32 @@ function taskStateWords(value: string): TaskStateWord[] {
     return [...segmenter.segment(value)].flatMap((part) => part.isWordLike ? [{ index: part.index, segment: part.segment }] : [])
   } catch {
     return [...value.matchAll(/\S+/gu)].map((match) => ({ index: match.index, segment: match[0] }))
+  }
+}
+
+function finalResponseUnitEnds(value: string): number[] {
+  const words = taskStateWords(value)
+  return words.map((_word, index) => words[index + 1]?.index ?? value.length)
+}
+
+async function playFinalResponse(
+  text: string,
+  onDelta: (delta: string) => void,
+  signal: AbortSignal | undefined,
+  timing: AgentRuntimeTiming
+): Promise<void> {
+  signal?.throwIfAborted()
+  const unitEnds = finalResponseUnitEnds(text)
+  if (!unitEnds.length) {
+    if (text) onDelta(text)
+    return
+  }
+  let emittedEnd = 0
+  for (const [index, unitEnd] of unitEnds.entries()) {
+    signal?.throwIfAborted()
+    if (index > 0) await timing.wait(FINAL_RESPONSE_WORD_INTERVAL_MS, signal)
+    onDelta(text.slice(emittedEnd, unitEnd))
+    emittedEnd = unitEnd
   }
 }
 
@@ -195,7 +248,10 @@ function modelProvenance(request: AgentRunRequest): { model: AgentModelProvenanc
 }
 
 export class AgentRuntime {
-  constructor(private readonly provider: AgentCompletionProvider) {}
+  constructor(
+    private readonly provider: AgentCompletionProvider,
+    private readonly timing: AgentRuntimeTiming = DEFAULT_AGENT_RUNTIME_TIMING
+  ) {}
 
   async run(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void): Promise<void> {
     const startedAt = Date.now()
@@ -295,7 +351,6 @@ export class AgentRuntime {
         messages = await this.compact(request, messages, onToolEvent)
         onState?.(persistedMessages(messages))
       }
-      let streamed = false
       const completion = await this.completeWithRetries({
         ...modelSettings(request, enableThinking),
         messages: [{
@@ -305,33 +360,33 @@ export class AgentRuntime {
         tools: toolbox.definitions,
         toolChoice: 'auto',
         signal: request.signal
-      }, onToolEvent, depth === 0 && onFinalDelta ? (delta) => {
-        streamed = true
-        onFinalDelta(delta)
-      } : undefined)
+      }, onToolEvent)
       const contentCalls = parseHealedToolCalls(completion.text, allowedNames)
       const reasoningCalls = parseHealedToolCalls(completion.reasoningText ?? '', allowedNames)
       const availableCalls = completion.toolCalls.length ? completion.toolCalls : contentCalls.length ? contentCalls : reasoningCalls
       if (!availableCalls.length) {
         const finalText = stripToolCallMarkup(completion.text)
-        if (!finalText && completion.reasoningText && emptyCompletionRetries < MAX_INTENT_REPROMPTS) {
+        if (!finalText.trim() && completion.reasoningText && emptyCompletionRetries < MAX_INTENT_REPROMPTS) {
           emptyCompletionRetries += 1
           enableThinking = false
           messages.push({ role: 'user', content: 'Your previous turn contained only private reasoning and no visible answer or action. Continue with thinking disabled: use the available tools if needed, otherwise provide the completed final answer now.' })
           continue
         }
-        if (!finalText) throw new Error('The local model completed a turn without a visible answer or usable tool call')
-        if (!streamed && isIntentWithoutAction(finalText) && intentReprompts < MAX_INTENT_REPROMPTS) {
+        if (!finalText.trim()) throw new Error('The local model completed a turn without a visible answer or usable tool call')
+        if (isIntentWithoutAction(finalText) && intentReprompts < MAX_INTENT_REPROMPTS) {
           intentReprompts += 1
           messages.push({ role: 'user', content: 'Your previous internal turn only described future actions. Continue now with the appropriate tool calls, batching independent inspections when useful. If no tool is needed, provide only the completed final answer.' })
           continue
         }
         messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
         onState?.(persistedMessages(messages))
-        return { text: finalText, streamed }
+        if (depth === 0 && onFinalDelta) {
+          await playFinalResponse(finalText, onFinalDelta, request.signal, this.timing)
+          return { text: finalText, streamed: true }
+        }
+        return { text: finalText, streamed: false }
       }
 
-      if (streamed) throw new Error('The provider mixed visible assistant text with tool calls. No tool calls from that response were executed.')
       intentReprompts = 0
       emptyCompletionRetries = 0
       const usedCallIds = new Set<string>()
@@ -401,7 +456,6 @@ export class AgentRuntime {
       onState?.(persistedMessages(messages))
     }
 
-    let streamed = false
     const completion = await this.completeWithRetries({
       ...modelSettings(request, false),
       messages: [
@@ -413,14 +467,16 @@ export class AgentRuntime {
       toolChoice: 'none',
       maxTokens: Math.min(request.maxTokens ?? FINAL_MAX_TOKENS, FINAL_MAX_TOKENS),
       signal: request.signal
-    }, onToolEvent, depth === 0 && onFinalDelta ? (delta) => {
-      streamed = true
-      onFinalDelta(delta)
-    } : undefined)
+    }, onToolEvent)
     const finalText = stripToolCallMarkup(completion.text)
+    if (!finalText.trim()) throw new Error('The local model completed the final turn without a visible answer')
     messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
     onState?.(persistedMessages(messages))
-    return { text: finalText, streamed }
+    if (depth === 0 && onFinalDelta) {
+      await playFinalResponse(finalText, onFinalDelta, request.signal, this.timing)
+      return { text: finalText, streamed: true }
+    }
+    return { text: finalText, streamed: false }
   }
 
   private async compact(request: AgentRunRequest, messages: LocalChatMessage[], onToolEvent?: (event: AgentToolEvent) => void): Promise<LocalChatMessage[]> {
@@ -443,7 +499,7 @@ export class AgentRuntime {
     ]
   }
 
-  private async completeWithRetries(request: LocalCompletionRequest, onToolEvent?: (event: AgentToolEvent) => void, onDelta?: (delta: string) => void): Promise<LocalCompletion> {
+  private async completeWithRetries(request: LocalCompletionRequest, onToolEvent?: (event: AgentToolEvent) => void): Promise<LocalCompletion> {
     for (let attempt = 0; attempt <= MAX_PROVIDER_RETRIES; attempt += 1) {
       request.signal?.throwIfAborted()
       const startedAt = Date.now()
@@ -451,10 +507,9 @@ export class AgentRuntime {
       let emitted = false
       try {
         const completion = this.provider.stream
-          ? await this.provider.stream(request, (delta) => {
+          ? await this.provider.stream(request, () => {
               emitted = true
               firstDeltaAt ??= Date.now()
-              onDelta?.(delta)
             })
           : await this.provider.complete(request)
         if (process.env.NODE_ENV === 'development') {

@@ -35,4 +35,5 @@ test('heals GLM, Llama, DeepSeek, and Kimi tool calls', () => {
 test('filters unknown healed tools and strips hidden tool markup', () => {
   assert.deepEqual(parseHealedToolCalls('<tool_call>{"name":"unknown","arguments":{}}</tool_call>', allowed), [])
   assert.equal(stripToolCallMarkup('Checking now.\n<tool_call>{"name":"read","arguments":{}}</tool_call>'), 'Checking now.')
+  assert.equal(stripToolCallMarkup('  Exact final answer.\n'), '  Exact final answer.\n')
 })

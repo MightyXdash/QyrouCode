@@ -269,7 +269,7 @@ test('accepts only task states with at least eight Unicode-aware words', async (
   }
 })
 
-test('streams final provider deltas directly through the runtime', async () => {
+test('buffers provider deltas and paces only the confirmed final response', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
     const requests: LocalCompletionRequest[] = []
@@ -282,52 +282,276 @@ test('streams final provider deltas directly through the runtime', async () => {
         requests.push(request)
         index += 1
         if (index === 1) return { text: '', toolCalls: [{ id: 'write', name: 'write', arguments: { filePath: 'streamed.txt', content: 'done' } }] }
-        onDelta('Fast ')
-        onDelta('answer')
-        return { text: 'Fast answer', toolCalls: [] }
+        onDelta('One two three four five ')
+        onDelta('six seven eight nine ten eleven.')
+        return { text: 'One two three four five six seven eight nine ten eleven.', toolCalls: [] }
       }
     }
-    const deltas: string[] = []
+    let now = 0
+    const emitted: Array<{ delta: string; at: number }> = []
+    const waits: number[] = []
+    const runtime = new AgentRuntime(provider, {
+      wait: async (durationMs) => {
+        waits.push(durationMs)
+        now += durationMs
+      }
+    })
 
-    await new AgentRuntime(provider).run({
+    await runtime.run({
       threadId: 'thread-stream',
       projectPath,
       messages: [{ role: 'user', content: 'Create the streamed result.' }]
-    }, (delta) => deltas.push(delta))
+    }, (delta) => emitted.push({ delta, at: now }))
 
     assert.equal(requests.length, 2)
-    assert.deepEqual(deltas, ['Fast ', 'answer'])
+    assert.equal(emitted.map((event) => event.delta).join(''), 'One two three four five six seven eight nine ten eleven.')
+    assert.equal(emitted.length, 11)
+    assert.equal(emitted[0]?.at, 0)
+    assert.equal(emitted.at(-1)?.at, 50)
+    assert.deepEqual(waits, Array.from({ length: 10 }, () => 5))
     assert.equal(readFileSync(join(projectPath, 'streamed.txt'), 'utf8'), 'done')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
 })
 
-test('rejects a streamed response that later introduces tool calls before side effects run', async () => {
+test('preserves Unicode, Markdown, code, and whitespace during final playback', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
   try {
+    const finalText = '完成了 世界。\n\n**Result:**\n\n```ts\nconst value = 1\n```\n'
+    const provider = new ScriptedProvider([{ text: finalText, toolCalls: [] }])
+    const deltas: string[] = []
+    const runtime = new AgentRuntime(provider, {
+      wait: async () => {}
+    })
+
+    await runtime.run({
+      threadId: 'thread-playback-content',
+      projectPath,
+      messages: [{ role: 'user', content: 'Return formatted output.' }]
+    }, (delta) => deltas.push(delta))
+
+    assert.equal(deltas.join(''), finalText)
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('discards streamed prose from a mixed tool turn and executes its side effects', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const requests: LocalCompletionRequest[] = []
+    const persisted: LocalCompletionRequest['messages'][] = []
+    let index = 0
+    const provider: AgentCompletionProvider = {
+      async complete(): Promise<LocalCompletion> {
+        throw new Error('Streaming provider should not use complete')
+      },
+      async stream(request, onDelta): Promise<LocalCompletion> {
+        requests.push(request)
+        index += 1
+        if (index === 1) {
+          onDelta('I found the issue. Let me fix it now.')
+          return {
+            text: 'I found the issue. Let me fix it now.',
+            toolCalls: [{ id: 'late_write', name: 'write', arguments: { filePath: 'fixed.txt', content: 'fixed' } }]
+          }
+        }
+        onDelta('Implemented the confirmed fix.')
+        return { text: 'Implemented the confirmed fix.', toolCalls: [] }
+      }
+    }
+    const deltas: string[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-mixed-stream',
+      projectPath,
+      messages: [{ role: 'user', content: 'Create a file.' }]
+    }, (delta) => deltas.push(delta), (messages) => persisted.push(messages.map((message) => ({ ...message }))))
+
+    assert.equal(requests.length, 2)
+    assert.equal(deltas.join(''), 'Implemented the confirmed fix.')
+    assert.equal(readFileSync(join(projectPath, 'fixed.txt'), 'utf8'), 'fixed')
+    assert.ok(persisted.flat().every((message) => message.content !== 'I found the issue. Let me fix it now.'))
+    const mixedTurn = persisted.flat().find((message) => message.role === 'assistant' && message.toolCalls?.some((call) => call.id === 'late_write'))
+    assert.equal(mixedTurn?.content, null)
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('keeps cur_task_state as the only progress source in a mixed tool turn', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    let index = 0
     const provider: AgentCompletionProvider = {
       async complete(): Promise<LocalCompletion> {
         throw new Error('Streaming provider should not use complete')
       },
       async stream(_request, onDelta): Promise<LocalCompletion> {
-        onDelta('Speculative text')
+        index += 1
+        if (index === 1) {
+          onDelta('Here is my final answer before I make changes.')
+          return {
+            text: 'Here is my final answer before I make changes.',
+            toolCalls: [
+              { id: 'state', name: 'cur_task_state', arguments: { message: TASK_STATE } },
+              { id: 'first_write', name: 'write', arguments: { filePath: 'first.txt', content: 'first' } },
+              { id: 'second_write', name: 'write', arguments: { filePath: 'second.txt', content: 'second' } }
+            ]
+          }
+        }
+        return { text: 'Completed both requested changes.', toolCalls: [] }
+      }
+    }
+    const deltas: string[] = []
+    const events: AgentToolEvent[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-mixed-progress',
+      projectPath,
+      messages: [{ role: 'user', content: 'Create both files.' }]
+    }, (delta) => deltas.push(delta), undefined, (event) => events.push(event))
+
+    assert.equal(deltas.join(''), 'Completed both requested changes.')
+    assert.deepEqual(events.filter((event) => event.type === 'progress-update').map((event) => event.type === 'progress-update' ? event.summary : ''), [TASK_STATE])
+    assert.equal(readFileSync(join(projectPath, 'first.txt'), 'utf8'), 'first')
+    assert.equal(readFileSync(join(projectPath, 'second.txt'), 'utf8'), 'second')
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('discards streamed prose when healed tool markup supplies the action', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    let index = 0
+    const mixedText = 'I will create it now. <tool_call>{"name":"write","arguments":{"filePath":"healed.txt","content":"healed"}}</tool_call>'
+    const provider: AgentCompletionProvider = {
+      async complete(): Promise<LocalCompletion> {
+        throw new Error('Streaming provider should not use complete')
+      },
+      async stream(_request, onDelta): Promise<LocalCompletion> {
+        index += 1
+        if (index === 1) {
+          onDelta(mixedText)
+          return { text: mixedText, toolCalls: [] }
+        }
+        return { text: 'Created the healed result.', toolCalls: [] }
+      }
+    }
+    const deltas: string[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-healed-stream',
+      projectPath,
+      messages: [{ role: 'user', content: 'Create the healed file.' }]
+    }, (delta) => deltas.push(delta))
+
+    assert.equal(deltas.join(''), 'Created the healed result.')
+    assert.equal(readFileSync(join(projectPath, 'healed.txt'), 'utf8'), 'healed')
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('does not display a streamed intent-only response before recovery', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const requests: LocalCompletionRequest[] = []
+    let index = 0
+    const provider: AgentCompletionProvider = {
+      async complete(): Promise<LocalCompletion> {
+        throw new Error('Streaming provider should not use complete')
+      },
+      async stream(request, onDelta): Promise<LocalCompletion> {
+        requests.push(request)
+        index += 1
+        if (index === 1) {
+          onDelta('Let me fix that now.')
+          return { text: 'Let me fix that now.', toolCalls: [] }
+        }
+        return { text: 'The work is already complete.', toolCalls: [] }
+      }
+    }
+    const deltas: string[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-streamed-intent',
+      projectPath,
+      messages: [{ role: 'user', content: 'Finish the work.' }]
+    }, (delta) => deltas.push(delta))
+
+    assert.equal(requests.length, 2)
+    assert.equal(deltas.join(''), 'The work is already complete.')
+    assert.match(textContent(requests[1].messages.at(-1)?.content), /only described future actions/)
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('cancels final-answer playback without emitting later deltas', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const controller = new AbortController()
+    const provider: AgentCompletionProvider = {
+      async complete(): Promise<LocalCompletion> {
+        throw new Error('Streaming provider should not use complete')
+      },
+      async stream(_request, onDelta): Promise<LocalCompletion> {
+        onDelta('One two three four five.')
+        return { text: 'One two three four five.', toolCalls: [] }
+      }
+    }
+    const deltas: string[] = []
+    const runtime = new AgentRuntime(provider, {
+      wait: async (_durationMs, signal) => {
+        controller.abort(new Error('Playback cancelled'))
+        signal?.throwIfAborted()
+      }
+    })
+
+    await assert.rejects(runtime.run({
+      threadId: 'thread-cancelled-playback',
+      projectPath,
+      signal: controller.signal,
+      messages: [{ role: 'user', content: 'Respond with several words.' }]
+    }, (delta) => deltas.push(delta)), /Playback cancelled/)
+
+    assert.deepEqual(deltas, ['One '])
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('cancellation during a buffered tool response prevents side effects', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const controller = new AbortController()
+    const provider: AgentCompletionProvider = {
+      async complete(): Promise<LocalCompletion> {
+        throw new Error('Streaming provider should not use complete')
+      },
+      async stream(_request, onDelta): Promise<LocalCompletion> {
+        onDelta('I will write this file now.')
+        controller.abort(new Error('Provider stream cancelled'))
         return {
-          text: 'Speculative text',
-          toolCalls: [{ id: 'late_write', name: 'write', arguments: { filePath: 'unsafe.txt', content: 'must not run' } }]
+          text: 'I will write this file now.',
+          toolCalls: [{ id: 'cancelled_write', name: 'write', arguments: { filePath: 'cancelled.txt', content: 'unsafe' } }]
         }
       }
     }
+    const deltas: string[] = []
 
-    await assert.rejects(
-      new AgentRuntime(provider).run({
-        threadId: 'thread-mixed-stream',
-        projectPath,
-        messages: [{ role: 'user', content: 'Create a file.' }]
-      }, () => {}),
-      /mixed visible assistant text with tool calls/
-    )
-    assert.equal(existsSync(join(projectPath, 'unsafe.txt')), false)
+    await assert.rejects(new AgentRuntime(provider).run({
+      threadId: 'thread-cancelled-tool-stream',
+      projectPath,
+      signal: controller.signal,
+      messages: [{ role: 'user', content: 'Create a file.' }]
+    }, (delta) => deltas.push(delta)), /Provider stream cancelled/)
+
+    assert.deepEqual(deltas, [])
+    assert.equal(existsSync(join(projectPath, 'cancelled.txt')), false)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

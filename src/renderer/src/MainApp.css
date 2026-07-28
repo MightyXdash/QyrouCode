@@ -103,6 +103,7 @@
   --activity-text-base: var(--text-base);
   --activity-text-highlight: var(--text-invert);
   --activity-mask-opaque: #000000;
+  --assistant-word-fade-duration: 350ms;
   --attachment-preview-size: 52px;
   --attachment-message-size: 112px;
   --attachment-message-radius: 10px;
@@ -614,6 +615,7 @@
   .copy-user-message-icon { width: 14px; height: 14px; }
 .assistant-message { margin: 0 0 34px; }
 .assistant-message.pending { min-height: 22px; color: var(--text-weak); }
+.assistant-word-fade { animation: assistantWordFade var(--assistant-word-fade-duration) ease-out both; }
 .activity-label { position: relative; display: inline-block; max-width: 100%; overflow: hidden; color: var(--activity-text-base); font-weight: 400; letter-spacing: 0.005em; text-overflow: ellipsis; white-space: nowrap; }
 .activity-label::after { position: absolute; inset: 0; color: var(--activity-text-highlight); content: attr(data-text); pointer-events: none; -webkit-mask-image: linear-gradient(90deg, transparent 0%, var(--activity-mask-opaque) 50%, transparent 100%); -webkit-mask-position: var(--activity-sweep-start) 0; -webkit-mask-repeat: no-repeat; -webkit-mask-size: var(--activity-sweep-width) 100%; mask-image: linear-gradient(90deg, transparent 0%, var(--activity-mask-opaque) 50%, transparent 100%); mask-position: var(--activity-sweep-start) 0; mask-repeat: no-repeat; mask-size: var(--activity-sweep-width) 100%; animation: activitySweep var(--activity-sweep-duration) var(--activity-sweep-easing) infinite; }
 .activity-label-static { display: inline-block; max-width: 100%; overflow: hidden; color: var(--text-weaker); font-weight: 400; letter-spacing: 0.005em; text-overflow: ellipsis; white-space: nowrap; }
@@ -952,12 +954,14 @@
 @keyframes menuEnter { from { opacity: 0; transform: translateY(2px) scale(0.94); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @keyframes dialogEnter { from { opacity: 0; transform: scale(1.05); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @keyframes activitySweep { 0% { -webkit-mask-position: var(--activity-sweep-start) 0; mask-position: var(--activity-sweep-start) 0; } 40%, 100% { -webkit-mask-position: var(--activity-sweep-end) 0; mask-position: var(--activity-sweep-end) 0; } }
+@keyframes assistantWordFade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .app-workspace, .project-threads-shell, .project-thread, .project-show-more, .project-thread-rename-input { transition-duration: 0ms; transition-delay: 0ms; }
   .sidebar-collapsed .app-sidebar { transition-delay: 0ms; }
   .todo-dock-list-shell, .todo-dock-chevron, .composer-stack { transition-duration: 0ms; }
   .todo-dock-item.in_progress svg { animation: none; }
   .prompt-refinement-button.busy svg { animation: none; }
+  .assistant-word-fade { animation: none; }
 }
 
 @media (max-width: 760px) {

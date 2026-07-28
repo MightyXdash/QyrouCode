@@ -156,6 +156,6 @@ export function parseHealedToolCalls(value: string, allowedNames?: ReadonlySet<s
 export function stripToolCallMarkup(value: string): string {
   const signals = ['<tool_call>', '<function=', '<function name=', '<|python_tag|>', '[TOOL_CALLS]', '<|tool_call>', '<｜tool▁calls▁begin｜>', '<｜tool▁call▁begin｜>', '<|tool_calls_section_begin|>', '<|tool_call_begin|>']
   const offsets = signals.map((signal) => value.indexOf(signal)).filter((offset) => offset >= 0)
-  if (!offsets.length) return value.trim()
+  if (!offsets.length) return value
   return value.slice(0, Math.min(...offsets)).trim()
 }

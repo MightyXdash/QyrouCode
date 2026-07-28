@@ -2031,7 +2031,7 @@ export default function MainApp(): JSX.Element {
                       )}
                       <div className={message.content ? 'chat-message assistant-message' : 'chat-message assistant-message pending'}>
                         {message.content
-                          ? <MarkdownMessage content={message.content} />
+                          ? <MarkdownMessage content={message.content} animateWords={message.status === 'pending'} />
                           : message.status === 'cancelled'
                             ? <span className="terminal-activity-label">Stopped</span>
                             : message.status === 'error'

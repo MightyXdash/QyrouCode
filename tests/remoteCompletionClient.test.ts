@@ -125,3 +125,29 @@ test('streams remote text and reconstructs fragmented tool calls', async () => {
   })
   assert.equal(requestCount, 1)
 })
+
+test('reconstructs a mixed response when text precedes and accompanies tool calls', async () => {
+  await withServer(async (request, response) => {
+    const body = await requestBody(request)
+    assert.equal(body.stream, true)
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.write('data: {"choices":[{"delta":{"content":"Let me inspect that. "}}]}\n\n')
+    response.write('data: {"choices":[{"delta":{"content":"Starting now.","tool_calls":[{"index":0,"id":"call_","function":{"name":"re","arguments":"{\\"file"}}]}}]}\n\n')
+    response.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"1","function":{"name":"ad","arguments":"Path\\":\\"src/index.ts\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n')
+    response.end('data: [DONE]\n\n')
+  }, async (baseUrl) => {
+    const client = new RemoteCompletionClient({
+      kind: 'openai-compatible',
+      baseUrl,
+      apiKey: 'custom-key',
+      modelId: 'custom/model',
+      retainReasoning: false,
+      reasoning: {}
+    })
+    const deltas: string[] = []
+    const completion = await client.stream({ messages: [{ role: 'user', content: 'Inspect' }] }, (delta) => deltas.push(delta))
+    assert.equal(deltas.join(''), 'Let me inspect that. Starting now.')
+    assert.equal(completion.text, 'Let me inspect that. Starting now.')
+    assert.deepEqual(completion.toolCalls, [{ id: 'call_1', name: 'read', arguments: { filePath: 'src/index.ts' } }])
+  })
+})
