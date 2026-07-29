@@ -23,6 +23,7 @@ import {
   type PromptRefinementPreferences,
   validatePromptRefinementPreferences
 } from '../shared/promptRefinement'
+import { normalizePersistedBrowserState, type PersistedBrowserState } from '../shared/browser'
 
 const settingsStore = new Store<SettingsStoreData>({
   name: 'settings',
@@ -213,4 +214,13 @@ export const saveWorkspaceViewState = (value: unknown): WorkspaceViewState => {
   const next = state as WorkspaceViewState
   settingsStore.set('workspaceViewState', next)
   return next
+}
+
+export const getBrowserState = (): PersistedBrowserState =>
+  normalizePersistedBrowserState(settingsStore.get('browserState'))
+
+export const saveBrowserState = (value: unknown): PersistedBrowserState => {
+  const state = normalizePersistedBrowserState(value)
+  settingsStore.set('browserState', state)
+  return state
 }

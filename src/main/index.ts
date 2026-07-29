@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, Menu, dialog, ipcMain, nativeImage, net } from 'electron'
+import { app, shell, BrowserWindow, Menu, dialog, ipcMain, nativeImage, nativeTheme, net } from 'electron'
 import { randomUUID } from 'crypto'
 import { basename, dirname, extname, join } from 'path'
 import { existsSync, readdirSync, createWriteStream, mkdirSync, unlinkSync, renameSync, statSync } from 'fs'
@@ -28,6 +28,7 @@ import { MAX_PROMPT_REFINEMENT_BACKUPS, MAX_PROMPT_REFINEMENT_MODEL_ID_CHARACTER
 import { refinePrompt, type PromptRefinementCandidate } from './promptRefiner'
 import { createAgentTerminalController, disposeTerminals, registerTerminalIpc } from './terminalManager'
 import { DESKTOP_PLATFORMS, usesNativeWindowControls } from '../shared/platform'
+import { attachBrowserPanel, openUrlInBrowserPanel, registerBrowserPanelIpc } from './browserPanel'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -37,8 +38,14 @@ const MAIN_WINDOW_QUERY_KEY = 'window'
 const MAIN_WINDOW_QUERY_VALUE = 'app'
 const MAIN_APP_WINDOW_WIDTH = 1440
 const MAIN_APP_WINDOW_HEIGHT = 900
-const MACOS_TRAFFIC_LIGHT_INSET = 20
+const MACOS_TRAFFIC_LIGHT_POSITION = { x: 16, y: 15 } as const
 const GGUF_FILE_EXTENSION = '.gguf'
+
+function applyTheme(value: unknown): ReturnType<typeof setTheme> {
+  const theme = setTheme(value)
+  nativeTheme.themeSource = theme
+  return theme
+}
 const TITLE_MODEL_REPOSITORY = 'SupraLabs/supra-title-50M-pre-gguf'
 const TITLE_MODEL_FILENAME = 'SupraTitle-50M-Q4_K_M.gguf'
 const TITLE_MODEL_CONTEXT_TOKENS = 4096
@@ -330,9 +337,9 @@ function createMainAppWindow(): BrowserWindow {
     maximizable: true,
     minimizable: true,
     frame: usesNativeWindowControls(process.platform),
-    titleBarStyle: process.platform === DESKTOP_PLATFORMS.macOS ? 'hiddenInset' : 'default',
+    titleBarStyle: process.platform === DESKTOP_PLATFORMS.macOS ? 'hidden' : 'default',
     trafficLightPosition: process.platform === DESKTOP_PLATFORMS.macOS
-      ? { x: MACOS_TRAFFIC_LIGHT_INSET, y: MACOS_TRAFFIC_LIGHT_INSET }
+      ? MACOS_TRAFFIC_LIGHT_POSITION
       : undefined,
     title: 'SupraCode',
     show: false,
@@ -344,6 +351,7 @@ function createMainAppWindow(): BrowserWindow {
   })
 
   mainAppWindow = targetWindow
+  attachBrowserPanel(targetWindow)
   targetWindow.once('ready-to-show', () => {
     targetWindow.maximize()
     targetWindow.show()
@@ -366,7 +374,7 @@ function createMacApplicationMenu(): void {
     { label: 'File', submenu: [{ label: 'New Thread', accelerator: 'CmdOrCtrl+N', click: () => sendCommand('new-thread') }, { type: 'separator' }, { role: 'close' }] },
     { role: 'editMenu' },
     { label: 'View', submenu: [{ label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => sendCommand('reload') }, { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => sendCommand('toggle-dev-tools') }, { type: 'separator' }, { role: 'togglefullscreen' }] },
-    { label: 'Theme', submenu: [{ label: 'System', click: () => { setTheme('system'); sendCommand('theme:system') } }, { label: 'Dark', click: () => { setTheme('dark'); sendCommand('theme:dark') } }, { label: 'Light', click: () => { setTheme('light'); sendCommand('theme:light') } }] },
+    { label: 'Theme', submenu: [{ label: 'System', click: () => { applyTheme('system'); sendCommand('theme:system') } }, { label: 'Dark', click: () => { applyTheme('dark'); sendCommand('theme:dark') } }, { label: 'Light', click: () => { applyTheme('light'); sendCommand('theme:light') } }] },
     { label: 'Help', submenu: [{ label: 'SupraCode', enabled: false }, { label: 'Local coding model runner', enabled: false }] }
   ]))
 }
@@ -440,9 +448,9 @@ function createWindow(): void {
     resizable: nativeWindowControls,
     maximizable: nativeWindowControls,
     minimizable: true,
-    titleBarStyle: process.platform === DESKTOP_PLATFORMS.macOS ? 'hiddenInset' : 'default',
+    titleBarStyle: process.platform === DESKTOP_PLATFORMS.macOS ? 'hidden' : 'default',
     trafficLightPosition: process.platform === DESKTOP_PLATFORMS.macOS
-      ? { x: MACOS_TRAFFIC_LIGHT_INSET, y: MACOS_TRAFFIC_LIGHT_INSET }
+      ? MACOS_TRAFFIC_LIGHT_POSITION
       : undefined,
     title: 'SupraCode',
     show: false,
@@ -454,7 +462,11 @@ function createWindow(): void {
   })
 
   ipcMain.handle('get-onboarding-state', () => getOnboardingState())
-  ipcMain.handle('complete-onboarding', (_event, preferences: unknown) => completeOnboarding(preferences))
+  ipcMain.handle('complete-onboarding', (_event, preferences: unknown) => {
+    const completed = completeOnboarding(preferences)
+    nativeTheme.themeSource = completed.theme
+    return completed
+  })
 
   let windowShown = false
   let windowReadyTimeout: ReturnType<typeof setTimeout> | undefined
@@ -491,7 +503,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  nativeTheme.themeSource = getTheme()
   registerTerminalIpc()
+  registerBrowserPanelIpc()
   registerModelDownloadIpc()
   electronApp.setAppUserModelId('com.suprarcode')
   llamaRuntime = new LlamaRuntime()
@@ -542,7 +556,7 @@ app.whenReady().then(() => {
   ipcMain.handle('set-native-language', (_event, nativeLanguage: unknown) => setNativeLanguage(nativeLanguage))
   ipcMain.handle('get-prompt-refinement-preferences', () => getPromptRefinementPreferences())
   ipcMain.handle('set-prompt-refinement-preferences', (_event, preference: unknown) => setPromptRefinementPreferences(preference))
-  ipcMain.handle('set-theme', (_event, theme: unknown) => setTheme(theme))
+  ipcMain.handle('set-theme', (_event, theme: unknown) => applyTheme(theme))
   ipcMain.handle('get-connections', () => getConnections())
   ipcMain.handle('get-connection-security-status', () => getConnectionSecurityStatus())
   ipcMain.handle('resolve-provider-site-icon', (_event, baseUrl: unknown) => {
@@ -802,7 +816,13 @@ app.whenReady().then(() => {
       projectPath: project.path,
       signal: controller.signal,
       model,
-      terminalController: createAgentTerminalController(event.sender, project.path, request.threadId, controller.signal)
+      terminalController: createAgentTerminalController(
+        event.sender,
+        project.path,
+        request.threadId,
+        controller.signal,
+        (url) => openUrlInBrowserPanel(event.sender, url)
+      )
     }
     void runner(
       agentRequest,

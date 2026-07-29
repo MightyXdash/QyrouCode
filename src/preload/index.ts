@@ -12,6 +12,7 @@ import type { ConnectionSecurityStatus } from '../main/connectionStore'
 import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../shared/conversationExport'
 import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinementTarget } from '../shared/promptRefinement'
 import type { TerminalExitEvent, TerminalInterventionRequest, TerminalInterventionResolution, TerminalOutputEvent, TerminalRevealEvent, TerminalSessionEvent, TerminalSessionInfo } from '../shared/terminal'
+import type { BrowserBounds, BrowserNavigationAction, BrowserPanelState } from '../shared/browser'
 
 const api = {
   platform: process.platform,
@@ -29,6 +30,28 @@ const api = {
   onWindowShown: (callback: () => void) => {
     ipcRenderer.once('window-shown', callback)
     return () => { ipcRenderer.removeListener('window-shown', callback) }
+  },
+  getBrowserState: (): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-get-state'),
+  setBrowserVisible: (visible: boolean): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-set-visible', visible),
+  setBrowserBounds: (bounds: BrowserBounds) => ipcRenderer.send('browser-set-bounds', bounds),
+  setBrowserPanelWidth: (width: number): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-set-panel-width', width),
+  createBrowserTab: (url?: string): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-create-tab', url),
+  activateBrowserTab: (tabId: string): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-activate-tab', tabId),
+  closeBrowserTab: (tabId: string): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-close-tab', tabId),
+  navigateBrowser: (tabId: string, value: string): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-navigate', tabId, value),
+  runBrowserNavigation: (tabId: string, action: BrowserNavigationAction): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-navigation-action', tabId, action),
+  onBrowserStateChanged: (callback: (state: BrowserPanelState) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: BrowserPanelState) => callback(state)
+    ipcRenderer.on('browser-state-changed', handler)
+    return () => { ipcRenderer.removeListener('browser-state-changed', handler) }
+  },
+  onBrowserReveal: (callback: () => void) => {
+    ipcRenderer.on('browser-reveal', callback)
+    return () => { ipcRenderer.removeListener('browser-reveal', callback) }
+  },
+  onBrowserFocusAddress: (callback: () => void) => {
+    ipcRenderer.on('browser-focus-address', callback)
+    return () => { ipcRenderer.removeListener('browser-focus-address', callback) }
   },
   getOnboardingState: (): Promise<OnboardingState> =>
     ipcRenderer.invoke('get-onboarding-state'),

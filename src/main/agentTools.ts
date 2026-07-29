@@ -159,7 +159,7 @@ const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
   definition('terminal_request_user_input', 'Hand an interactive terminal to the user with a friendly banner. Pause waits for Done or Cancel; continue lets agent work proceed.', {
     sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY, mode: { type: 'string', enum: ['pause', 'continue'] }
   }, ['sessionId', 'user_message', 'mode']),
-  definition('open_url', 'Open an HTTP or HTTPS website with the default browser and mirror the action in a visible terminal.', {
+  definition('open_url', 'Open an HTTP or HTTPS website in the embedded browser panel and mirror the action in a visible terminal.', {
     url: { type: 'string' }, sessionId: { type: 'string' }, user_message: USER_MESSAGE_PROPERTY
   }, ['url', 'user_message']),
   definition('open_path', 'Open a workspace file or folder with its default desktop application and mirror the action visibly.', {

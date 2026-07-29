@@ -30,6 +30,8 @@ import SettingsDialog, {
 } from './settings/SettingsDialog'
 import './MainApp.css'
 import TerminalPanel from './TerminalPanel'
+import BrowserPanel from './BrowserPanel'
+import { DEFAULT_BROWSER_STATE, type BrowserPanelState } from '../../shared/browser'
 
 const AUTO_SCROLL_THRESHOLD = 72
 const WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND = 150
@@ -76,6 +78,23 @@ const DEFAULT_EXPORT_STATE: SettingsExportState = { busy: false }
 type ProjectThreadAnimationStyle = CSSProperties & {
   '--thread-collapse-delay': string
   '--thread-expand-delay': string
+}
+
+type WorkspaceStyle = CSSProperties & {
+  '--terminal-panel-height': string
+  '--browser-panel-width': string
+}
+
+const DEFAULT_BROWSER_PANEL_STATE: BrowserPanelState = {
+  tabs: DEFAULT_BROWSER_STATE.tabs.map((tab) => ({
+    ...tab,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false
+  })),
+  activeTabId: DEFAULT_BROWSER_STATE.activeTabId,
+  visible: false,
+  panelWidth: DEFAULT_BROWSER_STATE.panelWidth
 }
 
 const projectThreadAnimationStyle = (index: number, count: number): ProjectThreadAnimationStyle => ({
@@ -440,6 +459,8 @@ export default function MainApp(): JSX.Element {
   const [openTitlebarMenu, setOpenTitlebarMenu] = useState<TitlebarMenuId | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [terminalOpen, setTerminalOpen] = useState(false)
+  const [browserOpen, setBrowserOpen] = useState(false)
+  const [browserState, setBrowserState] = useState<BrowserPanelState>(DEFAULT_BROWSER_PANEL_STATE)
   const revealTerminal = useCallback(() => setTerminalOpen(true), [])
   const [terminalHeight, setTerminalHeight] = useState(() => {
     const storedHeight = Number(localStorage.getItem(TERMINAL_HEIGHT_STORAGE_KEY))
@@ -846,6 +867,16 @@ export default function MainApp(): JSX.Element {
       viewStateLoadedRef.current = true
     })
     void refreshDownloadedModels().catch(() => setDownloadedModelIds(new Set()))
+  }, [])
+
+  useEffect(() => {
+    void window.api.getBrowserState().then(setBrowserState)
+    const removeStateListener = window.api.onBrowserStateChanged(setBrowserState)
+    const removeRevealListener = window.api.onBrowserReveal(() => setBrowserOpen(true))
+    return () => {
+      removeStateListener()
+      removeRevealListener()
+    }
   }, [])
 
   useEffect(() => window.api.onDownloadProgress((progress) => {
@@ -1737,6 +1768,12 @@ export default function MainApp(): JSX.Element {
     }
   }
 
+  const browserSuppressed = settingsOpen ||
+    projectDialogOpen ||
+    Boolean(renamingProject) ||
+    Boolean(deleteConfirmProject) ||
+    Boolean(deleteConfirmThread)
+
   return (
     <>
       <header className={isMacOS ? 'app-titlebar macos-titlebar' : nativeWindowControls ? 'app-titlebar native-window-controls' : 'app-titlebar'}>
@@ -1884,17 +1921,14 @@ export default function MainApp(): JSX.Element {
         </div>
         </aside>
 
-        <section className={terminalOpen ? 'app-workspace terminal-open' : 'app-workspace'} style={{ '--terminal-panel-height': `${terminalHeight}px` } as CSSProperties}>
-        <div className="workspace-top-actions">
-          <button className={terminalOpen ? 'workspace-terminal-button active' : 'workspace-terminal-button'} type="button" aria-label="Toggle terminal" aria-expanded={terminalOpen} title="Toggle terminal" onClick={() => {
-            if (terminalOpen) {
-              setTerminalOpen(false)
-              return
-            }
-            requestAnimationFrame(() => setTerminalOpen(true))
-          }}><SquareTerminal size={16} /></button>
-          <button className="workspace-top-action" type="button" aria-label="Panel top" title="Panel top"><PanelTop size={16} /></button>
-        </div>
+        <section
+          className={`${terminalOpen ? 'app-workspace terminal-open' : 'app-workspace'}${browserOpen ? ' browser-open' : ''}`}
+          style={{
+            '--terminal-panel-height': `${terminalHeight}px`,
+            '--browser-panel-width': `${browserState.panelWidth}px`
+          } as WorkspaceStyle}
+        >
+        <div className="workspace-chat-pane">
         {activeThread ? (
           <div
             className={chatScrollbarVisible ? 'conversation scrollbar-visible' : 'conversation'}
@@ -2321,6 +2355,33 @@ export default function MainApp(): JSX.Element {
           )}
         </form>
         </div>
+        </div>
+        <div className="workspace-top-actions">
+          <button className={terminalOpen ? 'workspace-top-action active' : 'workspace-top-action'} type="button" aria-label="Toggle terminal" aria-expanded={terminalOpen} title="Toggle terminal" onClick={() => {
+            if (terminalOpen) {
+              setTerminalOpen(false)
+              return
+            }
+            requestAnimationFrame(() => setTerminalOpen(true))
+          }}><SquareTerminal size={16} /></button>
+          <button
+            className={browserOpen ? 'workspace-top-action active' : 'workspace-top-action'}
+            type="button"
+            aria-label="Toggle browser panel"
+            aria-expanded={browserOpen}
+            title="Toggle browser panel"
+            onClick={() => setBrowserOpen((current) => !current)}
+          >
+            <PanelTop size={16} />
+          </button>
+        </div>
+        <BrowserPanel
+          open={browserOpen}
+          suppressed={browserSuppressed}
+          state={browserState}
+          onStateChange={setBrowserState}
+          onPanelWidthChange={(panelWidth) => setBrowserState((current) => ({ ...current, panelWidth }))}
+        />
         </section>
       </main>
       {settingsOpen && (

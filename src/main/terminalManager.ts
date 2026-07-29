@@ -339,7 +339,13 @@ function createNoticeTerminal(owner: WebContents, projectPath: string, threadId:
   return sessionId ? requireProjectSession(owner.id, projectPath, sessionId) : createTerminal(owner, { projectPath, threadId, creator: 'agent', title: 'Activity', reveal: false })
 }
 
-export function createAgentTerminalController(owner: WebContents, projectPath: string, threadId: string, signal?: AbortSignal): AgentTerminalController {
+export function createAgentTerminalController(
+  owner: WebContents,
+  projectPath: string,
+  threadId: string,
+  signal?: AbortSignal,
+  openBrowserUrl?: (url: string) => Promise<void>
+): AgentTerminalController {
   const ensureActive = (): void => signal?.throwIfAborted()
   return {
     create: (title) => ({ ...createTerminal(owner, { projectPath, threadId, creator: 'agent', title, reveal: false }).info }),
@@ -463,8 +469,9 @@ export function createAgentTerminalController(owner: WebContents, projectPath: s
       const parsed = new URL(url)
       if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only HTTP and HTTPS URLs can be opened')
       const terminal = createNoticeTerminal(owner, projectPath, threadId, sessionId)
-      systemOutput(terminal, `${safeText(userMessage.reason, 'The requested website is being opened.')} Opening ${parsed.hostname} in the default browser.`)
-      await electronShell.openExternal(parsed.toString())
+      systemOutput(terminal, `${safeText(userMessage.reason, 'The requested website is being opened.')} Opening ${parsed.hostname} in the embedded browser.`)
+      if (openBrowserUrl) await openBrowserUrl(parsed.toString())
+      else await electronShell.openExternal(parsed.toString())
     },
     openPath: async (path, userMessage, sessionId) => {
       const target = workspacePath(projectPath, path)

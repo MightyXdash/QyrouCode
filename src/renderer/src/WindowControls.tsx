@@ -14,6 +14,7 @@ import type { ConversationExportPreview, ConversationExportRequest, Conversation
 import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinementTarget } from '../../shared/promptRefinement'
 import type { TerminalExitEvent, TerminalInterventionRequest, TerminalInterventionResolution, TerminalOutputEvent, TerminalRevealEvent, TerminalSessionEvent, TerminalSessionInfo } from '../../shared/terminal'
 import { usesNativeWindowControls } from '../../shared/platform'
+import type { BrowserBounds, BrowserNavigationAction, BrowserPanelState } from '../../shared/browser'
 
 declare global {
   interface Window {
@@ -27,6 +28,18 @@ declare global {
       openMainWindow: () => Promise<void>
       rendererReady: () => void
       onWindowShown: (callback: () => void) => () => void
+      getBrowserState: () => Promise<BrowserPanelState>
+      setBrowserVisible: (visible: boolean) => Promise<BrowserPanelState>
+      setBrowserBounds: (bounds: BrowserBounds) => void
+      setBrowserPanelWidth: (width: number) => Promise<BrowserPanelState>
+      createBrowserTab: (url?: string) => Promise<BrowserPanelState>
+      activateBrowserTab: (tabId: string) => Promise<BrowserPanelState>
+      closeBrowserTab: (tabId: string) => Promise<BrowserPanelState>
+      navigateBrowser: (tabId: string, value: string) => Promise<BrowserPanelState>
+      runBrowserNavigation: (tabId: string, action: BrowserNavigationAction) => Promise<BrowserPanelState>
+      onBrowserStateChanged: (callback: (state: BrowserPanelState) => void) => () => void
+      onBrowserReveal: (callback: () => void) => () => void
+      onBrowserFocusAddress: (callback: () => void) => () => void
       getOnboardingState: () => Promise<OnboardingState>
       completeOnboarding: (preferences: OnboardingPreferences) => Promise<void>
       getTheme: () => Promise<ThemePreference>
