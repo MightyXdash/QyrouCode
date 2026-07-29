@@ -553,8 +553,9 @@
   backdrop-filter: var(--filter-backdrop-todo);
 }
 
-.workspace-terminal-button { position: absolute; z-index: 8; top: 10px; right: 10px; display: grid; width: var(--app-control-height); height: var(--app-control-height); padding: 0; place-items: center; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-weak); cursor: pointer; }
-.workspace-terminal-button:hover, .workspace-terminal-button.active { background: var(--surface-hover); color: var(--text-strong); }
+.workspace-top-actions { position: absolute; z-index: 8; top: 10px; right: 10px; display: flex; gap: 2px; }
+.workspace-terminal-button, .workspace-top-action { display: grid; width: var(--app-control-height); height: var(--app-control-height); padding: 0; place-items: center; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-weak); cursor: pointer; }
+.workspace-terminal-button:hover, .workspace-terminal-button.active, .workspace-top-action:hover { background: var(--surface-hover); color: var(--text-strong); }
 
 .todo-dock-header {
   display: flex;

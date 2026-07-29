@@ -15,7 +15,7 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ChevronRight, ArrowUp, PanelLeft, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, Ligature, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
+import { Search, Plus, ChevronDown, ChevronRight, ArrowUp, PanelLeft, PanelTop, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, Ligature, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
@@ -1885,13 +1885,16 @@ export default function MainApp(): JSX.Element {
         </aside>
 
         <section className={terminalOpen ? 'app-workspace terminal-open' : 'app-workspace'} style={{ '--terminal-panel-height': `${terminalHeight}px` } as CSSProperties}>
-        <button className={terminalOpen ? 'workspace-terminal-button active' : 'workspace-terminal-button'} type="button" aria-label="Toggle terminal" aria-expanded={terminalOpen} title="Toggle terminal" onClick={() => {
-          if (terminalOpen) {
-            setTerminalOpen(false)
-            return
-          }
-          requestAnimationFrame(() => setTerminalOpen(true))
-        }}><SquareTerminal size={16} /></button>
+        <div className="workspace-top-actions">
+          <button className={terminalOpen ? 'workspace-terminal-button active' : 'workspace-terminal-button'} type="button" aria-label="Toggle terminal" aria-expanded={terminalOpen} title="Toggle terminal" onClick={() => {
+            if (terminalOpen) {
+              setTerminalOpen(false)
+              return
+            }
+            requestAnimationFrame(() => setTerminalOpen(true))
+          }}><SquareTerminal size={16} /></button>
+          <button className="workspace-top-action" type="button" aria-label="Panel top" title="Panel top"><PanelTop size={16} /></button>
+        </div>
         {activeThread ? (
           <div
             className={chatScrollbarVisible ? 'conversation scrollbar-visible' : 'conversation'}
