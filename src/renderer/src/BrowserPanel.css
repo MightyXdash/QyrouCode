@@ -211,6 +211,10 @@
   opacity: 0;
 }
 
+.browser-tab.dragging {
+  opacity: var(--browser-tab-drag-opacity);
+}
+
 .browser-tab:has(+ .browser-tab.active)::after {
   opacity: 0;
 }
@@ -250,15 +254,27 @@
   color: var(--activity-text-highlight);
   content: attr(data-text);
   pointer-events: none;
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, var(--activity-mask-opaque) 50%, transparent 100%);
-  -webkit-mask-position: var(--activity-sweep-start) 0;
+  -webkit-mask-image: var(--browser-tab-shimmer-mask);
+  -webkit-mask-position: var(--browser-tab-shimmer-start) 0;
   -webkit-mask-repeat: no-repeat;
-  -webkit-mask-size: var(--activity-sweep-width) 100%;
-  mask-image: linear-gradient(90deg, transparent 0%, var(--activity-mask-opaque) 50%, transparent 100%);
-  mask-position: var(--activity-sweep-start) 0;
+  -webkit-mask-size: var(--browser-tab-shimmer-size) 100%;
+  mask-image: var(--browser-tab-shimmer-mask);
+  mask-position: var(--browser-tab-shimmer-start) 0;
   mask-repeat: no-repeat;
-  mask-size: var(--activity-sweep-width) 100%;
-  animation: activitySweep var(--activity-sweep-duration) var(--activity-sweep-easing) infinite;
+  mask-size: var(--browser-tab-shimmer-size) 100%;
+  animation: browserTabShimmer var(--browser-tab-shimmer-duration) var(--browser-tab-shimmer-easing) infinite;
+}
+
+@keyframes browserTabShimmer {
+  from {
+    -webkit-mask-position: var(--browser-tab-shimmer-start) 0;
+    mask-position: var(--browser-tab-shimmer-start) 0;
+  }
+
+  to {
+    -webkit-mask-position: var(--browser-tab-shimmer-end) 0;
+    mask-position: var(--browser-tab-shimmer-end) 0;
+  }
 }
 
 .browser-tab-close {

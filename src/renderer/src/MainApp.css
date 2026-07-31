@@ -94,6 +94,13 @@
   --browser-control-motion-duration: 120ms;
   --browser-tab-selection-motion-duration: 240ms;
   --browser-tab-selection-motion-ease-out: cubic-bezier(0.2, 0.82, 0.2, 1);
+  --browser-tab-shimmer-duration: 1.6s;
+  --browser-tab-shimmer-easing: linear;
+  --browser-tab-shimmer-size: 300%;
+  --browser-tab-shimmer-start: 100%;
+  --browser-tab-shimmer-end: 0%;
+  --browser-tab-shimmer-mask: linear-gradient(90deg, transparent 36%, var(--activity-mask-opaque) 50%, transparent 64%);
+  --browser-tab-drag-opacity: 0.5;
   --browser-address-height: 28px;
   --browser-address-gap: 7px;
   --browser-address-padding-inline: 9px;

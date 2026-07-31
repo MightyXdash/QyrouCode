@@ -168,6 +168,22 @@ class BrowserPanelController {
     return this.getState()
   }
 
+  reorderTabs(tabIds: unknown): BrowserPanelState {
+    if (
+      !Array.isArray(tabIds) ||
+      tabIds.length !== this.tabs.size ||
+      new Set(tabIds).size !== tabIds.length ||
+      tabIds.some((tabId) => typeof tabId !== 'string' || !this.tabs.has(tabId))
+    ) return this.getState()
+
+    const reorderedTabs = tabIds.map((tabId) => this.tabs.get(tabId as string) as ManagedBrowserTab)
+    this.tabs.clear()
+    for (const tab of reorderedTabs) this.tabs.set(tab.state.id, tab)
+    this.persist()
+    this.emitState()
+    return this.getState()
+  }
+
   closeTab(tabId: unknown): BrowserPanelState {
     if (typeof tabId !== 'string') return this.getState()
     const entries = [...this.tabs.values()]
@@ -424,6 +440,8 @@ export function registerBrowserPanelIpc(): void {
     controllerFor(event.sender)?.createTab(typeof url === 'string' ? url : BROWSER_NEW_TAB_URL))
   ipcMain.handle('browser-activate-tab', (event, tabId: unknown) =>
     controllerFor(event.sender)?.activateTab(tabId))
+  ipcMain.handle('browser-reorder-tabs', (event, tabIds: unknown) =>
+    controllerFor(event.sender)?.reorderTabs(tabIds))
   ipcMain.handle('browser-close-tab', (event, tabId: unknown) =>
     controllerFor(event.sender)?.closeTab(tabId))
   ipcMain.handle('browser-navigate', (event, tabId: unknown, value: unknown) =>

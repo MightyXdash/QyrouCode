@@ -34,6 +34,7 @@ declare global {
       setBrowserPanelWidth: (width: number) => Promise<BrowserPanelState>
       createBrowserTab: (url?: string) => Promise<BrowserPanelState>
       activateBrowserTab: (tabId: string) => Promise<BrowserPanelState>
+      reorderBrowserTabs: (tabIds: string[]) => Promise<BrowserPanelState>
       closeBrowserTab: (tabId: string) => Promise<BrowserPanelState>
       navigateBrowser: (tabId: string, value: string) => Promise<BrowserPanelState>
       runBrowserNavigation: (tabId: string, action: BrowserNavigationAction) => Promise<BrowserPanelState>

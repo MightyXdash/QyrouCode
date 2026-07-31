@@ -37,6 +37,7 @@ const api = {
   setBrowserPanelWidth: (width: number): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-set-panel-width', width),
   createBrowserTab: (url?: string): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-create-tab', url),
   activateBrowserTab: (tabId: string): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-activate-tab', tabId),
+  reorderBrowserTabs: (tabIds: string[]): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-reorder-tabs', tabIds),
   closeBrowserTab: (tabId: string): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-close-tab', tabId),
   navigateBrowser: (tabId: string, value: string): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-navigate', tabId, value),
   runBrowserNavigation: (tabId: string, action: BrowserNavigationAction): Promise<BrowserPanelState> => ipcRenderer.invoke('browser-navigation-action', tabId, action),
