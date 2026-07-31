@@ -15,7 +15,7 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ChevronRight, ArrowUp, PanelLeft, PanelTop, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, Ligature, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
+import { Search, Plus, ChevronDown, ChevronRight, ArrowUp, PanelLeft, PanelTop, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, ChartNoAxesGantt, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
 import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
@@ -2209,7 +2209,7 @@ export default function MainApp(): JSX.Element {
                 disabled={!prompt.trim() || promptRefinementBusy || completionState !== 'idle' || promptRefinementTargets.length === 0}
                 onClick={() => void refineCurrentPrompt()}
               >
-                {promptRefinementBusy ? <LoaderCircle size={14} /> : <Ligature size={14} />}
+                {promptRefinementBusy ? <LoaderCircle size={14} /> : <ChartNoAxesGantt size={14} />}
               </button>
             </div>
             <div className="composer-controls">
