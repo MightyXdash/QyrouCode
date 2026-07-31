@@ -40,7 +40,7 @@ Use `light-dark()` CSS notation for semantic mode switching.
 
 ### Animations
 
-- **Pop-up menus/overlays**: Start from a larger scale and animate down to intended size with an ease-out timing function (e.g., `transform: scale(1.05) -> scale(1)` with `ease-out`).
+- **Pop-up menus/overlays**: Start from a smaller scale and animate up to the intended size with an ease-out timing function (e.g., `transform: scale(0.94) -> scale(1)` with `ease-out`). Scale from the element's center unless the interaction explicitly requires a directional origin.
 - Keep animations subtle and fast (< 200ms) for a snappy feel.
 - **No post-animation snap**: Never end a `@keyframes` at `transform: none` when scaling elements that contain text — the text will visibly "click" into place when the compositor layer dissolves. Instead, end at `transform: translate3d(0, 0, 0)` (identity 3D transform) to keep the layer alive through the animation's final frame. For elements rendered via `animation` (not `transition`), use `animation-fill-mode: both` so the final keyframe state persists.
 - **Blurry text on Windows/Linux**: GPU-composited layers (created by `will-change: transform`, `backface-visibility: hidden`, or `translate3d`) disable ClearType subpixel antialiasing on Windows and can look blurry. Reserve GPU compositing for tiny elements with minimal text (e.g., tooltips, badges, progress rings). For larger text-heavy UI like dropdowns and dialogs, avoid `will-change`, `backface-visibility`, and `translate3d` after the animation completes — let the browser render text through the normal raster path for sharp ClearType/subpixel AA.

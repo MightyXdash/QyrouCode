@@ -44,6 +44,8 @@ const DEFAULT_AGENT_MAX_TOKENS = 8_192
 const ESTIMATED_CHARACTERS_PER_TOKEN = 4
 const USER_MESSAGE_LINE_LIMITS = [20, 40] as const
 const PROMPT_REFINEMENT_SHORTCUT = 'Ctrl/Cmd+Shift+Enter'
+const MODEL_SUBMENU_OPEN_DELAY_MS = 75
+const MODEL_SUBMENU_RETURN_DELAY_MS = 400
 const TODO_VISIBLE_ITEM_COUNT = 3
 const CHAT_SCROLLBAR_REVEAL_RATIO = 0.1
 const DEFAULT_TERMINAL_HEIGHT = 320
@@ -2236,11 +2238,11 @@ export default function MainApp(): JSX.Element {
                     <button className="advanced-option" type="button"
                       onMouseEnter={() => {
                         if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current)
-                        modelMenuTimerRef.current = setTimeout(() => setOpenMenu('model'), 350)
+                        modelMenuTimerRef.current = setTimeout(() => setOpenMenu('model'), MODEL_SUBMENU_OPEN_DELAY_MS)
                       }}
                       onMouseLeave={() => {
                         if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current)
-                        if (openMenu === 'model') modelMenuTimerRef.current = setTimeout(() => setOpenMenu('advanced'), 200)
+                        if (openMenu === 'model') modelMenuTimerRef.current = setTimeout(() => setOpenMenu('advanced'), MODEL_SUBMENU_RETURN_DELAY_MS)
                       }}
                       onFocus={() => { if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current); setOpenMenu('model') }}
                       onClick={() => { if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current); setOpenMenu('model') }}
@@ -2257,7 +2259,7 @@ export default function MainApp(): JSX.Element {
                       if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current)
                     }}
                     onMouseLeave={() => {
-                      modelMenuTimerRef.current = setTimeout(() => setOpenMenu('advanced'), 200)
+                      modelMenuTimerRef.current = setTimeout(() => setOpenMenu('advanced'), MODEL_SUBMENU_RETURN_DELAY_MS)
                     }}
                   >
                     <div className="menu-heading">Model</div>
