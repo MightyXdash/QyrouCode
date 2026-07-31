@@ -24,11 +24,13 @@ import {
   type PersistedBrowserTab
 } from '../shared/browser'
 import { getBrowserState, saveBrowserState } from './settings'
+import { BrowserFaviconCache } from './browserFaviconCache'
 
 const BROWSER_STATE_EVENT = 'browser-state-changed'
 const BROWSER_REVEAL_EVENT = 'browser-reveal'
 const BROWSER_FOCUS_ADDRESS_EVENT = 'browser-focus-address'
 const AUTO_DARK_MODE_COMMAND = 'Emulation.setAutoDarkModeOverride'
+const browserFaviconCache = new BrowserFaviconCache()
 
 interface ManagedBrowserTab {
   state: PersistedBrowserTab
@@ -69,6 +71,12 @@ function shortcutModifier(input: Input): boolean {
   return process.platform === 'darwin' ? input.meta : input.control
 }
 
+function sameSiteOrigin(left: string, right: string): boolean {
+  return isAllowedBrowserUrl(left) &&
+    isAllowedBrowserUrl(right) &&
+    new URL(left).origin === new URL(right).origin
+}
+
 async function applyBrowserTheme(contents: WebContents): Promise<void> {
   if (contents.isDestroyed()) return
   try {
@@ -91,7 +99,9 @@ class BrowserPanelController {
 
   constructor(private readonly owner: BrowserWindow, storedState: PersistedBrowserState) {
     const state = normalizePersistedBrowserState(storedState)
-    for (const tab of state.tabs) this.tabs.set(tab.id, { state: tab })
+    for (const tab of state.tabs) {
+      this.tabs.set(tab.id, { state: tab, faviconUrl: browserFaviconCache.get(tab.url) })
+    }
     this.activeTabId = state.activeTabId
     this.panelWidth = state.panelWidth
   }
@@ -145,7 +155,8 @@ class BrowserPanelController {
         id: randomUUID(),
         title: url === BROWSER_NEW_TAB_URL ? BROWSER_NEW_TAB_TITLE : new URL(url).hostname,
         url
-      }
+      },
+      faviconUrl: browserFaviconCache.get(url)
     }
     this.tabs.set(tab.state.id, tab)
     if (activate) {
@@ -215,10 +226,9 @@ class BrowserPanelController {
     if (typeof tabId !== 'string' || typeof value !== 'string' || !this.tabs.has(tabId)) return this.getState()
     const url = normalizeBrowserInput(value)
     const tab = this.tabs.get(tabId) as ManagedBrowserTab
-    tab.state.url = url
+    this.updateTabUrl(tab, url)
     if (url === BROWSER_NEW_TAB_URL) {
       tab.state.title = BROWSER_NEW_TAB_TITLE
-      tab.faviconUrl = undefined
       this.destroyView(tab)
     } else {
       const view = this.ensureView(tabId)
@@ -328,14 +338,14 @@ class BrowserPanelController {
     contents.on('did-fail-load', () => this.emitState())
     contents.on('did-navigate', (_event, url) => {
       if (isAllowedBrowserUrl(url)) {
-        tab.state.url = url
+        this.updateTabUrl(tab, url)
         this.persist()
       }
       this.emitState()
     })
     contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
       if (isMainFrame && isAllowedBrowserUrl(url)) {
-        tab.state.url = url
+        this.updateTabUrl(tab, url)
         this.persist()
         this.emitState()
       }
@@ -348,8 +358,25 @@ class BrowserPanelController {
       }
     })
     contents.on('page-favicon-updated', (_event, favicons) => {
-      tab.faviconUrl = favicons.find(isAllowedBrowserUrl)
-      this.emitState()
+      const pageUrl = contents.getURL()
+      const cachedFavicon = browserFaviconCache.get(pageUrl)
+      const liveFavicon = favicons.find(isAllowedBrowserUrl)
+      const immediateFavicon = cachedFavicon ?? liveFavicon
+      if (immediateFavicon && tab.faviconUrl !== immediateFavicon) {
+        tab.faviconUrl = immediateFavicon
+        this.emitState()
+      }
+      void browserFaviconCache.revalidate(pageUrl, favicons).then((faviconUrl) => {
+        if (
+          faviconUrl &&
+          tab.view?.webContents === contents &&
+          sameSiteOrigin(contents.getURL(), pageUrl) &&
+          tab.faviconUrl !== faviconUrl
+        ) {
+          tab.faviconUrl = faviconUrl
+          this.emitState()
+        }
+      })
     })
     contents.on('before-input-event', (event, input) => this.handleShortcut(event, input, tab.state.id))
     contents.on('destroyed', () => {
@@ -392,9 +419,16 @@ class BrowserPanelController {
     if (!contents || contents.isDestroyed()) return
     const url = contents.getURL()
     const title = contents.getTitle()
-    if (isAllowedBrowserUrl(url)) tab.state.url = url
+    if (isAllowedBrowserUrl(url)) this.updateTabUrl(tab, url)
     if (title.trim()) tab.state.title = title.trim()
     this.persist()
+  }
+
+  private updateTabUrl(tab: ManagedBrowserTab, url: string): void {
+    const originChanged = !sameSiteOrigin(tab.state.url, url)
+    tab.state.url = url
+    const cachedFavicon = browserFaviconCache.get(url)
+    if (cachedFavicon || originChanged) tab.faviconUrl = cachedFavicon
   }
 
   private layoutViews(): void {
