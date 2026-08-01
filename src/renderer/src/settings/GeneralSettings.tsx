@@ -1,11 +1,10 @@
 import { useEffect, useState, type JSX } from 'react'
 import { HardDrive, X } from 'lucide-react'
-import { CONTEXT_WINDOW_MAX_TOKENS, CONTEXT_WINDOW_MIN_TOKENS, CONTEXT_WINDOW_PRESET_TOKENS, CONTEXT_WINDOW_STEP_TOKENS, MAX_CUSTOM_RESPONSE_STYLE_LENGTH, NATIVE_LANGUAGES, RESPONSE_STYLES, type NativeLanguage, type ResponseStylePreference } from '../../../shared/settings'
+import { CONTEXT_WINDOW_PRESET_TOKENS, MAX_CUSTOM_RESPONSE_STYLE_LENGTH, NATIVE_LANGUAGES, RESPONSE_STYLES, type NativeLanguage, type ResponseStylePreference } from '../../../shared/settings'
 import { MAX_PROMPT_REFINEMENT_BACKUPS, type PromptRefinementModelOption, type PromptRefinementPreferences } from '../../../shared/promptRefinement'
 import { REASONING_EFFORTS, type ReasoningEffort } from '../reasoningProfiles'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsControls'
 import SettingsSelect, { type SettingsSelectOption } from './SettingsSelect'
-import SettingsSlider from './SettingsSlider'
 
 interface GeneralSettingsProps {
   reasoningEffort: ReasoningEffort
@@ -22,6 +21,7 @@ interface GeneralSettingsProps {
 }
 
 const label = (value: string): string => value.replace('-', ' ').replace(/^./, (character) => character.toUpperCase())
+const contextWindowLabel = (tokens: number): string => `${tokens / 1000}K`
 
 export default function GeneralSettings({
   reasoningEffort,
@@ -76,6 +76,9 @@ export default function GeneralSettings({
   const hasLocalBackup = promptRefinementPreferences.backupModelIds.some((modelId) =>
     promptRefinementModels.some((model) => model.id === modelId && model.source === 'local')
   )
+  const contextWindowOptions = [...new Set([...CONTEXT_WINDOW_PRESET_TOKENS, contextWindowTokens])]
+    .sort((first, second) => first - second)
+    .map((tokens) => ({ value: String(tokens), label: contextWindowLabel(tokens) }))
 
   return (
     <>
@@ -111,14 +114,11 @@ export default function GeneralSettings({
             />
           </SettingsRow>
           <SettingsRow title="Context window" description="How many tokens the local model can remember. Applying a larger window takes more memory and load time.">
-            <SettingsSlider
-              value={contextWindowTokens}
-              min={CONTEXT_WINDOW_MIN_TOKENS}
-              max={CONTEXT_WINDOW_MAX_TOKENS}
-              step={CONTEXT_WINDOW_STEP_TOKENS}
+            <SettingsSelect
+              value={String(contextWindowTokens)}
               label="Context window size"
-              ticks={CONTEXT_WINDOW_PRESET_TOKENS}
-              onChange={(tokens) => void onContextWindowTokensChange(tokens)}
+              options={contextWindowOptions}
+              onChange={(tokens) => void onContextWindowTokensChange(Number(tokens))}
             />
           </SettingsRow>
           {style === 'custom' && (

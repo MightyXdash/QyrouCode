@@ -1,11 +1,13 @@
 :root {
-  --settings-dropdown-background: var(--surface-agent-menu);
-  --settings-dropdown-trigger-background: var(--surface-raised);
+  --settings-dropdown-background: var(--surface-raised);
+  --settings-dropdown-trigger-background: light-dark(#ededed, #333333);
+  --settings-dropdown-trigger-hover: light-dark(#e4e4e4, #3a3a3a);
   --settings-dropdown-border: var(--border-agent-menu);
   --settings-dropdown-hover: var(--surface-hover);
   --settings-dropdown-selected: var(--surface-selected);
   --settings-dropdown-placeholder: light-dark(#858991, #858585);
   --settings-dropdown-shadow: var(--shadow-menu);
+  --settings-dropdown-backdrop-filter: light-dark(blur(18px) saturate(1.2), blur(30px) saturate(1.24));
   --settings-dropdown-option-min-height: var(--app-agent-menu-item-height);
   --settings-dropdown-menu-padding: var(--app-agent-menu-padding);
   --settings-dropdown-menu-z-index: 140;
@@ -550,7 +552,7 @@
 
 .settings-panel .settings-select-trigger:hover:not(:disabled),
 .settings-panel .settings-select-trigger.open {
-  background: var(--settings-button-hover);
+  background: var(--settings-dropdown-trigger-hover);
   color: var(--text-strong);
 }
 
@@ -589,8 +591,8 @@
   background-color: var(--settings-dropdown-background);
   background-image: var(--surface-agent-menu-sheen);
   box-shadow: var(--settings-dropdown-shadow);
-  -webkit-backdrop-filter: var(--filter-agent-menu);
-  backdrop-filter: var(--filter-agent-menu);
+  -webkit-backdrop-filter: var(--settings-dropdown-backdrop-filter);
+  backdrop-filter: var(--settings-dropdown-backdrop-filter);
   color: var(--text-base);
   font-family: 'DM Sans', sans-serif;
   opacity: 0;
