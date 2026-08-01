@@ -506,6 +506,7 @@ export default function MainApp(): JSX.Element {
   const [localModelDownloads, setLocalModelDownloads] = useState<Record<string, LocalModelDownloadState>>({})
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('Medium')
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
+  const [openAttachMenu, setOpenAttachMenu] = useState(false)
   const [openTitlebarMenu, setOpenTitlebarMenu] = useState<TitlebarMenuId | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [terminalOpen, setTerminalOpen] = useState(false)
@@ -1001,6 +1002,7 @@ export default function MainApp(): JSX.Element {
       if (!controlsRef.current?.contains(event.target as Node)) {
         if (modelMenuTimerRef.current) clearTimeout(modelMenuTimerRef.current)
         setOpenMenu(null)
+        setOpenAttachMenu(false)
       }
       if (!titlebarMenuRef.current?.contains(event.target as Node)) setOpenTitlebarMenu(null)
       if (!projectMenuRef.current?.contains(event.target as Node)) setProjectMenuOpen(false)
@@ -1015,6 +1017,7 @@ export default function MainApp(): JSX.Element {
         setProjectActionMenu(null)
         setDeleteConfirmProject(null)
         setComposerProjectMenuOpen(false)
+        setOpenAttachMenu(false)
       }
     }
     window.addEventListener('mousedown', closeMenus)
@@ -2366,8 +2369,19 @@ export default function MainApp(): JSX.Element {
           {promptRefinementError && <div className="prompt-refinement-error" role="alert">{promptRefinementError}</div>}
           <div className="composer-toolbar" ref={controlsRef}>
             <div className="composer-actions">
-              <button className="composer-icon-button" type="button" aria-label="Attach images" title="Attach images" disabled={completionState !== 'idle' || !selectedModel?.vision || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => void chooseChatImages()}><Plus size={14} /></button>
-              <button className="composer-icon-button" type="button" aria-label="Attach files" title="Attach files" disabled={completionState !== 'idle' || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => void chooseChatFiles()}><Paperclip size={14} /></button>
+              <div className="composer-attach-wrap">
+                <button className="composer-icon-button" type="button" aria-label="Attach" title="Attach files or images" disabled={completionState !== 'idle' || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => setOpenAttachMenu((open) => !open)}><Plus size={14} /></button>
+                {openAttachMenu && (
+                  <div className="composer-menu attach-menu" role="menu">
+                    <button className="menu-option" type="button" onClick={() => { setOpenAttachMenu(false); void chooseChatImages() }}>
+                      <span className="menu-option-copy"><strong>Attach images</strong><small>Attach an image for supported models to see</small></span>
+                    </button>
+                    <button className="menu-option" type="button" onClick={() => { setOpenAttachMenu(false); void chooseChatFiles() }}>
+                      <span className="menu-option-copy"><strong>Attach files</strong><small>Attach media (certain modalities require supported models)</small></span>
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 className={promptRefinementBusy ? 'composer-icon-button prompt-refinement-button busy' : 'composer-icon-button prompt-refinement-button'}
                 type="button"

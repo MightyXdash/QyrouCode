@@ -44,6 +44,9 @@
   --app-menu-corner-radius: 14px;
   --app-menu-item-corner-radius: 8px;
   --app-selector-corner-radius: calc(var(--app-control-height) / 2);
+  --app-user-message-corner-radius: 14px;
+  --app-user-message-padding-block: 8px;
+  --app-user-message-padding-inline: 12px;
   --app-agent-menu-padding: 6px;
   --app-agent-menu-item-height: 32px;
   --app-agent-menu-item-padding-inline: 9px;
@@ -553,12 +556,12 @@
 
 .sidebar-section-heading { display: flex; align-items: center; justify-content: space-between; }
 .project-add-wrap { position: relative; }
-.project-add-button { display: grid; place-items: center; width: 25px; height: 25px; padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-weak); cursor: pointer; }
+.project-add-button { display: grid; place-items: center; width: 25px; height: 25px; padding: 0; border: 0; border-radius: var(--app-icon-button-corner-radius); background: transparent; color: var(--text-weak); cursor: pointer; }
 .project-add-button:hover, .project-add-button[aria-expanded='true'] { background: var(--surface-hover); color: var(--text-strong); }
 .project-add-button svg { width: 17px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
-.project-add-menu { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; width: var(--project-menu-width); padding: 4px; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-lg); background: var(--surface-raised); box-shadow: var(--shadow-menu); animation: menuEnter 140ms var(--motion-ease-out) both; transform-origin: top right; }
+.project-add-menu { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; width: var(--project-menu-width); padding: var(--app-agent-menu-padding); border: var(--border-width-hairline) solid var(--border-agent-menu); border-radius: var(--app-menu-corner-radius); corner-shape: squircle; background-color: var(--surface-agent-menu); background-image: var(--surface-agent-menu-sheen); box-shadow: var(--shadow-menu); -webkit-backdrop-filter: var(--filter-agent-menu); backdrop-filter: var(--filter-agent-menu); animation: agentMenuEnter var(--app-agent-menu-motion-duration) var(--app-agent-menu-motion-ease-out) both; transform-origin: center; }
 .project-add-menu button, .project-list button { width: 100%; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-base); font: inherit; text-align: left; cursor: pointer; }
-.project-add-menu button { min-height: var(--app-menu-item-height); padding: 0 8px; font-size: 12px; }
+.project-add-menu button { min-height: var(--app-agent-menu-item-height); padding: 0 var(--app-agent-menu-item-padding-inline); border-radius: var(--app-menu-item-corner-radius); corner-shape: squircle; font-size: 12px; }
 .project-add-menu button:hover, .project-list button:hover { background: var(--surface-hover); color: var(--text-strong); }
 .project-list { display: grid; gap: var(--sidebar-project-gap); margin: 8px -9px 0; }
 .project-group { display: grid; }
@@ -746,7 +749,8 @@
 .todo-dock-item.completed svg, .todo-dock-item.cancelled svg { color: var(--text-weak); }
 .chat-message { color: var(--text-strong); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; user-select: text; }
 .user-turn { display: grid; justify-items: end; margin: 0 0 30px; }
-.user-message { position: relative; width: fit-content; max-width: 82%; margin: 0; padding: 9px 13px; border-radius: var(--radius-xl); background: var(--surface-selected); user-select: text; }
+.user-message { position: relative; width: fit-content; max-width: 82%; margin: 0; padding: var(--app-user-message-padding-block) var(--app-user-message-padding-inline); border-radius: var(--app-user-message-corner-radius); corner-shape: squircle; background: var(--surface-selected); user-select: text; }
+.user-message-content > :last-child { margin-bottom: 0; }
 .user-message-content.constrained { max-height: calc(var(--user-message-visible-lines) * 1lh); overflow: hidden; }
 .user-message-controls { display: flex; gap: var(--user-message-expand-gap); width: 100%; margin-top: var(--user-message-expand-margin-top); padding-top: var(--user-message-expand-padding-top); border-top: var(--border-width-hairline) solid var(--border-base); }
 .user-message-expand { display: flex; flex: 1; align-items: center; justify-content: center; gap: var(--user-message-expand-gap); padding: 0; border: 0; background: transparent; color: var(--text-weak); font: 500 var(--user-message-expand-font-size)/1.5 'DM Sans', sans-serif; cursor: pointer; }
@@ -1019,7 +1023,9 @@
 .composer-project-option > svg:last-child { justify-self: end; }
 
 .composer-menu-wrap { position: relative; display: flex; align-items: center; min-width: 0; gap: 4px; }
-.composer-menu { position: absolute; right: 0; bottom: calc(100% + var(--app-menu-gap)); z-index: 20; width: var(--app-menu-width); max-height: 280px; overflow: auto; padding: var(--app-agent-menu-padding); border: var(--border-width-hairline) solid var(--border-agent-menu); border-radius: var(--app-menu-corner-radius); corner-shape: squircle; background-color: var(--surface-agent-menu); background-image: var(--surface-agent-menu-sheen); box-shadow: var(--shadow-agent-menu); -webkit-backdrop-filter: var(--filter-agent-menu); backdrop-filter: var(--filter-agent-menu); animation: agentMenuEnter var(--app-agent-menu-motion-duration) var(--app-agent-menu-motion-ease-out) both; transform-origin: center; }
+.composer-attach-wrap { position: relative; display: flex; align-items: center; }
+.composer-menu { position: absolute; right: 0; bottom: calc(100% + var(--app-menu-gap)); z-index: 20; width: var(--app-menu-width); max-height: 280px; overflow: auto; padding: var(--app-agent-menu-padding); border: var(--border-width-hairline) solid var(--border-agent-menu); border-radius: var(--app-menu-corner-radius); corner-shape: squircle; background-color: var(--surface-agent-menu); background-image: var(--surface-agent-menu-sheen); box-shadow: var(--shadow-menu); -webkit-backdrop-filter: var(--filter-agent-menu); backdrop-filter: var(--filter-agent-menu); animation: agentMenuEnter var(--app-agent-menu-motion-duration) var(--app-agent-menu-motion-ease-out) both; transform-origin: center; }
+.attach-menu { right: auto; left: 0; width: 240px; }
 .advanced-menu { right: var(--app-menu-alignment-offset); width: var(--app-advanced-menu-width); overflow: visible; }
 .submenu-menu { right: auto; left: calc(100% + var(--app-submenu-gap) - var(--app-menu-alignment-offset)); }
 .app-workspace.browser-open .advanced-menu { right: auto; left: calc(var(--app-menu-alignment-offset) * -1); }

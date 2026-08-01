@@ -27,7 +27,7 @@ interface MenuPosition extends CSSProperties {
 
 const MENU_MAX_HEIGHT = 238
 const MENU_MIN_HEIGHT = 80
-const MENU_BORDER_OVERLAP = 1
+const MENU_GAP = 7
 const MENU_ANIMATION_DURATION_MS = 300
 const MENU_ANIMATION_FALLBACK_MS = MENU_ANIMATION_DURATION_MS + 100
 const VIEWPORT_INSET = 12
@@ -69,8 +69,8 @@ export default function SettingsSelect({
     const trigger = triggerRef.current
     if (!trigger) return
     const rect = trigger.getBoundingClientRect()
-    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - VIEWPORT_INSET)
-    const spaceAbove = Math.max(0, rect.top - VIEWPORT_INSET)
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - VIEWPORT_INSET - MENU_GAP)
+    const spaceAbove = Math.max(0, rect.top - VIEWPORT_INSET - MENU_GAP)
     const shouldOpenUpward = spaceBelow < MENU_MIN_HEIGHT && spaceAbove > spaceBelow
     const availableSpace = shouldOpenUpward ? spaceAbove : spaceBelow
     const width = Math.min(rect.width, window.innerWidth - (VIEWPORT_INSET * 2))
@@ -80,8 +80,8 @@ export default function SettingsSelect({
     setPosition({
       '--settings-select-menu-max-height': `${maxHeight}px`,
       left,
-      top: shouldOpenUpward ? 'auto' : rect.bottom - MENU_BORDER_OVERLAP,
-      bottom: shouldOpenUpward ? window.innerHeight - rect.top - MENU_BORDER_OVERLAP : 'auto',
+      top: shouldOpenUpward ? 'auto' : rect.bottom + MENU_GAP,
+      bottom: shouldOpenUpward ? window.innerHeight - rect.top + MENU_GAP : 'auto',
       width,
     })
   }
@@ -201,7 +201,7 @@ export default function SettingsSelect({
   return (
     <div className={compact ? 'settings-select compact' : 'settings-select'}>
       <button
-        className={`${rendered ? 'settings-select-trigger attached' : 'settings-select-trigger'}${closing ? ' closing' : ''}${opensUpward ? ' opens-upward' : ''}`}
+        className={`settings-select-trigger${rendered ? ' open' : ''}${closing ? ' closing' : ''}`}
         ref={triggerRef}
         type="button"
         role="combobox"
@@ -224,7 +224,7 @@ export default function SettingsSelect({
           aria-hidden={!open}
           style={position}
           onTransitionEnd={(event) => {
-            if (event.currentTarget === event.target && event.propertyName === 'grid-template-rows' && closingRef.current) finishClose()
+            if (event.currentTarget === event.target && event.propertyName === 'transform' && closingRef.current) finishClose()
           }}
         >
           <div className="settings-select-menu-clip">

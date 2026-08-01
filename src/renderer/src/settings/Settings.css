@@ -1,25 +1,28 @@
 :root {
-  --settings-dropdown-background: light-dark(#f7f7f7, #242424);
-  --settings-dropdown-border: light-dark(#d8dbe2, #3b3b3b);
-  --settings-dropdown-open-border: light-dark(#b7c1d8, #4a5060);
-  --settings-dropdown-hover: light-dark(#eef3ff, #2d3447);
-  --settings-dropdown-selected: light-dark(#e5edff, #293551);
+  --settings-dropdown-background: var(--surface-agent-menu);
+  --settings-dropdown-trigger-background: var(--surface-raised);
+  --settings-dropdown-border: var(--border-agent-menu);
+  --settings-dropdown-hover: var(--surface-hover);
+  --settings-dropdown-selected: var(--surface-selected);
   --settings-dropdown-placeholder: light-dark(#858991, #858585);
-  --settings-dropdown-shadow: 0 6px 18px light-dark(rgba(28, 35, 48, 0.07), rgba(0, 0, 0, 0.2));
-  --settings-dropdown-option-min-height: 38px;
-  --settings-dropdown-menu-padding: 5px;
+  --settings-dropdown-shadow: var(--shadow-menu);
+  --settings-dropdown-option-min-height: var(--app-agent-menu-item-height);
+  --settings-dropdown-menu-padding: var(--app-agent-menu-padding);
   --settings-dropdown-menu-z-index: 140;
   --settings-dropdown-reveal-duration: 300ms;
-  --settings-dropdown-reveal-easing: cubic-bezier(0.16, 1, 0.3, 1);
+  --settings-dropdown-reveal-easing: cubic-bezier(0.12, 1, 0.22, 1);
+  --settings-dropdown-reveal-scale: 0.94;
   --settings-dropdown-trigger-padding-start: 10px;
   --settings-dropdown-trigger-padding-end: 8px;
   --settings-dropdown-icon-size: 13px;
-  --settings-dropdown-option-gap: 10px;
-  --settings-dropdown-option-padding-block: 6px;
-  --settings-dropdown-option-padding-inline: 8px;
+  --settings-dropdown-option-gap: 7px;
+  --settings-dropdown-option-padding-block: 4px;
+  --settings-dropdown-option-padding-inline: var(--app-agent-menu-item-padding-inline);
   --settings-dropdown-option-copy-gap: 2px;
-  --settings-dropdown-option-title-size: 11px;
+  --settings-dropdown-option-title-size: 12px;
   --settings-dropdown-option-detail-size: 9px;
+  --settings-button-hover: var(--surface-selected);
+  --settings-primary-hover: color-mix(in srgb, var(--text-strong) 88%, var(--background-base));
   --settings-refinement-row-min-height: 64px;
   --settings-refinement-row-gap: 20px;
   --settings-refinement-copy-gap: 4px;
@@ -89,7 +92,7 @@
 }
 
 .settings-icon-button:hover:not(:disabled) {
-  background: var(--surface-hover);
+  background: var(--settings-button-hover);
   color: var(--text-strong);
 }
 
@@ -131,7 +134,7 @@
 }
 
 .settings-navigation button:hover {
-  background: var(--surface-hover);
+  background: var(--settings-button-hover);
   color: var(--text-strong);
 }
 
@@ -170,7 +173,7 @@
 
 .settings-provider-nav button:hover,
 .settings-provider-nav button.active {
-  background: var(--surface-hover);
+  background: var(--settings-button-hover);
   color: var(--text-strong);
 }
 
@@ -343,7 +346,7 @@
   gap: 6px;
   min-height: var(--settings-control-height);
   padding: 0 10px;
-  border: var(--border-width-hairline) solid var(--border-base);
+  border: 0;
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   color: var(--text-base);
@@ -353,15 +356,19 @@
 
 .settings-panel button:hover:not(:disabled),
 .settings-subdialog button:hover:not(:disabled) {
-  background: var(--surface-hover);
+  background: var(--settings-button-hover);
   color: var(--text-strong);
 }
 
 .settings-panel button.primary,
 .settings-subdialog button.primary {
-  border-color: var(--text-strong);
   background: var(--text-strong);
   color: var(--background-base);
+}
+
+.settings-panel button.primary:hover:not(:disabled),
+.settings-subdialog button.primary:hover:not(:disabled) {
+  background: var(--settings-primary-hover);
 }
 
 .settings-panel button:disabled,
@@ -531,45 +538,23 @@
   justify-content: space-between;
   gap: var(--settings-refinement-control-gap);
   padding: 0 var(--settings-dropdown-trigger-padding-end) 0 var(--settings-dropdown-trigger-padding-start);
-  border: var(--border-width-hairline) solid var(--settings-dropdown-border);
-  border-radius: var(--radius-md);
-  background: var(--settings-dropdown-background);
+  border: 0;
+  border-radius: var(--app-menu-item-corner-radius);
+  corner-shape: squircle;
+  background: var(--settings-dropdown-trigger-background);
   color: var(--text-strong);
   font-weight: 500;
   text-align: left;
-  transition: border-color var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing), border-radius var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing);
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
 }
 
 .settings-panel .settings-select-trigger:hover:not(:disabled),
-.settings-panel .settings-select-trigger.attached {
-  border-color: var(--settings-dropdown-open-border);
-  background: var(--settings-dropdown-background);
+.settings-panel .settings-select-trigger.open {
+  background: var(--settings-button-hover);
   color: var(--text-strong);
 }
 
-.settings-panel .settings-select-trigger.attached {
-  border-bottom-color: transparent;
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-}
-
-.settings-panel .settings-select-trigger.attached.opens-upward {
-  border-top-color: transparent;
-  border-bottom-color: var(--settings-dropdown-open-border);
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-}
-
-.settings-panel .settings-select-trigger.attached.closing {
-  border-bottom-color: var(--settings-dropdown-open-border);
-  border-radius: var(--radius-md);
-}
-
-.settings-panel .settings-select-trigger.attached.closing.opens-upward {
-  border-top-color: var(--settings-dropdown-open-border);
-  border-radius: var(--radius-md);
-}
-
 .settings-panel .settings-select-trigger:focus-visible {
-  border-color: var(--interactive);
   outline: 2px solid color-mix(in srgb, var(--interactive) 22%, transparent);
   outline-offset: 1px;
 }
@@ -596,44 +581,33 @@
 .settings-select-menu {
   position: fixed;
   z-index: var(--settings-dropdown-menu-z-index);
-  display: grid;
   box-sizing: border-box;
-  grid-template-rows: 0fr;
   overflow: hidden;
-  border: 0;
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-  background: var(--settings-dropdown-background);
-  box-shadow: none;
+  border: var(--border-width-hairline) solid var(--settings-dropdown-border);
+  border-radius: var(--app-menu-corner-radius);
+  corner-shape: squircle;
+  background-color: var(--settings-dropdown-background);
+  background-image: var(--surface-agent-menu-sheen);
+  box-shadow: var(--settings-dropdown-shadow);
+  -webkit-backdrop-filter: var(--filter-agent-menu);
+  backdrop-filter: var(--filter-agent-menu);
   color: var(--text-base);
   font-family: 'DM Sans', sans-serif;
+  opacity: 0;
   pointer-events: none;
-  transition: grid-template-rows var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing), box-shadow var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing);
-}
-
-.settings-select-menu::after {
-  position: absolute;
-  inset: 0;
-  box-sizing: border-box;
-  border: var(--border-width-hairline) solid var(--settings-dropdown-open-border);
-  border-top: 0;
-  border-radius: inherit;
-  content: '';
-  pointer-events: none;
+  transform: scale(var(--settings-dropdown-reveal-scale));
+  transform-origin: top center;
+  transition: transform var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing), opacity 120ms ease-out;
 }
 
 .settings-select-menu.expanded {
-  grid-template-rows: 1fr;
-  box-shadow: var(--settings-dropdown-shadow);
+  opacity: 1;
   pointer-events: auto;
+  transform: scale(1);
 }
 
 .settings-select-menu.opens-upward {
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-}
-
-.settings-select-menu.opens-upward::after {
-  border-top: var(--border-width-hairline) solid var(--settings-dropdown-open-border);
-  border-bottom: 0;
+  transform-origin: bottom center;
 }
 
 .settings-select-menu-clip {
@@ -670,8 +644,9 @@
   gap: var(--settings-dropdown-option-gap);
   padding: var(--settings-dropdown-option-padding-block) var(--settings-dropdown-option-padding-inline);
   border: 0;
-  border-radius: var(--radius-md);
-  background: var(--settings-dropdown-background);
+  border-radius: var(--app-menu-item-corner-radius);
+  corner-shape: squircle;
+  background: transparent;
   color: var(--text-base);
   font: 400 11px 'DM Sans', sans-serif;
   text-align: left;
