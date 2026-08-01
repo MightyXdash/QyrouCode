@@ -12,7 +12,8 @@ import {
   type ConnectionSummary,
   type ConnectionTestResult
 } from '../shared/connections'
-import { getRemoteModelsForConnectionKind } from '../shared/remoteModels'
+import { buildRemoteModelCatalog } from '../shared/remoteModels'
+import { getCachedRemoteModels, modelListHeaders, refreshRemoteModels, setCachedRemoteModels } from './remoteModelCatalog'
 
 interface StoredConnection {
   id: string
@@ -197,16 +198,7 @@ function findStoredConnection(connectionId: string): StoredConnection | undefine
 function validatedInput(input: ConnectionInput, connectionId?: string): ReturnType<typeof validateConnectionInput> {
   const existing = connectionId ? findStoredConnection(connectionId) : undefined
   const apiKey = input.apiKey.trim() || (existing ? decryptCredential(connectionId as string) : '')
-  const validated = validateConnectionInput({ ...input, apiKey }, getConnections(), connectionId)
-  const normalized = validated.kind === 'openai-compatible'
-    ? validated
-    : {
-        ...validated,
-        selectedModelIds: validateModelSelection(
-          validated.selectedModelIds,
-          getRemoteModelsForConnectionKind(validated.kind).map((model) => model.id)
-        )
-      }
+  const normalized = validateConnectionInput({ ...input, apiKey }, getConnections(), connectionId)
   if (normalized.kind === 'openai-compatible') {
     const duplicateEndpoint = connectionsStore.get('connections').some((connection) =>
       connection.id !== connectionId &&
@@ -217,12 +209,27 @@ function validatedInput(input: ConnectionInput, connectionId?: string): ReturnTy
   return normalized
 }
 
-export function saveConnection(input: ConnectionInput, connectionId?: string): ConnectionMutationResult {
+async function runtimeAvailableModelIds(connection: { id: string; kind: ConnectionKind; baseUrl: string; apiKey: string }): Promise<string[] | undefined> {
+  if (connection.kind === 'openai-compatible') return undefined
+  const cached = getCachedRemoteModels(connection.id)
+  if (cached) return cached.map((model) => model.id)
+  try {
+    return (await refreshRemoteModels(connection)).map((model) => model.id)
+  } catch {
+    return undefined
+  }
+}
+
+export async function saveConnection(input: ConnectionInput, connectionId?: string): Promise<ConnectionMutationResult> {
   try {
     const existing = connectionId ? findStoredConnection(connectionId) : undefined
     if (connectionId && !existing) throw new Error('Connection not found')
     const normalized = validatedInput(input, connectionId)
     const id = existing?.id ?? randomUUID()
+    if (normalized.kind !== 'openai-compatible') {
+      const availableModelIds = await runtimeAvailableModelIds({ id, kind: normalized.kind, baseUrl: normalized.baseUrl, apiKey: normalized.apiKey })
+      if (availableModelIds) validateModelSelection(normalized.selectedModelIds, availableModelIds)
+    }
     const now = new Date().toISOString()
     if (input.apiKey.trim() || !existing) saveCredential(id, normalized.apiKey)
     const connection: StoredConnection = {
@@ -243,14 +250,16 @@ export function saveConnection(input: ConnectionInput, connectionId?: string): C
   }
 }
 
-export function updateConnectionModels(connectionId: string, selectedModelIds: readonly string[]): ConnectionMutationResult {
+export async function updateConnectionModels(connectionId: string, selectedModelIds: readonly string[]): Promise<ConnectionMutationResult> {
   try {
     const existing = findStoredConnection(connectionId)
     if (!existing) throw new Error('Connection not found')
     const availableModelIds = existing.kind === 'openai-compatible'
       ? existing.modelIds
-      : getRemoteModelsForConnectionKind(existing.kind).map((model) => model.id)
-    const selected = validateModelSelection(selectedModelIds, availableModelIds)
+      : await runtimeAvailableModelIds(resolveConnection(connectionId))
+    const selected = availableModelIds
+      ? validateModelSelection(selectedModelIds, availableModelIds)
+      : validateModelSelection(selectedModelIds)
     const updated: StoredConnection = { ...existing, selectedModelIds: selected, updatedAt: new Date().toISOString() }
     connectionsStore.set('connections', connectionsStore.get('connections').map((connection) => connection.id === connectionId ? updated : connection))
     return { ok: true, connection: summary(updated) }
@@ -286,12 +295,19 @@ export async function testConnection(input: ConnectionInput, connectionId?: stri
   const timeout = setTimeout(() => controller.abort(), CONNECTION_TEST_TIMEOUT_MS)
   try {
     const baseUrl = normalized.baseUrl.endsWith('/') ? normalized.baseUrl : `${normalized.baseUrl}/`
-    const response = await fetch(new URL('models', baseUrl), {
-      headers: normalized.apiKey ? { authorization: `Bearer ${normalized.apiKey}` } : undefined,
+    const modelListUrl = new URL('models', baseUrl)
+    if (normalized.kind === 'anthropic') modelListUrl.searchParams.set('limit', '1000')
+    const response = await fetch(modelListUrl, {
+      headers: normalized.kind === 'openai-compatible'
+        ? (normalized.apiKey ? { authorization: `Bearer ${normalized.apiKey}` } : undefined)
+        : modelListHeaders(normalized.kind, normalized.apiKey),
       signal: controller.signal
     })
     if (!response.ok) return { ok: false, error: `Connection test failed with status ${response.status}` }
     const body = await response.json() as { data?: unknown[]; models?: unknown[] }
+    if (connectionId && normalized.kind !== 'openai-compatible') {
+      setCachedRemoteModels(connectionId, buildRemoteModelCatalog(normalized.kind, body))
+    }
     const modelCount = Array.isArray(body.data) ? body.data.length : Array.isArray(body.models) ? body.models.length : undefined
     return {
       ok: true,
@@ -310,4 +326,27 @@ export function connectionBaseUrl(kind: ConnectionKind, customBaseUrl?: string):
   return kind === 'openai-compatible'
     ? normalizeConnectionBaseUrl(customBaseUrl ?? '')
     : getConnectionProvider(kind).defaultBaseUrl
+}
+
+const LEGACY_CATALOG_ID_PREFIXES: Partial<Record<ConnectionKind, string>> = {
+  openai: 'openai/',
+  anthropic: 'anthropic/',
+  gemini: 'google/'
+}
+
+export function migrateLegacyCatalogModelIds(): void {
+  const connections = connectionsStore.get('connections')
+  let changed = false
+  const migrated = connections.map((connection) => {
+    const prefix = LEGACY_CATALOG_ID_PREFIXES[connection.kind]
+    if (!prefix) return connection
+    const selectedModelIds = [...new Set(connection.selectedModelIds.map((modelId) => {
+      if (!modelId.startsWith(prefix)) return modelId
+      changed = true
+      const stripped = modelId.slice(prefix.length)
+      return connection.kind === 'anthropic' ? stripped.replace(/\./g, '-') : stripped
+    }))]
+    return { ...connection, selectedModelIds }
+  })
+  if (changed) connectionsStore.set('connections', migrated)
 }

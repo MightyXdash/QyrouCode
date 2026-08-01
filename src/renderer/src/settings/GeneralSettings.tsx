@@ -1,20 +1,23 @@
 import { useEffect, useState, type JSX } from 'react'
 import { HardDrive, X } from 'lucide-react'
-import { MAX_CUSTOM_RESPONSE_STYLE_LENGTH, NATIVE_LANGUAGES, RESPONSE_STYLES, type NativeLanguage, type ResponseStylePreference } from '../../../shared/settings'
+import { CONTEXT_WINDOW_MAX_TOKENS, CONTEXT_WINDOW_MIN_TOKENS, CONTEXT_WINDOW_PRESET_TOKENS, CONTEXT_WINDOW_STEP_TOKENS, MAX_CUSTOM_RESPONSE_STYLE_LENGTH, NATIVE_LANGUAGES, RESPONSE_STYLES, type NativeLanguage, type ResponseStylePreference } from '../../../shared/settings'
 import { MAX_PROMPT_REFINEMENT_BACKUPS, type PromptRefinementModelOption, type PromptRefinementPreferences } from '../../../shared/promptRefinement'
 import { REASONING_EFFORTS, type ReasoningEffort } from '../reasoningProfiles'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsControls'
 import SettingsSelect, { type SettingsSelectOption } from './SettingsSelect'
+import SettingsSlider from './SettingsSlider'
 
 interface GeneralSettingsProps {
   reasoningEffort: ReasoningEffort
   responseStyle: ResponseStylePreference
   nativeLanguage: NativeLanguage
+  contextWindowTokens: number
   promptRefinementPreferences: PromptRefinementPreferences
   promptRefinementModels: readonly PromptRefinementModelOption[]
   onReasoningEffortChange: (effort: ReasoningEffort) => void
   onResponseStyleChange: (preference: ResponseStylePreference) => Promise<void> | void
   onNativeLanguageChange: (nativeLanguage: NativeLanguage) => Promise<void> | void
+  onContextWindowTokensChange: (tokens: number) => Promise<void> | void
   onPromptRefinementPreferencesChange: (preference: PromptRefinementPreferences) => Promise<void> | void
 }
 
@@ -24,11 +27,13 @@ export default function GeneralSettings({
   reasoningEffort,
   responseStyle,
   nativeLanguage,
+  contextWindowTokens,
   promptRefinementPreferences,
   promptRefinementModels,
   onReasoningEffortChange,
   onResponseStyleChange,
   onNativeLanguageChange,
+  onContextWindowTokensChange,
   onPromptRefinementPreferencesChange
 }: GeneralSettingsProps): JSX.Element {
   const [style, setStyle] = useState(responseStyle.style)
@@ -103,6 +108,17 @@ export default function GeneralSettings({
               label="Native language"
               options={NATIVE_LANGUAGES.map((language) => ({ value: language, label: language }))}
               onChange={(value) => void onNativeLanguageChange(value as NativeLanguage)}
+            />
+          </SettingsRow>
+          <SettingsRow title="Context window" description="How many tokens the local model can remember. Applying a larger window takes more memory and load time.">
+            <SettingsSlider
+              value={contextWindowTokens}
+              min={CONTEXT_WINDOW_MIN_TOKENS}
+              max={CONTEXT_WINDOW_MAX_TOKENS}
+              step={CONTEXT_WINDOW_STEP_TOKENS}
+              label="Context window size"
+              ticks={CONTEXT_WINDOW_PRESET_TOKENS}
+              onChange={(tokens) => void onContextWindowTokensChange(tokens)}
             />
           </SettingsRow>
           {style === 'custom' && (

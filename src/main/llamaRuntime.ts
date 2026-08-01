@@ -6,8 +6,10 @@ import { app } from 'electron'
 import {
   LLAMA_SERVER_HOST,
   LLAMA_SERVER_PORT,
+  archSupportsVision,
   backendAppearsInDeviceList,
   buildLlamaServerArgs,
+  inferReasoningFormat,
   llamaRuntimeProfileMatches,
   type LlamaBackend,
   type LlamaPlatform,
@@ -17,6 +19,7 @@ import { INITIAL_RUNTIME_ARTIFACTS, getRuntimeArtifact, type RuntimeArchitecture
 import { LocalCompletionClient, type LocalCompletion, type LocalCompletionRequest } from './localCompletionClient'
 import { AgentRuntime, type AgentRunRequest, type AgentStateListener, type AgentToolEvent } from './agentRuntime'
 import { developmentRuntimeDirectory, packagedRuntimeExecutable } from './runtimePaths'
+import { readGgufContextLimit } from './gguf'
 
 const HEALTH_PATH = '/health'
 const HEALTH_TIMEOUT_MS = 120000
@@ -134,6 +137,7 @@ const findRuntime = (): RuntimeCandidate | undefined => {
 export class LlamaRuntime {
   private process: ChildProcessWithoutNullStreams | null = null
   private status: LlamaRuntimeStatus
+  private stderrTail = ''
 
   constructor(private readonly port = LLAMA_SERVER_PORT) {
     const runtime = findRuntime()
@@ -151,18 +155,22 @@ export class LlamaRuntime {
 
   async streamCompletion(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<LocalCompletion> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
-    return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).stream(request, onDelta)
+    return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).stream(this.withReasoningFormat(request), onDelta)
   }
 
   async complete(request: LocalCompletionRequest): Promise<LocalCompletion> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
-    return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).complete(request)
+    return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).complete(this.withReasoningFormat(request))
   }
 
   async runAgent(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void): Promise<void> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
     const client = new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`)
-    await new AgentRuntime(client).run(request, onDelta, onState, onToolEvent)
+    await new AgentRuntime(client).run(this.withReasoningFormat(request), onDelta, onState, onToolEvent)
+  }
+
+  private withReasoningFormat<T extends LocalCompletionRequest>(request: T): T {
+    return request.reasoningFormat ? request : { ...request, reasoningFormat: inferReasoningFormat(this.status.modelPath) }
   }
 
   async completePrompt(prompt: string): Promise<string> {
@@ -191,12 +199,15 @@ export class LlamaRuntime {
     const { backend, executablePath } = runtime
     if (!existsSync(modelPath)) throw new Error('The selected GGUF model does not exist')
 
+    const modelContextLimit = await readGgufContextLimit(modelPath)
+    const effectiveContextTokens = modelContextLimit === undefined ? contextTokens : Math.min(contextTokens, modelContextLimit)
+
     const targetPlatform = currentPlatform()
     const args = buildLlamaServerArgs({
       platform: targetPlatform,
       backend,
       modelPath,
-      contextTokens,
+      contextTokens: effectiveContextTokens,
       logicalCpuCount: cpus().length,
       availableMemoryBytes: freemem(),
       modelSizeBytes: statSync(modelPath).size,
@@ -204,12 +215,12 @@ export class LlamaRuntime {
       port: this.port
     })
 
-    this.status = { state: 'starting', backend, executablePath, modelPath, mmprojPath, contextTokens }
+    this.status = { state: 'starting', backend, executablePath, modelPath, mmprojPath, contextTokens: effectiveContextTokens }
     const child = spawn(executablePath, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     this.process = child
-    let stderrTail = ''
+    this.stderrTail = ''
     child.stderr.on('data', (chunk: Buffer) => {
-      stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_TAIL_LENGTH)
+      this.stderrTail = (this.stderrTail + chunk.toString()).slice(-STDERR_TAIL_LENGTH)
     })
     child.once('error', (error) => {
       this.process = null
@@ -222,14 +233,14 @@ export class LlamaRuntime {
         this.status = {
           ...this.status,
           state: 'error',
-          message: stderrTail.trim() || `llama-server exited with code ${code ?? 'unknown'}`
+          message: this.stderrTail.trim() || `llama-server exited with code ${code ?? 'unknown'}`
         }
       }
     })
 
     try {
       await this.waitUntilHealthy()
-      this.status = { ...this.status, state: 'ready' }
+      this.status = { ...this.status, state: 'ready', visionReady: await this.probeVisionSupport() }
     } catch (error) {
       await this.stop()
       this.status = { ...this.status, state: 'error', message: error instanceof Error ? error.message : 'Unable to start llama-server' }
@@ -261,5 +272,16 @@ export class LlamaRuntime {
       await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_INTERVAL_MS))
     }
     throw new Error('llama-server did not become ready in time')
+  }
+
+  private async probeVisionSupport(): Promise<boolean> {
+    if (!this.status.mmprojPath) return false
+    try {
+      const response = await fetch(`http://${LLAMA_SERVER_HOST}:${this.port}/props`)
+      if (!response.ok) return false
+      const props = await response.json() as { model_archs?: unknown }
+      if (Array.isArray(props.model_archs)) return archSupportsVision(props.model_archs)
+    } catch { /* fall through to the stderr signal */ }
+    return this.stderrTail.toLowerCase().includes('mmproj')
   }
 }

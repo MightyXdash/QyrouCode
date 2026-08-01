@@ -1,7 +1,6 @@
 export const LLAMA_SERVER_PORT = 39281
 export const LLAMA_TITLE_SERVER_PORT = 39282
 export const LLAMA_SERVER_HOST = '127.0.0.1'
-export const FIRST_LOAD_CONTEXT_TOKENS = 8192
 
 export type LlamaPlatform = 'darwin' | 'linux' | 'win32'
 export type LlamaBackend = 'metal' | 'cuda' | 'vulkan' | 'cpu'
@@ -14,7 +13,22 @@ export interface LlamaRuntimeStatus {
   modelPath?: string
   mmprojPath?: string
   contextTokens?: number
+  visionReady?: boolean
   message?: string
+}
+
+export type LlamaReasoningFormat = 'deepseek' | 'qwen3' | 'gemma3'
+
+const VISION_ARCH_MARKERS = ['clip', 'llava', 'vl', 'minicpm', 'moondream', 'florence', 'siglip', 'pixtral', 'mllama', 'gemma3'] as const
+
+export const archSupportsVision = (modelArchs: readonly string[] | undefined): boolean =>
+  (modelArchs ?? []).some((arch) => VISION_ARCH_MARKERS.some((marker) => arch.toLowerCase().includes(marker)))
+
+export const inferReasoningFormat = (modelPath: string | undefined): LlamaReasoningFormat => {
+  const normalized = (modelPath ?? '').toLowerCase()
+  if (normalized.includes('gemma')) return 'gemma3'
+  if (normalized.includes('qwen')) return 'qwen3'
+  return 'deepseek'
 }
 
 export interface LlamaLaunchProfile {

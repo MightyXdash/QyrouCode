@@ -35,6 +35,7 @@ export default function BrowserPanel({
   const contentRef = useRef<HTMLDivElement>(null)
   const addressRef = useRef<HTMLInputElement>(null)
   const tabsRef = useRef<HTMLDivElement>(null)
+  const activeTabTrackRef = useRef<HTMLDivElement>(null)
   const activeTabIndicatorRef = useRef<HTMLDivElement>(null)
   const draggedTabIdRef = useRef<string>()
   const previewTabIdsRef = useRef<string[]>()
@@ -144,14 +145,17 @@ export default function BrowserPanel({
 
   useLayoutEffect(() => {
     const target = tabsRef.current
+    const track = activeTabTrackRef.current
     const indicator = activeTabIndicatorRef.current
-    if (!target || !indicator || !open) return
+    if (!target || !track || !indicator || !open) return
     let frameId = 0
     let readyFrameId = 0
     const updateIndicator = (): void => {
       if (frameId) return
       frameId = requestAnimationFrame(() => {
         frameId = 0
+        track.style.width = `${target.scrollWidth}px`
+        track.style.transform = `translateX(${-target.scrollLeft}px)`
         const selectedTab = target.querySelector<HTMLElement>('.browser-tab.active')
         if (!selectedTab) {
           indicator.classList.remove('visible')
@@ -167,13 +171,28 @@ export default function BrowserPanel({
     }
     const observer = new ResizeObserver(updateIndicator)
     observer.observe(target)
+    for (const tab of target.querySelectorAll<HTMLElement>('.browser-tab')) observer.observe(tab)
+    target.addEventListener('scroll', updateIndicator, { passive: true })
     updateIndicator()
     return () => {
       cancelAnimationFrame(frameId)
       cancelAnimationFrame(readyFrameId)
       observer.disconnect()
+      target.removeEventListener('scroll', updateIndicator)
     }
   }, [open, state.activeTabId, state.tabs.length, tabOrder])
+
+  useLayoutEffect(() => {
+    const tabs = tabsRef.current
+    const selectedTab = tabs?.querySelector<HTMLElement>('.browser-tab.active')
+    if (!open || !tabs || !selectedTab) return
+    const tabLeft = selectedTab.offsetLeft
+    const tabRight = tabLeft + selectedTab.offsetWidth
+    const visibleLeft = tabs.scrollLeft
+    const visibleRight = visibleLeft + tabs.clientWidth
+    if (tabLeft < visibleLeft) tabs.scrollLeft = tabLeft
+    else if (tabRight > visibleRight) tabs.scrollLeft = tabRight - tabs.clientWidth
+  }, [open, state.activeTabId, state.tabs.length])
 
   if (!open) return null
 
@@ -293,8 +312,10 @@ export default function BrowserPanel({
       <div className="browser-resize-handle" role="separator" aria-label="Resize browser panel" aria-orientation="vertical" onPointerDown={beginResize} />
       <div className="browser-tab-strip" role="tablist" aria-label="Browser tabs">
         <div className={`browser-tabs-shell${tabOverflow.left ? ' can-scroll-left' : ''}${tabOverflow.right ? ' can-scroll-right' : ''}`}>
+          <div className="browser-active-tab-track" ref={activeTabTrackRef} aria-hidden="true">
+            <div className="browser-active-tab-indicator" ref={activeTabIndicatorRef} />
+          </div>
           <div className="browser-tabs" ref={tabsRef}>
-            <div className="browser-active-tab-indicator" ref={activeTabIndicatorRef} aria-hidden="true" />
             {displayedTabs.map((tab) => (
               <button
                 className={`${tab.id === state.activeTabId ? 'browser-tab active' : 'browser-tab'}${draggedTabId === tab.id ? ' dragging' : ''}`}
@@ -336,7 +357,7 @@ export default function BrowserPanel({
                     update(window.api.closeBrowserTab(tab.id))
                   }}
                 >
-                  <X size={11} />
+                  <X />
                 </span>
               </button>
             ))}

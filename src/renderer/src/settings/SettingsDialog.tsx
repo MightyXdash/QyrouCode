@@ -13,6 +13,7 @@ import './Settings.css'
 
 export type {
   LocalModelDownloadState,
+  RemoteCatalogState,
   SettingsAttachmentMode,
   SettingsConnectionRequest,
   SettingsConnectionTestResult,
@@ -120,9 +121,9 @@ export default function SettingsDialog(props: SettingsDialogProps): JSX.Element 
 
           <main className="settings-panel">
             {section === 'appearance' && <AppearanceSettings theme={props.theme} onThemeChange={props.onThemeChange} />}
-            {section === 'general' && <GeneralSettings reasoningEffort={props.reasoningEffort} responseStyle={props.responseStyle} nativeLanguage={props.nativeLanguage} promptRefinementPreferences={props.promptRefinementPreferences} promptRefinementModels={props.promptRefinementModels} onReasoningEffortChange={props.onReasoningEffortChange} onResponseStyleChange={props.onResponseStyleChange} onNativeLanguageChange={props.onNativeLanguageChange} onPromptRefinementPreferencesChange={props.onPromptRefinementPreferencesChange} />}
+            {section === 'general' && <GeneralSettings reasoningEffort={props.reasoningEffort} responseStyle={props.responseStyle} nativeLanguage={props.nativeLanguage} contextWindowTokens={props.contextWindowTokens} promptRefinementPreferences={props.promptRefinementPreferences} promptRefinementModels={props.promptRefinementModels} onReasoningEffortChange={props.onReasoningEffortChange} onResponseStyleChange={props.onResponseStyleChange} onNativeLanguageChange={props.onNativeLanguageChange} onContextWindowTokensChange={props.onContextWindowTokensChange} onPromptRefinementPreferencesChange={props.onPromptRefinementPreferencesChange} />}
             {section === 'providers' && <ProvidersSettings connections={props.connections} onConfigure={configureConnection} />}
-            {section === 'models' && <ModelsSettings connection={activeConnection} catalog={props.catalog} onManageConnection={manageConnection} onUpdateSelection={props.onUpdateModelSelection} />}
+            {section === 'models' && <ModelsSettings connection={activeConnection} catalog={activeConnection ? props.catalogs[activeConnection.id] : undefined} onManageConnection={manageConnection} onUpdateSelection={props.onUpdateModelSelection} onRefreshCatalog={props.onRefreshCatalog} />}
             {section === 'local-models' && <LocalModelsSettings catalog={props.localCatalog} downloadedModelIds={props.downloadedLocalModelIds} downloads={props.localModelDownloads} onDownload={props.onDownloadLocalModel} onCancel={props.onCancelLocalModelDownload} />}
             {section === 'data' && <DataSettings options={props.exportOptions} state={props.exportState} onOptionsChange={props.onExportOptionsChange} onExport={props.onExport} />}
           </main>

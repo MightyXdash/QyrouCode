@@ -8,7 +8,6 @@ export type NativeReasoningEffort = typeof NATIVE_REASONING_EFFORTS[number]
 export type RemoteInputModality = 'text' | 'image' | 'file' | 'audio' | 'video'
 export type RemoteOutputModality = 'text' | 'image' | 'audio'
 export type CatalogConnectionKind = Exclude<ConnectionKind, 'openai-compatible'>
-export type DirectConnectionKind = Exclude<CatalogConnectionKind, 'openrouter'>
 
 export interface RemoteReasoningEffortControl {
   enabled: boolean
@@ -49,17 +48,18 @@ export interface ResolvedRemoteReasoningEffort {
   systemPrompt: string | null
 }
 
-interface RemoteModelSeed {
+export interface ProviderModelInfo {
   id: string
-  displayName: string
-  publisher: string
-  contextWindow: number
-  inputModalities: readonly RemoteInputModality[]
-  outputModalities: readonly RemoteOutputModality[]
-  supportsTools: boolean
-  directProvider?: DirectConnectionKind
-  reasoning: RemoteModelReasoning
+  displayName?: string
+  contextWindow?: number
+  inputModalities?: readonly string[]
+  outputModalities?: readonly string[]
+  supportedParameters?: readonly string[]
 }
+
+export type ConnectionModelsResult =
+  | { ok: true; models: RemoteModel[] }
+  | { ok: false; error: string }
 
 const nativeControl = (nativeEffort: NativeReasoningEffort): RemoteReasoningEffortControl => ({
   enabled: nativeEffort !== 'none',
@@ -92,39 +92,31 @@ const defineReasoning = (
   ) as unknown as Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>>
 })
 
-const FULL_NATIVE_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
-  Instant: nativeControl('none'),
-  Low: nativeControl('low'),
-  Medium: nativeControl('medium'),
-  High: nativeControl('high'),
-  'Extra high': nativeControl('xhigh')
-}
-
-const MANDATORY_MEDIUM_TO_XHIGH_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
-  Instant: fallbackControl('Instant', 'medium'),
-  Low: fallbackControl('Low', 'medium'),
-  Medium: nativeControl('medium'),
-  High: nativeControl('high'),
-  'Extra high': nativeControl('xhigh')
-}
-
-const MANDATORY_LOW_TO_HIGH_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
-  Instant: fallbackControl('Instant', 'low'),
+const OPTIONAL_NATIVE_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
+  Instant: disabledControl(),
   Low: nativeControl('low'),
   Medium: nativeControl('medium'),
   High: nativeControl('high'),
   'Extra high': fallbackControl('Extra high', 'high')
 }
 
-const OPTIONAL_NONE_LOW_HIGH_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
+const OPENROUTER_NATIVE_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
   Instant: nativeControl('none'),
   Low: nativeControl('low'),
-  Medium: fallbackControl('Medium', 'low'),
+  Medium: nativeControl('medium'),
   High: nativeControl('high'),
   'Extra high': fallbackControl('Extra high', 'high')
 }
 
-const OPTIONAL_PROMPT_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
+const MINIMAL_FLOOR_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
+  Instant: nativeControl('minimal'),
+  Low: nativeControl('low'),
+  Medium: nativeControl('medium'),
+  High: nativeControl('high'),
+  'Extra high': fallbackControl('Extra high', 'high')
+}
+
+const PROMPT_ONLY_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
   Instant: disabledControl(),
   Low: fallbackControl('Low'),
   Medium: fallbackControl('Medium'),
@@ -132,522 +124,207 @@ const OPTIONAL_PROMPT_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteR
   'Extra high': fallbackControl('Extra high')
 }
 
-const MANDATORY_PROMPT_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
-  Instant: fallbackControl('Instant'),
-  Low: fallbackControl('Low'),
-  Medium: fallbackControl('Medium'),
-  High: fallbackControl('High'),
-  'Extra high': fallbackControl('Extra high')
+const promptOnlyReasoning = (defaultEnabled: boolean | null): RemoteModelReasoning =>
+  defineReasoning(false, defaultEnabled, [], PROMPT_ONLY_EFFORT_MAP)
+
+const PROVIDER_PUBLISHERS: Readonly<Record<CatalogConnectionKind, string>> = {
+  openrouter: 'OpenRouter',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  gemini: 'Google'
 }
 
-const OPTIONAL_LOW_TO_MAX_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
-  Instant: disabledControl(),
-  Low: nativeControl('low'),
-  Medium: nativeControl('medium'),
-  High: nativeControl('high'),
-  'Extra high': nativeControl('xhigh')
+const DEFAULT_CONTEXT_WINDOWS: Readonly<Record<CatalogConnectionKind, number>> = {
+  openrouter: 128_000,
+  openai: 128_000,
+  anthropic: 200_000,
+  gemini: 1_048_576
 }
 
-const MANDATORY_LOW_TO_MAX_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
-  Instant: fallbackControl('Instant', 'low'),
-  Low: nativeControl('low'),
-  Medium: nativeControl('medium'),
-  High: nativeControl('high'),
-  'Extra high': nativeControl('xhigh')
+const OPENAI_NON_CHAT_PATTERN = /(whisper|tts|dall-e|embedding|moderation|realtime|transcribe|babbage|davinci|instruct|gpt-image|computer-use|^codex|-audio)/
+const GEMINI_NON_CHAT_PATTERN = /(embedding|imagen|veo|tts|native-audio|-audio|image-generation|\baqa\b|live)/
+const OPENAI_TEXT_ONLY_PATTERN = /^(gpt-3|o1-(mini|preview)(-|$))/
+const OPENAI_LEGACY_TOOLLESS_PATTERN = /^o1-(mini|preview)(-|$)/
+const DATE_SUFFIX_PATTERN = /[-_](?:\d{8}|\d{4}-\d{2}-\d{2})$/
+const UPPERCASE_MODEL_TOKENS = new Set(['gpt', 'glm', 'llm', 'ai', 'vl', 'omni', 'tts'])
+
+const modelIdNumbers = (modelId: string): number[] =>
+  (modelId.match(/\d+(?:\.\d+)?/g) ?? []).map((value) => Number.parseFloat(value))
+
+const isOpenAiReasoningModel = (modelId: string): boolean =>
+  /^(?:o\d+|gpt-[5-9])/.test(modelId) && !/-chat(?:-|$)/.test(modelId)
+
+const anthropicSupportsThinking = (modelId: string): boolean => {
+  const [major = 0, minor = 0] = modelIdNumbers(modelId.replace(/^claude-/, ''))
+  return major >= 4 || (major === 3 && minor >= 7)
 }
 
-const OPTIONAL_HIGH_XHIGH_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
-  Instant: disabledControl(),
-  Low: fallbackControl('Low', 'high'),
-  Medium: fallbackControl('Medium', 'high'),
-  High: nativeControl('high'),
-  'Extra high': nativeControl('xhigh')
+const geminiSupportsThinking = (modelId: string): boolean => (modelIdNumbers(modelId)[0] ?? 0) >= 2.5
+
+const isChatCapableModelId = (kind: CatalogConnectionKind, modelId: string): boolean => {
+  const id = modelId.toLowerCase()
+  if (kind === 'openai') return !OPENAI_NON_CHAT_PATTERN.test(id)
+  if (kind === 'gemini') return !GEMINI_NON_CHAT_PATTERN.test(id)
+  return true
 }
 
-const OPTIONAL_MEDIUM_HIGH_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
-  Instant: disabledControl(),
-  Low: fallbackControl('Low', 'medium'),
-  Medium: nativeControl('medium'),
-  High: nativeControl('high'),
-  'Extra high': fallbackControl('Extra high', 'high')
+const openAiContextWindow = (modelId: string): number => {
+  if (/^gpt-[5-9]/.test(modelId)) return 400_000
+  if (/^o[34]/.test(modelId)) return 200_000
+  return DEFAULT_CONTEXT_WINDOWS.openai
 }
 
-const MANDATORY_MINIMAL_HIGH_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
-  Instant: fallbackControl('Instant', 'minimal'),
-  Low: nativeControl('low'),
-  Medium: nativeControl('medium'),
-  High: nativeControl('high'),
-  'Extra high': fallbackControl('Extra high', 'high')
+export const inferRemoteReasoning = (
+  kind: CatalogConnectionKind,
+  modelId: string,
+  supportedParameters?: readonly string[]
+): RemoteModelReasoning => {
+  const id = modelId.toLowerCase()
+  if (kind === 'openrouter') {
+    const parameters = new Set((supportedParameters ?? []).map((parameter) => parameter.toLowerCase()))
+    return parameters.has('reasoning') || parameters.has('include_reasoning')
+      ? defineReasoning(false, true, ['none', 'low', 'medium', 'high'], OPENROUTER_NATIVE_EFFORT_MAP)
+      : promptOnlyReasoning(null)
+  }
+  if (kind === 'openai') {
+    return isOpenAiReasoningModel(id)
+      ? defineReasoning(true, true, ['minimal', 'low', 'medium', 'high'], MINIMAL_FLOOR_EFFORT_MAP)
+      : promptOnlyReasoning(false)
+  }
+  if (kind === 'anthropic') {
+    return anthropicSupportsThinking(id)
+      ? defineReasoning(false, null, ['low', 'medium', 'high'], OPTIONAL_NATIVE_EFFORT_MAP)
+      : promptOnlyReasoning(false)
+  }
+  return geminiSupportsThinking(id)
+    ? defineReasoning(true, true, ['minimal', 'low', 'medium', 'high'], MINIMAL_FLOOR_EFFORT_MAP)
+    : promptOnlyReasoning(false)
 }
 
-const OPTIONAL_MINIMAL_HIGH_EFFORT_MAP: Readonly<Record<RemoteReasoningEffort, RemoteReasoningEffortControl>> = {
-  Instant: fallbackControl('Instant', 'minimal'),
-  Low: nativeControl('low'),
-  Medium: nativeControl('medium'),
-  High: nativeControl('high'),
-  'Extra high': fallbackControl('Extra high', 'high')
+const capitalizeToken = (token: string): string => {
+  if (/^\d/.test(token)) return token
+  if (UPPERCASE_MODEL_TOKENS.has(token.toLowerCase())) return token.toUpperCase()
+  return token.charAt(0).toUpperCase() + token.slice(1)
 }
 
-const fullNativeReasoning = (defaultEnabled: boolean): RemoteModelReasoning =>
-  defineReasoning(false, defaultEnabled, ['max', 'xhigh', 'high', 'medium', 'low', 'none'], FULL_NATIVE_EFFORT_MAP)
+export const humanizeRemoteModelId = (modelId: string): string => {
+  const tail = modelId.split('/').at(-1) ?? modelId
+  const words = tail.replace(DATE_SUFFIX_PATTERN, '').split(/[-_]+/).filter(Boolean)
+  const merged: string[] = []
+  words.forEach((word) => {
+    const previous = merged.at(-1)
+    if (previous !== undefined && /^\d+$/.test(word) && /\d$/.test(previous)) {
+      merged[merged.length - 1] = `${previous}.${word}`
+    } else {
+      merged.push(word)
+    }
+  })
+  return merged.map(capitalizeToken).join(' ')
+}
 
-const optionalPromptReasoning = (defaultEnabled: boolean | null): RemoteModelReasoning =>
-  defineReasoning(false, defaultEnabled, [], OPTIONAL_PROMPT_EFFORT_MAP)
+const modalityList = <T extends string>(values: readonly string[] | undefined, allowed: readonly T[], fallback: readonly T[]): T[] => {
+  if (!values) return [...fallback]
+  const filtered = values.filter((value): value is T => allowed.includes(value as T))
+  return [...new Set(filtered.includes('text' as T) ? filtered : ['text' as T, ...filtered])]
+}
 
-const defineRemoteModel = (seed: RemoteModelSeed): RemoteModel => {
-  const directProvider = seed.directProvider
-  const catalogModelId = seed.id.slice(seed.id.indexOf('/') + 1)
-  const directModelId = directProvider === 'anthropic' ? catalogModelId.replace(/\./g, '-') : catalogModelId
+const inferInputModalities = (kind: CatalogConnectionKind, modelId: string, reported?: readonly string[]): readonly RemoteInputModality[] => {
+  if (reported) return modalityList(reported, ['text', 'image', 'file', 'audio', 'video'], ['text'])
+  const id = modelId.toLowerCase()
+  if (kind === 'openai') return OPENAI_TEXT_ONLY_PATTERN.test(id) ? ['text'] : ['text', 'image', 'file']
+  if (kind === 'anthropic') return ['text', 'image', 'file']
+  if (kind === 'gemini') return ['text', 'image', 'video', 'file', 'audio']
+  return ['text']
+}
+
+const inferOutputModalities = (reported?: readonly string[]): readonly RemoteOutputModality[] =>
+  reported ? modalityList(reported, ['text', 'image', 'audio'], ['text']) : ['text']
+
+const inferToolSupport = (kind: CatalogConnectionKind, modelId: string, supportedParameters?: readonly string[]): boolean => {
+  if (kind === 'openrouter' && supportedParameters) {
+    return supportedParameters.some((parameter) => parameter.toLowerCase() === 'tools')
+  }
+  if (kind === 'openai') return !OPENAI_LEGACY_TOOLLESS_PATTERN.test(modelId.toLowerCase())
+  return true
+}
+
+const openRouterIdentity = (info: ProviderModelInfo): { publisher: string; displayName: string } => {
+  const name = info.displayName?.trim()
+  if (name) {
+    const separator = name.indexOf(':')
+    if (separator > 0 && separator <= 40) {
+      return { publisher: name.slice(0, separator).trim(), displayName: name.slice(separator + 1).trim() || name }
+    }
+    return { publisher: humanizeRemoteModelId(info.id.split('/')[0] ?? ''), displayName: name }
+  }
+  return { publisher: humanizeRemoteModelId(info.id.split('/')[0] ?? ''), displayName: humanizeRemoteModelId(info.id) }
+}
+
+export const inferRemoteModel = (kind: CatalogConnectionKind, info: ProviderModelInfo): RemoteModel => {
+  const identity = kind === 'openrouter'
+    ? openRouterIdentity(info)
+    : { publisher: PROVIDER_PUBLISHERS[kind], displayName: info.displayName?.trim() || humanizeRemoteModelId(info.id) }
+  const contextWindow = info.contextWindow && info.contextWindow > 0
+    ? Math.round(info.contextWindow)
+    : kind === 'openai' ? openAiContextWindow(info.id.toLowerCase()) : DEFAULT_CONTEXT_WINDOWS[kind]
   return {
-    id: seed.id,
-    displayName: seed.displayName,
-    publisher: seed.publisher,
-    contextWindow: seed.contextWindow,
-    inputModalities: [...seed.inputModalities],
-    outputModalities: [...seed.outputModalities],
-    supportsTools: seed.supportsTools,
-    availableOn: directProvider ? ['openrouter', directProvider] : ['openrouter'],
-    providerModelIds: directProvider
-      ? { openrouter: seed.id, [directProvider]: directModelId }
-      : { openrouter: seed.id },
-    reasoning: seed.reasoning
+    id: info.id,
+    displayName: identity.displayName,
+    publisher: identity.publisher,
+    contextWindow,
+    inputModalities: inferInputModalities(kind, info.id, info.inputModalities),
+    outputModalities: inferOutputModalities(info.outputModalities),
+    supportsTools: inferToolSupport(kind, info.id, info.supportedParameters),
+    availableOn: [kind],
+    providerModelIds: { [kind]: info.id },
+    reasoning: inferRemoteReasoning(kind, info.id, info.supportedParameters)
   }
 }
 
-const MODEL_SEEDS: readonly RemoteModelSeed[] = [
-  {
-    id: 'openai/gpt-5.6-luna-pro',
-    displayName: 'GPT-5.6 Luna Pro',
-    publisher: 'OpenAI',
-    contextWindow: 1050000,
-    inputModalities: ['file', 'image', 'text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: fullNativeReasoning(true)
-  },
-  {
-    id: 'openai/gpt-5.6-luna',
-    displayName: 'GPT-5.6 Luna',
-    publisher: 'OpenAI',
-    contextWindow: 1050000,
-    inputModalities: ['file', 'image', 'text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'openai',
-    reasoning: fullNativeReasoning(true)
-  },
-  {
-    id: 'openai/gpt-5.6-terra-pro',
-    displayName: 'GPT-5.6 Terra Pro',
-    publisher: 'OpenAI',
-    contextWindow: 1050000,
-    inputModalities: ['file', 'image', 'text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: fullNativeReasoning(true)
-  },
-  {
-    id: 'openai/gpt-5.6-terra',
-    displayName: 'GPT-5.6 Terra',
-    publisher: 'OpenAI',
-    contextWindow: 1050000,
-    inputModalities: ['file', 'image', 'text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'openai',
-    reasoning: fullNativeReasoning(true)
-  },
-  {
-    id: 'openai/gpt-5.6-sol-pro',
-    displayName: 'GPT-5.6 Sol Pro',
-    publisher: 'OpenAI',
-    contextWindow: 1050000,
-    inputModalities: ['file', 'image', 'text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: fullNativeReasoning(true)
-  },
-  {
-    id: 'openai/gpt-5.6-sol',
-    displayName: 'GPT-5.6 Sol',
-    publisher: 'OpenAI',
-    contextWindow: 1050000,
-    inputModalities: ['file', 'image', 'text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'openai',
-    reasoning: fullNativeReasoning(true)
-  },
-  {
-    id: 'x-ai/grok-4.5',
-    displayName: 'Grok 4.5',
-    publisher: 'xAI',
-    contextWindow: 500000,
-    inputModalities: ['text', 'image', 'file'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(true, true, ['high', 'medium', 'low'], MANDATORY_LOW_TO_HIGH_EFFORT_MAP)
-  },
-  {
-    id: 'tencent/hy3:free',
-    displayName: 'Hy3 (free)',
-    publisher: 'Tencent',
-    contextWindow: 262144,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(false, false, ['high', 'low', 'none'], OPTIONAL_NONE_LOW_HIGH_EFFORT_MAP)
-  },
-  {
-    id: 'tencent/hy3',
-    displayName: 'Hy3',
-    publisher: 'Tencent',
-    contextWindow: 262144,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(false, false, ['high', 'low', 'none'], OPTIONAL_NONE_LOW_HIGH_EFFORT_MAP)
-  },
-  {
-    id: 'poolside/laguna-xs-2.1:free',
-    displayName: 'Laguna XS 2.1 (free)',
-    publisher: 'Poolside',
-    contextWindow: 262144,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(true)
-  },
-  {
-    id: 'poolside/laguna-xs-2.1',
-    displayName: 'Laguna XS 2.1',
-    publisher: 'Poolside',
-    contextWindow: 262144,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(true)
-  },
-  {
-    id: 'anthropic/claude-sonnet-5',
-    displayName: 'Claude Sonnet 5',
-    publisher: 'Anthropic',
-    contextWindow: 1000000,
-    inputModalities: ['text', 'image', 'file'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'anthropic',
-    reasoning: defineReasoning(false, null, ['max', 'xhigh', 'high', 'medium', 'low'], OPTIONAL_LOW_TO_MAX_EFFORT_MAP)
-  },
-  {
-    id: 'cohere/north-mini-code:free',
-    displayName: 'North Mini Code (free)',
-    publisher: 'Cohere',
-    contextWindow: 256000,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(null)
-  },
-  {
-    id: 'z-ai/glm-5.2',
-    displayName: 'GLM 5.2',
-    publisher: 'Z.ai',
-    contextWindow: 1048576,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(false, true, ['xhigh', 'high'], OPTIONAL_HIGH_XHIGH_EFFORT_MAP)
-  },
-  {
-    id: 'moonshotai/kimi-k2.7-code',
-    displayName: 'Kimi K2.7 Code',
-    publisher: 'MoonshotAI',
-    contextWindow: 262144,
-    inputModalities: ['text', 'image'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(true, true, [], MANDATORY_PROMPT_EFFORT_MAP)
-  },
-  {
-    id: 'anthropic/claude-fable-5',
-    displayName: 'Claude Fable 5',
-    publisher: 'Anthropic',
-    contextWindow: 1000000,
-    inputModalities: ['text', 'image', 'file'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'anthropic',
-    reasoning: defineReasoning(true, null, ['max', 'xhigh', 'high', 'medium', 'low'], MANDATORY_LOW_TO_MAX_EFFORT_MAP)
-  },
-  {
-    id: 'nvidia/nemotron-3-ultra-550b-a55b',
-    displayName: 'Nemotron 3 Ultra',
-    publisher: 'NVIDIA',
-    contextWindow: 1000000,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(false, true, ['high', 'medium'], OPTIONAL_MEDIUM_HIGH_EFFORT_MAP)
-  },
-  {
-    id: 'nvidia/nemotron-3-ultra-550b-a55b:free',
-    displayName: 'Nemotron 3 Ultra (free)',
-    publisher: 'NVIDIA',
-    contextWindow: 1000000,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(false, true, ['high', 'medium'], OPTIONAL_MEDIUM_HIGH_EFFORT_MAP)
-  },
-  {
-    id: 'qwen/qwen3.7-plus',
-    displayName: 'Qwen3.7 Plus',
-    publisher: 'Qwen',
-    contextWindow: 1000000,
-    inputModalities: ['text', 'image'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(true)
-  },
-  {
-    id: 'minimax/minimax-m3',
-    displayName: 'MiniMax M3',
-    publisher: 'MiniMax',
-    contextWindow: 1048576,
-    inputModalities: ['text', 'image', 'video'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(null)
-  },
-  {
-    id: 'anthropic/claude-opus-4.8-fast',
-    displayName: 'Claude Opus 4.8 (Fast)',
-    publisher: 'Anthropic',
-    contextWindow: 1000000,
-    inputModalities: ['text', 'image', 'file'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(false, null, ['max', 'xhigh', 'high', 'medium', 'low'], OPTIONAL_LOW_TO_MAX_EFFORT_MAP)
-  },
-  {
-    id: 'anthropic/claude-opus-4.8',
-    displayName: 'Claude Opus 4.8',
-    publisher: 'Anthropic',
-    contextWindow: 1000000,
-    inputModalities: ['text', 'image', 'file'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'anthropic',
-    reasoning: defineReasoning(false, null, ['max', 'xhigh', 'high', 'medium', 'low'], OPTIONAL_LOW_TO_MAX_EFFORT_MAP)
-  },
-  {
-    id: 'qwen/qwen3.7-max',
-    displayName: 'Qwen3.7 Max',
-    publisher: 'Qwen',
-    contextWindow: 1000000,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(true)
-  },
-  {
-    id: 'google/gemini-3.5-flash',
-    displayName: 'Gemini 3.5 Flash',
-    publisher: 'Google',
-    contextWindow: 1048576,
-    inputModalities: ['text', 'image', 'video', 'file', 'audio'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'gemini',
-    reasoning: defineReasoning(true, true, ['high', 'medium', 'low', 'minimal'], MANDATORY_MINIMAL_HIGH_EFFORT_MAP)
-  },
-  {
-    id: 'anthropic/claude-opus-4.7-fast',
-    displayName: 'Claude Opus 4.7 (Fast)',
-    publisher: 'Anthropic',
-    contextWindow: 1000000,
-    inputModalities: ['text', 'image', 'file'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(false, null, ['max', 'xhigh', 'high', 'medium', 'low'], OPTIONAL_LOW_TO_MAX_EFFORT_MAP)
-  },
-  {
-    id: 'google/gemini-3.1-flash-lite',
-    displayName: 'Gemini 3.1 Flash Lite',
-    publisher: 'Google',
-    contextWindow: 1048576,
-    inputModalities: ['text', 'image', 'video', 'file', 'audio'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'gemini',
-    reasoning: defineReasoning(false, true, ['high', 'medium', 'low', 'minimal'], OPTIONAL_MINIMAL_HIGH_EFFORT_MAP)
-  },
-  {
-    id: 'poolside/laguna-m.1',
-    displayName: 'Laguna M.1',
-    publisher: 'Poolside',
-    contextWindow: 262144,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(true)
-  },
-  {
-    id: 'qwen/qwen3.5-plus-20260420',
-    displayName: 'Qwen3.5 Plus 2026-04-20',
-    publisher: 'Qwen',
-    contextWindow: 1000000,
-    inputModalities: ['text', 'image', 'video'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(null)
-  },
-  {
-    id: 'qwen/qwen3.6-flash',
-    displayName: 'Qwen3.6 Flash',
-    publisher: 'Qwen',
-    contextWindow: 1000000,
-    inputModalities: ['text', 'image', 'video'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(null)
-  },
-  {
-    id: 'qwen/qwen3.6-35b-a3b',
-    displayName: 'Qwen3.6 35B A3B',
-    publisher: 'Qwen',
-    contextWindow: 262144,
-    inputModalities: ['text', 'image', 'video'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(true)
-  },
-  {
-    id: 'qwen/qwen3.6-max-preview',
-    displayName: 'Qwen3.6 Max Preview',
-    publisher: 'Qwen',
-    contextWindow: 262144,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(true)
-  },
-  {
-    id: 'qwen/qwen3.6-27b',
-    displayName: 'Qwen3.6 27B',
-    publisher: 'Qwen',
-    contextWindow: 262144,
-    inputModalities: ['text', 'image', 'video'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(true)
-  },
-  {
-    id: 'openai/gpt-5.5-pro',
-    displayName: 'GPT-5.5 Pro',
-    publisher: 'OpenAI',
-    contextWindow: 1050000,
-    inputModalities: ['file', 'image', 'text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'openai',
-    reasoning: defineReasoning(true, null, ['xhigh', 'high', 'medium'], MANDATORY_MEDIUM_TO_XHIGH_EFFORT_MAP)
-  },
-  {
-    id: 'openai/gpt-5.5',
-    displayName: 'GPT-5.5',
-    publisher: 'OpenAI',
-    contextWindow: 1050000,
-    inputModalities: ['file', 'image', 'text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'openai',
-    reasoning: defineReasoning(false, true, ['xhigh', 'high', 'medium', 'low', 'none'], FULL_NATIVE_EFFORT_MAP)
-  },
-  {
-    id: 'openai/gpt-5.4-nano',
-    displayName: 'GPT-5.4 Nano',
-    publisher: 'OpenAI',
-    contextWindow: 400000,
-    inputModalities: ['file', 'image', 'text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'openai',
-    reasoning: defineReasoning(false, false, ['xhigh', 'high', 'medium', 'low', 'none'], FULL_NATIVE_EFFORT_MAP)
-  },
-  {
-    id: 'deepseek/deepseek-v4-pro',
-    displayName: 'DeepSeek V4 Pro',
-    publisher: 'DeepSeek',
-    contextWindow: 1048576,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(false, null, ['xhigh', 'high'], OPTIONAL_HIGH_XHIGH_EFFORT_MAP)
-  },
-  {
-    id: 'deepseek/deepseek-v4-flash',
-    displayName: 'DeepSeek V4 Flash',
-    publisher: 'DeepSeek',
-    contextWindow: 1048576,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: defineReasoning(false, null, ['xhigh', 'high'], OPTIONAL_HIGH_XHIGH_EFFORT_MAP)
-  },
-  {
-    id: 'xiaomi/mimo-v2.5-pro',
-    displayName: 'MiMo-V2.5-Pro',
-    publisher: 'Xiaomi',
-    contextWindow: 1048576,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(null)
-  },
-  {
-    id: 'xiaomi/mimo-v2.5',
-    displayName: 'MiMo-V2.5',
-    publisher: 'Xiaomi',
-    contextWindow: 1048576,
-    inputModalities: ['text', 'audio', 'image', 'video'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(null)
-  },
-  {
-    id: 'moonshotai/kimi-k2.6',
-    displayName: 'Kimi K2.6',
-    publisher: 'MoonshotAI',
-    contextWindow: 262144,
-    inputModalities: ['text', 'image'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(true)
-  },
-  {
-    id: 'anthropic/claude-opus-4.7',
-    displayName: 'Claude Opus 4.7',
-    publisher: 'Anthropic',
-    contextWindow: 1000000,
-    inputModalities: ['text', 'image', 'file'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    directProvider: 'anthropic',
-    reasoning: defineReasoning(false, null, ['max', 'xhigh', 'high', 'medium', 'low'], OPTIONAL_LOW_TO_MAX_EFFORT_MAP)
-  },
-  {
-    id: 'z-ai/glm-5.1',
-    displayName: 'GLM 5.1',
-    publisher: 'Z.ai',
-    contextWindow: 202752,
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsTools: true,
-    reasoning: optionalPromptReasoning(true)
-  }
-]
+const stringList = (value: unknown): string[] | undefined =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : undefined
+
+export const parseProviderModelList = (kind: CatalogConnectionKind, body: unknown): ProviderModelInfo[] => {
+  if (!body || typeof body !== 'object') return []
+  const data = (body as { data?: unknown }).data
+  if (!Array.isArray(data)) return []
+  return data.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const candidate = entry as Record<string, unknown>
+    const id = typeof candidate.id === 'string' ? candidate.id.trim() : ''
+    if (!id) return []
+    if (kind === 'openrouter') {
+      const architecture = candidate.architecture && typeof candidate.architecture === 'object'
+        ? candidate.architecture as { input_modalities?: unknown; output_modalities?: unknown }
+        : undefined
+      const contextLength = Number(candidate.context_length)
+      const name = typeof candidate.name === 'string' ? candidate.name : undefined
+      return [{
+        id,
+        displayName: name,
+        contextWindow: Number.isFinite(contextLength) && contextLength > 0 ? contextLength : undefined,
+        inputModalities: stringList(architecture?.input_modalities),
+        outputModalities: stringList(architecture?.output_modalities),
+        supportedParameters: stringList(candidate.supported_parameters)
+      }]
+    }
+    if (kind === 'anthropic') {
+      return [{ id, displayName: typeof candidate.display_name === 'string' ? candidate.display_name : undefined }]
+    }
+    return [{ id }]
+  })
+}
+
+export const buildRemoteModelCatalog = (kind: CatalogConnectionKind, body: unknown): RemoteModel[] => {
+  const seen = new Set<string>()
+  const models = parseProviderModelList(kind, body).flatMap((info) => {
+    const identity = info.id.toLowerCase()
+    if (seen.has(identity) || !isChatCapableModelId(kind, info.id)) return []
+    seen.add(identity)
+    return [inferRemoteModel(kind, info)]
+  })
+  return sortRemoteModels(models)
+}
 
 export const sortRemoteModels = (models: readonly RemoteModel[]): RemoteModel[] =>
   [...models].sort((left, right) => {
@@ -656,15 +333,6 @@ export const sortRemoteModels = (models: readonly RemoteModel[]): RemoteModel[] 
     return left.displayName.localeCompare(right.displayName, 'en', { numeric: true, sensitivity: 'base' })
   })
 
-export const OPENROUTER_MODELS: readonly RemoteModel[] = sortRemoteModels(MODEL_SEEDS.map(defineRemoteModel))
-export const REMOTE_MODEL_CATALOG = OPENROUTER_MODELS
-
-export const DIRECT_PROVIDER_MODEL_IDS: Readonly<Record<DirectConnectionKind, readonly string[]>> = {
-  openai: OPENROUTER_MODELS.filter((model) => model.availableOn.includes('openai')).map((model) => model.id),
-  anthropic: OPENROUTER_MODELS.filter((model) => model.availableOn.includes('anthropic')).map((model) => model.id),
-  gemini: OPENROUTER_MODELS.filter((model) => model.availableOn.includes('gemini')).map((model) => model.id)
-}
-
 export const REASONING_EFFORT_PROMPTS: Readonly<Record<RemoteReasoningEffort, string>> = {
   Instant: 'Use the shortest viable internal reasoning path and the fewest steps needed for a reliable answer.',
   Low: 'Use a short, focused internal reasoning pass. Consider only the decisive constraints and avoid unnecessary alternatives.',
@@ -672,14 +340,6 @@ export const REASONING_EFFORT_PROMPTS: Readonly<Record<RemoteReasoningEffort, st
   High: 'Reason deeply, test important assumptions, compare viable approaches, and check meaningful failure modes.',
   'Extra high': 'Use the deepest useful internal analysis. Systematically examine assumptions, alternatives, edge cases, and failure modes before answering.'
 }
-
-export const getRemoteModel = (
-  modelId: string,
-  models: readonly RemoteModel[] = OPENROUTER_MODELS
-): RemoteModel | undefined => models.find((model) => model.id === modelId)
-
-export const getRemoteModelsForConnectionKind = (kind: ConnectionKind): readonly RemoteModel[] =>
-  kind === 'openai-compatible' ? [] : OPENROUTER_MODELS.filter((model) => model.availableOn.includes(kind))
 
 export const groupRemoteModelsByPublisher = (models: readonly RemoteModel[]): RemoteModelGroup[] => {
   const groups = new Map<string, RemoteModel[]>()
@@ -696,19 +356,11 @@ export const getReasoningEffortPrompt = (effort: RemoteReasoningEffort): string 
 
 export const buildReasoningEffortPrompt = getReasoningEffortPrompt
 
-const resolveModelReference = (model: RemoteModel | string): RemoteModel => {
-  if (typeof model !== 'string') return model
-  const resolved = getRemoteModel(model)
-  if (!resolved) throw new Error(`Unknown remote model: ${model}`)
-  return resolved
-}
-
 export const resolveRemoteReasoningEffort = (
-  model: RemoteModel | string,
+  model: RemoteModel,
   requestedEffort: RemoteReasoningEffort
 ): ResolvedRemoteReasoningEffort => {
-  const resolvedModel = resolveModelReference(model)
-  const control = resolvedModel.reasoning.effortMap[requestedEffort]
+  const control = model.reasoning.effortMap[requestedEffort]
   if (!control) throw new Error(`Unsupported reasoning effort: ${requestedEffort}`)
   return {
     requestedEffort,
@@ -722,9 +374,9 @@ export const resolveRemoteReasoningEffort = (
 export const resolveReasoningEffort = resolveRemoteReasoningEffort
 
 export const supportsRemoteInputModality = (
-  model: RemoteModel | string,
+  model: RemoteModel,
   modality: RemoteInputModality
-): boolean => resolveModelReference(model).inputModalities.includes(modality)
+): boolean => model.inputModalities.includes(modality)
 
 export const shouldRetainRemoteReasoning = (connectionKind: ConnectionKind): boolean =>
   connectionKind === 'openrouter' || connectionKind === 'openai-compatible'

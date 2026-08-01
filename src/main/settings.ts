@@ -17,7 +17,7 @@ import {
 import type { Project } from '../shared/projects'
 import type { ChatThread } from '../shared/chat'
 import { DEFAULT_WORKSPACE_VIEW_STATE, VIEW_REASONING_EFFORTS, type AgentModelProvenance, type PersistedAgentMessage, type PersistedAgentSession, type WorkspaceViewState } from '../shared/agent'
-import { FIRST_LOAD_CONTEXT_TOKENS } from '../shared/llama'
+import { normalizeContextWindowTokens, validateContextWindowTokens } from '../shared/settings'
 import {
   DEFAULT_PROMPT_REFINEMENT_PREFERENCES,
   type PromptRefinementPreferences,
@@ -55,7 +55,14 @@ export const getTheme = (): ThemePreference =>
   settingsStore.get('onboardingPreferences')?.theme ?? 'system'
 
 export const getSelectedContextWindowTokens = (): number =>
-  settingsStore.get('onboardingPreferences')?.contextWindowTokens ?? FIRST_LOAD_CONTEXT_TOKENS
+  normalizeContextWindowTokens(settingsStore.get('onboardingPreferences')?.contextWindowTokens)
+
+export const setContextWindowTokens = (value: unknown): number => {
+  const tokens = validateContextWindowTokens(value)
+  const preferences = settingsStore.get('onboardingPreferences')
+  if (preferences) settingsStore.set('onboardingPreferences', { ...preferences, contextWindowTokens: tokens })
+  return tokens
+}
 
 export const getResponseStylePreference = (): ResponseStylePreference => {
   const preferences = settingsStore.get('onboardingPreferences')

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FIRST_LOAD_CONTEXT_TOKENS, backendAppearsInDeviceList, buildLlamaServerArgs, llamaRuntimeProfileMatches, type LlamaLaunchProfile } from '../src/shared/llama.js'
+import { archSupportsVision, backendAppearsInDeviceList, buildLlamaServerArgs, inferReasoningFormat, llamaRuntimeProfileMatches, type LlamaLaunchProfile } from '../src/shared/llama.js'
+import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '../src/shared/settings.js'
 
 const baseProfile: LlamaLaunchProfile = {
   platform: 'darwin',
@@ -12,8 +13,8 @@ const baseProfile: LlamaLaunchProfile = {
   modelSizeBytes: 8 * 1024 ** 3
 }
 
-test('keeps the first model-load profile conservative until onboarding settings are applied', () => {
-  assert.equal(FIRST_LOAD_CONTEXT_TOKENS, 8192)
+test('defaults the context window to 48K until onboarding settings are applied', () => {
+  assert.equal(DEFAULT_CONTEXT_WINDOW_TOKENS, 48000)
 })
 
 test('configures accelerated inference with bounded batching and quantized KV cache', () => {
@@ -63,4 +64,19 @@ test('reduces batch memory when the model and context approach available memory'
   })
   assert.equal(args[args.indexOf('--batch-size') + 1], '1024')
   assert.equal(args[args.indexOf('--ubatch-size') + 1], '256')
+})
+
+test('detects vision-capable architectures from server probes', () => {
+  assert.equal(archSupportsVision(['qwen2vl']), true)
+  assert.equal(archSupportsVision(['gemma3']), true)
+  assert.equal(archSupportsVision(['qwen2.5']), false)
+  assert.equal(archSupportsVision(undefined), false)
+  assert.equal(archSupportsVision(['llava', 'clip']), true)
+})
+
+test('selects the reasoning format from the model family', () => {
+  assert.equal(inferReasoningFormat('/models/qwen3.5-4b-q4.gguf'), 'qwen3')
+  assert.equal(inferReasoningFormat('gemma-4-26B.gguf'), 'gemma3')
+  assert.equal(inferReasoningFormat('/models/deepseek-r1.gguf'), 'deepseek')
+  assert.equal(inferReasoningFormat(undefined), 'deepseek')
 })

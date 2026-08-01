@@ -98,3 +98,46 @@ test('keeps legacy local reasoning and filters tool messages when requested', ()
 test('uses stable dated filenames', () => {
   assert.equal(exportFilename(baseRequest, new Date('2026-07-12T10:00:00.000Z')), 'supracode-conversations-2026-07-12.jsonl')
 })
+
+test('exports attachment metadata with kinds for file attachments', () => {
+  const attachmentThread: ChatThread = {
+    ...threads[0],
+    messages: [{
+      id: 'message-1',
+      role: 'user',
+      content: 'Review these files',
+      attachments: [
+        { id: 'attachment-1', name: 'shot.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,AAAA', size: 4 },
+        { id: 'attachment-2', name: 'notes.txt', mimeType: 'application/txt', dataUrl: 'data:application/txt;base64,AAAA', size: 4, kind: 'file' }
+      ]
+    }]
+  }
+  const request: ConversationExportRequest = { ...baseRequest, attachments: 'metadata' }
+  const result = buildConversationExport(request, [attachmentThread], {})
+  const record = JSON.parse(result.content.trim()) as { messages: Array<Record<string, unknown>> }
+  const attachments = record.messages[0].metadata as { attachments: Array<Record<string, unknown>> }
+  assert.deepEqual(attachments.attachments.map((entry) => entry.kind), ['image', 'file'])
+  assert.equal((attachments.attachments[1] as Record<string, unknown>).name, 'notes.txt')
+})
+
+test('embeds file attachment data URLs when configured', () => {
+  const attachmentThread: ChatThread = {
+    ...threads[0],
+    messages: [{
+      id: 'message-1',
+      role: 'user',
+      content: 'Review these files',
+      attachments: [
+        { id: 'attachment-1', name: 'shot.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,AAAA', size: 4 },
+        { id: 'attachment-2', name: 'notes.txt', mimeType: 'application/txt', dataUrl: 'data:application/txt;base64,BBBB', size: 4, kind: 'file' }
+      ]
+    }]
+  }
+  const request: ConversationExportRequest = { ...baseRequest, attachments: 'embedded' }
+  const result = buildConversationExport(request, [attachmentThread], {})
+  const record = JSON.parse(result.content.trim()) as { messages: Array<{ content: Array<{ type: string; image_url: { url: string } }> }> }
+  const content = record.messages[0].content
+  assert.equal(content.length, 3)
+  assert.ok(content.some((part) => part.type === 'image_url' && part.image_url.url.includes('AAAA')))
+  assert.ok(content.some((part) => part.type === 'image_url' && part.image_url.url.includes('BBBB')))
+})

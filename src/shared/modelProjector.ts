@@ -6,11 +6,13 @@ export interface ModelTreeEntry {
 export interface ModelProjectorSource {
   repository: string
   path: string
+  sizeBytes?: number
+  sha256?: string
 }
 
 const GGUF_FILE_EXTENSION = '.gguf'
 const MODEL_PROJECTOR_MARKERS = ['mmproj', 'projector']
-const EXTERNAL_PROJECTOR_SOURCES: Readonly<Record<string, ModelProjectorSource>> = {
+export const EXTERNAL_PROJECTOR_SOURCES: Readonly<Record<string, ModelProjectorSource>> = {
   'hinny/Qwen3.5-4B-GGUF-Q4_K_M': {
     repository: 'unsloth/Qwen3.5-4B-GGUF',
     path: 'mmproj-BF16.gguf'
@@ -22,6 +24,26 @@ const EXTERNAL_PROJECTOR_SOURCES: Readonly<Record<string, ModelProjectorSource>>
   'sm54/Qwen3.6-27B-Q4_K_M-GGUF': {
     repository: 'unsloth/Qwen3.6-27B-GGUF',
     path: 'mmproj-BF16.gguf'
+  },
+  'Abiray/Qwen3.6-35B-A3B-Q4_K_M-GGUF': {
+    repository: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+    path: 'mmproj-BF16.gguf'
+  },
+  'google/gemma-4-E2B-it-qat-q4_0-gguf': {
+    repository: 'google/gemma-4-E2B-it-qat-q4_0-gguf',
+    path: 'mmproj-vision-f16.gguf'
+  },
+  'google/gemma-4-E4B-it-qat-q4_0-gguf': {
+    repository: 'google/gemma-4-E4B-it-qat-q4_0-gguf',
+    path: 'mmproj-vision-f16.gguf'
+  },
+  'google/gemma-4-26B-A4B-it-qat-q4_0-gguf': {
+    repository: 'google/gemma-4-26B-A4B-it-qat-q4_0-gguf',
+    path: 'mmproj-vision-f16.gguf'
+  },
+  'google/gemma-4-31B-it-qat-q4_0-gguf': {
+    repository: 'google/gemma-4-31B-it-qat-q4_0-gguf',
+    path: 'mmproj-vision-f16.gguf'
   }
 }
 

@@ -1,114 +1,169 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  DIRECT_PROVIDER_MODEL_IDS,
   NATIVE_REASONING_EFFORTS,
-  OPENROUTER_MODELS,
   REMOTE_REASONING_EFFORTS,
-  getRemoteModel,
-  getRemoteModelsForConnectionKind,
+  buildRemoteModelCatalog,
   groupRemoteModelsByPublisher,
+  humanizeRemoteModelId,
+  inferRemoteReasoning,
+  parseProviderModelList,
   resolveRemoteReasoningEffort,
   shouldRetainRemoteReasoning,
   sortRemoteModels,
-  supportsRemoteInputModality
+  supportsRemoteInputModality,
+  type RemoteModel
 } from '../src/shared/remoteModels.js'
 
-const EXPECTED_OPENROUTER_IDS = [
-  'openai/gpt-5.6-luna-pro',
-  'openai/gpt-5.6-luna',
-  'openai/gpt-5.6-terra-pro',
-  'openai/gpt-5.6-terra',
-  'openai/gpt-5.6-sol-pro',
-  'openai/gpt-5.6-sol',
-  'x-ai/grok-4.5',
-  'tencent/hy3:free',
-  'tencent/hy3',
-  'poolside/laguna-xs-2.1:free',
-  'poolside/laguna-xs-2.1',
-  'anthropic/claude-sonnet-5',
-  'cohere/north-mini-code:free',
-  'z-ai/glm-5.2',
-  'moonshotai/kimi-k2.7-code',
-  'anthropic/claude-fable-5',
-  'nvidia/nemotron-3-ultra-550b-a55b',
-  'nvidia/nemotron-3-ultra-550b-a55b:free',
-  'qwen/qwen3.7-plus',
-  'minimax/minimax-m3',
-  'anthropic/claude-opus-4.8-fast',
-  'anthropic/claude-opus-4.8',
-  'qwen/qwen3.7-max',
-  'google/gemini-3.5-flash',
-  'anthropic/claude-opus-4.7-fast',
-  'google/gemini-3.1-flash-lite',
-  'poolside/laguna-m.1',
-  'qwen/qwen3.5-plus-20260420',
-  'qwen/qwen3.6-flash',
-  'qwen/qwen3.6-35b-a3b',
-  'qwen/qwen3.6-max-preview',
-  'qwen/qwen3.6-27b',
-  'openai/gpt-5.5-pro',
-  'openai/gpt-5.5',
-  'openai/gpt-5.4-nano',
-  'deepseek/deepseek-v4-pro',
-  'deepseek/deepseek-v4-flash',
-  'xiaomi/mimo-v2.5-pro',
-  'xiaomi/mimo-v2.5',
-  'moonshotai/kimi-k2.6',
-  'anthropic/claude-opus-4.7',
-  'z-ai/glm-5.1'
-] as const
+const OPENROUTER_BODY = {
+  data: [
+    {
+      id: 'openai/gpt-5.5',
+      name: 'OpenAI: GPT-5.5',
+      context_length: 400000,
+      architecture: { input_modalities: ['text', 'image', 'file'], output_modalities: ['text'] },
+      supported_parameters: ['tools', 'reasoning', 'temperature']
+    },
+    {
+      id: 'qwen/qwen3.7-plus',
+      name: 'Qwen: Qwen3.7 Plus',
+      context_length: 1000000,
+      architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+      supported_parameters: ['tools', 'temperature']
+    },
+    {
+      id: 'moonshotai/kimi-k2.7-code',
+      name: 'MoonshotAI: Kimi K2.7 Code',
+      context_length: 262144,
+      architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+      supported_parameters: ['tools']
+    }
+  ]
+}
 
-test('the OpenRouter catalog contains every requested model exactly once', () => {
-  assert.equal(OPENROUTER_MODELS.length, 42)
-  assert.equal(new Set(OPENROUTER_MODELS.map((model) => model.id)).size, 42)
-  assert.deepEqual(
-    [...OPENROUTER_MODELS.map((model) => model.id)].sort(),
-    [...EXPECTED_OPENROUTER_IDS].sort()
-  )
-  OPENROUTER_MODELS.forEach((model) => {
-    assert.ok(model.displayName)
-    assert.ok(model.publisher)
-    assert.ok(model.contextWindow > 0)
-    assert.ok(model.inputModalities.includes('text'))
-    assert.ok(model.outputModalities.includes('text'))
-    assert.equal(model.supportsTools, true)
-    assert.ok(model.availableOn.includes('openrouter'))
-  })
-})
+const OPENAI_BODY = {
+  data: [
+    { id: 'gpt-5.5' },
+    { id: 'gpt-4o' },
+    { id: 'o4-mini' },
+    { id: 'gpt-5.1-chat-latest' },
+    { id: 'whisper-1' },
+    { id: 'text-embedding-3-large' },
+    { id: 'gpt-3.5-turbo-instruct' },
+    { id: 'dall-e-3' },
+    { id: 'gpt-4o-realtime-preview' },
+    { id: 'gpt-4o-audio-preview' },
+    { id: 'gpt-image-1' }
+  ]
+}
 
-test('direct providers expose only their applicable API models', () => {
-  assert.deepEqual([...DIRECT_PROVIDER_MODEL_IDS.openai].sort(), [
-    'openai/gpt-5.4-nano',
+const ANTHROPIC_BODY = {
+  data: [
+    { id: 'claude-opus-4-8', display_name: 'Claude Opus 4.8', type: 'model' },
+    { id: 'claude-3-7-sonnet-20250224', display_name: 'Claude 3.7 Sonnet', type: 'model' },
+    { id: 'claude-3-5-sonnet-20241022', display_name: 'Claude 3.5 Sonnet', type: 'model' }
+  ]
+}
+
+const GEMINI_BODY = {
+  data: [
+    { id: 'gemini-3.5-flash' },
+    { id: 'gemini-2.5-pro' },
+    { id: 'gemini-2.0-flash' },
+    { id: 'gemini-embedding-001' },
+    { id: 'imagen-3.0-generate-002' },
+    { id: 'gemini-2.5-flash-preview-tts' }
+  ]
+}
+
+const openRouterCatalog = buildRemoteModelCatalog('openrouter', OPENROUTER_BODY)
+const openAiCatalog = buildRemoteModelCatalog('openai', OPENAI_BODY)
+const anthropicCatalog = buildRemoteModelCatalog('anthropic', ANTHROPIC_BODY)
+const geminiCatalog = buildRemoteModelCatalog('gemini', GEMINI_BODY)
+
+const catalogModel = (models: readonly RemoteModel[], id: string): RemoteModel => {
+  const model = models.find((candidate) => candidate.id === id)
+  assert.ok(model, `expected ${id} in catalog`)
+  return model
+}
+
+test('OpenRouter models are parsed with provider-reported metadata', () => {
+  assert.deepEqual(openRouterCatalog.map((model) => model.id), [
+    'moonshotai/kimi-k2.7-code',
     'openai/gpt-5.5',
-    'openai/gpt-5.5-pro',
-    'openai/gpt-5.6-luna',
-    'openai/gpt-5.6-sol',
-    'openai/gpt-5.6-terra'
+    'qwen/qwen3.7-plus'
   ])
-  assert.deepEqual([...DIRECT_PROVIDER_MODEL_IDS.anthropic].sort(), [
-    'anthropic/claude-fable-5',
-    'anthropic/claude-opus-4.7',
-    'anthropic/claude-opus-4.8',
-    'anthropic/claude-sonnet-5'
-  ])
-  assert.deepEqual([...DIRECT_PROVIDER_MODEL_IDS.gemini].sort(), [
-    'google/gemini-3.1-flash-lite',
-    'google/gemini-3.5-flash'
-  ])
-  assert.equal(getRemoteModelsForConnectionKind('openrouter').length, 42)
-  assert.equal(getRemoteModelsForConnectionKind('openai-compatible').length, 0)
+  const gpt = catalogModel(openRouterCatalog, 'openai/gpt-5.5')
+  assert.equal(gpt.publisher, 'OpenAI')
+  assert.equal(gpt.displayName, 'GPT-5.5')
+  assert.equal(gpt.contextWindow, 400000)
+  assert.deepEqual(gpt.inputModalities, ['text', 'image', 'file'])
+  assert.equal(gpt.supportsTools, true)
+  assert.ok(gpt.availableOn.includes('openrouter'))
+  const qwen = catalogModel(openRouterCatalog, 'qwen/qwen3.7-plus')
+  assert.equal(qwen.publisher, 'Qwen')
+  assert.equal(qwen.displayName, 'Qwen3.7 Plus')
+  assert.equal(qwen.contextWindow, 1000000)
 })
 
-test('Anthropic direct model IDs use official hyphenated version segments', () => {
-  assert.equal(getRemoteModel('anthropic/claude-opus-4.8')?.providerModelIds.anthropic, 'claude-opus-4-8')
-  assert.equal(getRemoteModel('anthropic/claude-opus-4.7')?.providerModelIds.anthropic, 'claude-opus-4-7')
-  assert.equal(getRemoteModel('anthropic/claude-fable-5')?.providerModelIds.anthropic, 'claude-fable-5')
+test('OpenAI model lists filter out non-chat models', () => {
+  assert.deepEqual(openAiCatalog.map((model) => model.id).sort(), [
+    'gpt-4o',
+    'gpt-5.1-chat-latest',
+    'gpt-5.5',
+    'o4-mini'
+  ])
 })
 
-test('every model has an explicit valid mapping for every UI reasoning effort', () => {
+test('OpenAI models infer capabilities from model ID patterns', () => {
+  const gpt = catalogModel(openAiCatalog, 'gpt-5.5')
+  assert.equal(gpt.publisher, 'OpenAI')
+  assert.equal(gpt.displayName, 'GPT 5.5')
+  assert.equal(gpt.contextWindow, 400000)
+  assert.equal(gpt.inputModalities.includes('image'), true)
+  assert.equal(gpt.reasoning.mandatory, true)
+  const legacy = catalogModel(openAiCatalog, 'gpt-4o')
+  assert.equal(legacy.contextWindow, 128000)
+  assert.equal(legacy.reasoning.nativeEfforts.length, 0)
+  const mini = catalogModel(openAiCatalog, 'o4-mini')
+  assert.equal(mini.contextWindow, 200000)
+  assert.equal(mini.reasoning.mandatory, true)
+  const chatVariant = catalogModel(openAiCatalog, 'gpt-5.1-chat-latest')
+  assert.equal(chatVariant.reasoning.nativeEfforts.length, 0)
+})
+
+test('Anthropic models use display names and infer thinking support', () => {
+  const opus = catalogModel(anthropicCatalog, 'claude-opus-4-8')
+  assert.equal(opus.publisher, 'Anthropic')
+  assert.equal(opus.displayName, 'Claude Opus 4.8')
+  assert.equal(opus.contextWindow, 200000)
+  assert.deepEqual(opus.inputModalities, ['text', 'image', 'file'])
+  assert.equal(opus.reasoning.mandatory, false)
+  const sonnet37 = catalogModel(anthropicCatalog, 'claude-3-7-sonnet-20250224')
+  assert.ok(sonnet37.reasoning.nativeEfforts.length > 0)
+  const sonnet35 = catalogModel(anthropicCatalog, 'claude-3-5-sonnet-20241022')
+  assert.equal(sonnet35.reasoning.nativeEfforts.length, 0)
+})
+
+test('Gemini models infer thinking from version and filter non-chat models', () => {
+  assert.deepEqual(geminiCatalog.map((model) => model.id).sort(), [
+    'gemini-2.0-flash',
+    'gemini-2.5-pro',
+    'gemini-3.5-flash'
+  ])
+  const flash = catalogModel(geminiCatalog, 'gemini-3.5-flash')
+  assert.equal(flash.publisher, 'Google')
+  assert.equal(flash.contextWindow, 1048576)
+  assert.deepEqual(flash.inputModalities, ['text', 'image', 'video', 'file', 'audio'])
+  assert.equal(flash.reasoning.mandatory, true)
+  const legacy = catalogModel(geminiCatalog, 'gemini-2.0-flash')
+  assert.equal(legacy.reasoning.nativeEfforts.length, 0)
+})
+
+test('every inferred model has a valid control for every UI reasoning effort', () => {
   const nativeEfforts = new Set(NATIVE_REASONING_EFFORTS)
-  OPENROUTER_MODELS.forEach((model) => {
+  const catalogs = [openRouterCatalog, openAiCatalog, anthropicCatalog, geminiCatalog]
+  catalogs.flat().forEach((model) => {
     REMOTE_REASONING_EFFORTS.forEach((effort) => {
       const control = model.reasoning.effortMap[effort]
       assert.ok(control, `${model.id}: ${effort}`)
@@ -121,22 +176,35 @@ test('every model has an explicit valid mapping for every UI reasoning effort', 
   })
 })
 
-test('effort resolution uses native controls and prompt fallbacks at the closest level', () => {
-  assert.deepEqual(resolveRemoteReasoningEffort('openai/gpt-5.5', 'Instant'), {
+test('effort resolution follows provider-specific reasoning behavior', () => {
+  const openAiInstant = resolveRemoteReasoningEffort(catalogModel(openAiCatalog, 'gpt-5.5'), 'Instant')
+  assert.deepEqual(openAiInstant, {
     requestedEffort: 'Instant',
-    enabled: false,
-    nativeEffort: 'none',
+    enabled: true,
+    nativeEffort: 'minimal',
     usesPromptFallback: false,
     systemPrompt: null
   })
-  const geminiInstant = resolveRemoteReasoningEffort('google/gemini-3.5-flash', 'Instant')
-  assert.equal(geminiInstant.nativeEffort, 'minimal')
-  assert.equal(geminiInstant.usesPromptFallback, true)
-  assert.match(geminiInstant.systemPrompt ?? '', /shortest viable internal reasoning path/i)
-  assert.equal(resolveRemoteReasoningEffort('google/gemini-3.1-flash-lite', 'Instant').nativeEffort, 'minimal')
-  const promptOnly = resolveRemoteReasoningEffort('qwen/qwen3.7-plus', 'High')
+  const anthropicInstant = resolveRemoteReasoningEffort(catalogModel(anthropicCatalog, 'claude-opus-4-8'), 'Instant')
+  assert.equal(anthropicInstant.enabled, false)
+  assert.equal(anthropicInstant.nativeEffort, null)
+  const openRouterInstant = resolveRemoteReasoningEffort(catalogModel(openRouterCatalog, 'openai/gpt-5.5'), 'Instant')
+  assert.equal(openRouterInstant.enabled, false)
+  assert.equal(openRouterInstant.nativeEffort, 'none')
+  const geminiExtraHigh = resolveRemoteReasoningEffort(catalogModel(geminiCatalog, 'gemini-3.5-flash'), 'Extra high')
+  assert.equal(geminiExtraHigh.nativeEffort, 'high')
+  assert.equal(geminiExtraHigh.usesPromptFallback, true)
+  const promptOnly = resolveRemoteReasoningEffort(catalogModel(openRouterCatalog, 'qwen/qwen3.7-plus'), 'High')
   assert.equal(promptOnly.nativeEffort, null)
   assert.equal(promptOnly.usesPromptFallback, true)
+  assert.match(promptOnly.systemPrompt ?? '', /Reason deeply/i)
+})
+
+test('reasoning inference uses OpenRouter supported parameters', () => {
+  const native = inferRemoteReasoning('openrouter', 'openai/gpt-5.5', ['tools', 'reasoning'])
+  assert.ok(native.nativeEfforts.length > 0)
+  const promptOnly = inferRemoteReasoning('openrouter', 'qwen/qwen3.7-plus', ['tools', 'temperature'])
+  assert.equal(promptOnly.nativeEfforts.length, 0)
 })
 
 test('remote reasoning retention follows the connection route', () => {
@@ -147,12 +215,32 @@ test('remote reasoning retention follows the connection route', () => {
   assert.equal(shouldRetainRemoteReasoning('gemini'), false)
 })
 
-test('modality and provider grouping helpers preserve catalog capabilities', () => {
-  assert.equal(supportsRemoteInputModality('google/gemini-3.5-flash', 'image'), true)
-  assert.equal(supportsRemoteInputModality('google/gemini-3.5-flash', 'audio'), true)
-  assert.equal(supportsRemoteInputModality('x-ai/grok-4.5', 'video'), false)
-  assert.deepEqual(sortRemoteModels(OPENROUTER_MODELS), OPENROUTER_MODELS)
-  const groups = groupRemoteModelsByPublisher(OPENROUTER_MODELS)
-  assert.deepEqual(groups.flatMap((group) => group.models), OPENROUTER_MODELS)
-  assert.equal(groups.find((group) => group.publisher === 'Qwen')?.models.length, 7)
+test('model IDs humanize into readable display names', () => {
+  assert.equal(humanizeRemoteModelId('claude-opus-4-8'), 'Claude Opus 4.8')
+  assert.equal(humanizeRemoteModelId('gpt-5.5'), 'GPT 5.5')
+  assert.equal(humanizeRemoteModelId('anthropic/claude-sonnet-4-5-20250929'), 'Claude Sonnet 4.5')
+  assert.equal(humanizeRemoteModelId('gemini-2.0-flash'), 'Gemini 2.0 Flash')
+})
+
+test('modality and grouping helpers work on runtime catalogs', () => {
+  const flash = catalogModel(geminiCatalog, 'gemini-3.5-flash')
+  assert.equal(supportsRemoteInputModality(flash, 'image'), true)
+  assert.equal(supportsRemoteInputModality(flash, 'audio'), true)
+  assert.equal(supportsRemoteInputModality(catalogModel(openAiCatalog, 'gpt-4o'), 'video'), false)
+  assert.deepEqual(sortRemoteModels(openRouterCatalog), openRouterCatalog)
+  const groups = groupRemoteModelsByPublisher(openRouterCatalog)
+  assert.deepEqual(groups.flatMap((group) => group.models), [...openRouterCatalog])
+  assert.equal(groups.find((group) => group.publisher === 'Qwen')?.models.length, 1)
+})
+
+test('parser tolerates malformed payloads', () => {
+  assert.deepEqual(parseProviderModelList('openai', null), [])
+  assert.deepEqual(parseProviderModelList('openai', {}), [])
+  assert.deepEqual(parseProviderModelList('openai', { data: [{}, { id: 42 }, { id: ' ' }] }), [])
+  assert.deepEqual(buildRemoteModelCatalog('openrouter', { data: [{ id: 'openai/gpt-5.5' }] }).map((model) => model.id), ['openai/gpt-5.5'])
+})
+
+test('duplicate model IDs are deduplicated', () => {
+  const catalog = buildRemoteModelCatalog('openai', { data: [{ id: 'gpt-5.5' }, { id: 'gpt-5.5' }] })
+  assert.equal(catalog.length, 1)
 })

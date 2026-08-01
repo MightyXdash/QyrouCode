@@ -5,6 +5,12 @@ export const BROWSER_SESSION_PARTITION = 'persist:supracode-browser'
 export const DEFAULT_BROWSER_PANEL_WIDTH = 620
 export const MIN_BROWSER_PANEL_WIDTH = 360
 export const MAX_BROWSER_PANEL_WIDTH = 2000
+export const BROWSER_CAPTURE_FLASH_DURATION_MS = 1_000
+
+export const BROWSER_CAPTURE_FLASH_COLORS: Record<'light' | 'dark', string> = {
+  light: 'rgba(255, 255, 255, 0.75)',
+  dark: 'rgba(255, 255, 255, 0.35)'
+}
 
 const DEFAULT_BROWSER_TAB_ID = 'browser-home'
 const MAX_BROWSER_TAB_ID_CHARACTERS = 128

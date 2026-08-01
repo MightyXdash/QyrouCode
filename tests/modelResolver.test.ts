@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -37,8 +38,9 @@ test('resolves one exact GGUF artifact beneath its pinned cache snapshot', async
 
   const resolved = await resolveModelArtifact(hubPath, artifact)
 
-  assert.equal(resolved.path, modelPath)
+  assert.equal(resolved.path, realpathSync(modelPath))
   assert.equal(resolved.artifact, artifact)
+  assert.equal(resolved.mmprojPath, undefined)
 })
 
 test('rejects missing, partial, and path-traversing model artifacts', async () => {
@@ -59,4 +61,38 @@ test('rejects wrong GGUF headers, sizes, and hashes', async () => {
   await assert.rejects(resolveModelArtifact(hubPath, artifact), /size/)
   writeFileSync(modelPath, Buffer.from('GGUFtest'))
   await assert.rejects(resolveModelArtifact(hubPath, { ...artifact, sha256: 'b'.repeat(64) }), /SHA-256/)
+})
+
+test('resolves and verifies the declared vision projector alongside the model', async () => {
+  const { hubPath } = createFixture()
+  const snapshotsPath = join(
+    hubPath,
+    'models--example--test-model',
+    'snapshots',
+    artifact.revision
+  )
+  const projectorPath = join(snapshotsPath, 'mmproj-vision-f16.gguf')
+  const projectorBytes = Buffer.from('GGUFprojector')
+  writeFileSync(projectorPath, projectorBytes)
+  const projectorArtifact = {
+    filename: 'mmproj-vision-f16.gguf',
+    sizeBytes: projectorBytes.length,
+    sha256: createHash('sha256').update(projectorBytes).digest('hex')
+  }
+
+  const resolved = await resolveModelArtifact(hubPath, { ...artifact, mmproj: projectorArtifact })
+  assert.equal(resolved.mmprojPath, realpathSync(projectorPath))
+
+  await assert.rejects(
+    resolveModelArtifact(hubPath, { ...artifact, mmproj: { ...projectorArtifact, sizeBytes: 1 } }),
+    /projector size/
+  )
+  await assert.rejects(
+    resolveModelArtifact(hubPath, { ...artifact, mmproj: { ...projectorArtifact, sha256: 'c'.repeat(64) } }),
+    /projector SHA-256/
+  )
+  await assert.rejects(
+    resolveModelArtifact(hubPath, { ...artifact, mmproj: { ...projectorArtifact, filename: 'mmproj-missing.gguf' } }),
+    /projector does not exist/
+  )
 })

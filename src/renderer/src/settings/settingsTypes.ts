@@ -40,9 +40,15 @@ export interface LocalModelDownloadState {
   error?: string
 }
 
+export interface RemoteCatalogState {
+  models?: readonly RemoteModel[]
+  error?: string
+  loading?: boolean
+}
+
 export interface SettingsDialogProps {
   connections: readonly ConnectionSummary[]
-  catalog: readonly RemoteModel[]
+  catalogs: Readonly<Record<string, RemoteCatalogState>>
   localCatalog: readonly CatalogModel[]
   downloadedLocalModelIds: ReadonlySet<string>
   localModelDownloads: Readonly<Record<string, LocalModelDownloadState>>
@@ -50,6 +56,7 @@ export interface SettingsDialogProps {
   reasoningEffort: ReasoningEffort
   responseStyle: ResponseStylePreference
   nativeLanguage: NativeLanguage
+  contextWindowTokens: number
   promptRefinementPreferences: PromptRefinementPreferences
   promptRefinementModels: readonly PromptRefinementModelOption[]
   exportOptions: SettingsExportOptions
@@ -58,11 +65,13 @@ export interface SettingsDialogProps {
   onReasoningEffortChange: (effort: ReasoningEffort) => void
   onResponseStyleChange: (preference: ResponseStylePreference) => Promise<void> | void
   onNativeLanguageChange: (nativeLanguage: NativeLanguage) => Promise<void> | void
+  onContextWindowTokensChange: (tokens: number) => Promise<void> | void
   onPromptRefinementPreferencesChange: (preference: PromptRefinementPreferences) => Promise<void> | void
   onSaveConnection: (request: SettingsConnectionRequest) => Promise<void>
   onTestConnection: (request: SettingsConnectionRequest) => Promise<SettingsConnectionTestResult>
   onDisconnectConnection: (connectionId: string) => Promise<void>
   onUpdateModelSelection: (connectionId: string, selectedModelIds: readonly string[]) => Promise<void> | void
+  onRefreshCatalog: (connectionId: string) => Promise<void> | void
   onDownloadLocalModel: (model: CatalogModel) => Promise<void>
   onCancelLocalModelDownload: (model: CatalogModel) => Promise<void> | void
   onExportOptionsChange: (options: SettingsExportOptions) => void

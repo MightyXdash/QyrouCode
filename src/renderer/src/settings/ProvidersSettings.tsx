@@ -1,10 +1,10 @@
 import { ChevronRight, Plus } from 'lucide-react'
 import { useEffect, useState, type JSX } from 'react'
 import { CONNECTION_PROVIDERS, type ConnectionProviderMetadata, type ConnectionSummary } from '../../../shared/connections'
-import anthropicIcon from '../../assets/providers/anthropic.png'
-import geminiIcon from '../../assets/providers/gemini.png'
-import openaiIcon from '../../assets/providers/openai.png'
-import openrouterIcon from '../../assets/providers/openrouter.png'
+import anthropicIcon from '../../assets/images/anthropic.png'
+import geminiIcon from '../../assets/images/gemini.png'
+import openaiIcon from '../../assets/images/openai.png'
+import openrouterIcon from '../../assets/images/openrouter.png'
 
 interface ProvidersSettingsProps {
   connections: readonly ConnectionSummary[]

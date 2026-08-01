@@ -7,6 +7,23 @@ import { availableSkills } from './agentPrompt'
 import { formatWebSearchResults, NoApiWebClient, type WebFetchFormat } from './webSearch'
 import type { AgentTerminalController } from './terminalManager'
 import type { TerminalUserMessage } from '../shared/terminal'
+import {
+  viewFile,
+  viewTextFile,
+  viewJsonFile,
+  viewYamlFile,
+  viewCsvFile,
+  viewPdfFile,
+  viewDocxFile,
+  viewPptxFile,
+  viewXlsxFile,
+  viewLogFile,
+  viewHexFile,
+  viewArchiveFile,
+  viewEnvFile,
+  viewImageDataUrl,
+  MAX_VIEW_HEX_BYTES
+} from './fileViewer'
 
 export interface AgentTaskRequest {
   description: string
@@ -22,6 +39,12 @@ export interface AgentToolboxOptions {
   webClient?: NoApiWebClient
   onTodosChanged?: (todos: TodoDisplay[]) => void
   terminalController?: AgentTerminalController
+  captureScreenshot?: () => Promise<string>
+}
+
+export interface ToolboxImage {
+  dataUrl: string
+  alt: string
 }
 
 type TodoItem = TodoDisplay
@@ -202,7 +225,58 @@ const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
     description: { type: 'string', description: 'Short task label' },
     prompt: { type: 'string', description: 'Detailed instructions and expected result' },
     subagentType: { type: 'string', enum: ['general', 'explore'] }
-  }, ['description', 'prompt', 'subagentType'])
+  }, ['description', 'prompt', 'subagentType']),
+  definition('view_file', 'Read a workspace file using the viewer matched to its extension: text, JSON, YAML, CSV, PDF, DOCX, PPTX, XLSX, logs, archives, or env files (env values are redacted). Images cannot be viewed here; use view_image.', {
+    path: { type: 'string', description: 'Workspace-relative or absolute file path' },
+    offset: { type: 'integer', minimum: 1, description: 'First one-based line to return (text and log formats only)' },
+    limit: { type: 'integer', minimum: 1, description: 'Maximum lines to return (text and log formats only)' }
+  }, ['path']),
+  definition('view_text', 'Read any workspace file as numbered UTF-8 text lines. Binary files and env files are rejected; use view_hex or view_env for those.', {
+    path: { type: 'string' },
+    offset: { type: 'integer', minimum: 1, description: 'First one-based line to return' },
+    limit: { type: 'integer', minimum: 1, description: 'Maximum lines to return' }
+  }, ['path']),
+  definition('view_json', 'Read a JSON workspace file and return it pretty-printed with indentation.', {
+    path: { type: 'string' }
+  }, ['path']),
+  definition('view_yaml', 'Read a YAML workspace file and return it as pretty-printed JSON.', {
+    path: { type: 'string' }
+  }, ['path']),
+  definition('view_csv', 'Read a CSV or TSV workspace file and return it as aligned rows.', {
+    path: { type: 'string' }
+  }, ['path']),
+  definition('view_pdf', 'Read a PDF workspace file and return its extracted text content.', {
+    path: { type: 'string' }
+  }, ['path']),
+  definition('view_docx', 'Read a Word DOCX workspace file and return its extracted text content.', {
+    path: { type: 'string' }
+  }, ['path']),
+  definition('view_pptx', 'Read a PowerPoint PPTX workspace file and return each slide\'s text content.', {
+    path: { type: 'string' }
+  }, ['path']),
+  definition('view_xlsx', 'Read an Excel XLSX workspace file and return each sheet as rows.', {
+    path: { type: 'string' }
+  }, ['path']),
+  definition('view_log', 'Read the tail of a workspace log file with line numbers.', {
+    path: { type: 'string' },
+    offset: { type: 'integer', minimum: 1, description: 'First one-based line to return; defaults to the tail start' },
+    limit: { type: 'integer', minimum: 1, description: 'Maximum lines to return' }
+  }, ['path']),
+  definition('view_hex', 'Read any workspace file as a hexadecimal dump with ASCII preview. Use for binary files and when text decoding fails.', {
+    path: { type: 'string' },
+    offset: { type: 'integer', minimum: 0, description: 'Zero-based byte offset to start from' },
+    limit: { type: 'integer', minimum: 1, description: 'Maximum bytes to return' }
+  }, ['path']),
+  definition('view_archive', 'List workspace archive contents (zip, tar, gzip) with text previews of small entries.', {
+    path: { type: 'string' }
+  }, ['path']),
+  definition('view_env', 'Read a workspace env file showing variable names and value lengths only. Values are never shown.', {
+    path: { type: 'string' }
+  }, ['path']),
+  definition('view_image', 'Load a workspace image and attach it as a vision input for you to inspect. Returns confirmation plus the image itself.', {
+    path: { type: 'string' }
+  }, ['path']),
+  definition('view_screenshot', 'Capture the embedded browser panel as an image and attach it as a vision input for you to inspect. The panel is only visible after a website is open; use open_url first when needed.', {})
 ]
 
 function truncate(value: string): string {
@@ -243,6 +317,18 @@ function optionalIntegerArgument(args: Record<string, unknown>, name: string): n
   if (value === undefined) return undefined
   if (!Number.isInteger(value) || Number(value) < 0) throw new Error(`${name} must be a non-negative integer`)
   return Number(value)
+}
+
+function optionalViewOffset(args: Record<string, unknown>): number | undefined {
+  const value = optionalIntegerArgument(args, 'offset')
+  if (value !== undefined && value < 1) throw new Error('offset must be a positive integer')
+  return value
+}
+
+function optionalViewLimit(args: Record<string, unknown>): number | undefined {
+  const value = optionalIntegerArgument(args, 'limit')
+  if (value !== undefined && value < 1) throw new Error('limit must be a positive integer')
+  return value
 }
 
 function userMessageArgument(args: Record<string, unknown>): TerminalUserMessage {
@@ -308,6 +394,7 @@ export class AgentToolbox {
   private readonly webClient: NoApiWebClient
   private readonly readPaths = new Set<string>()
   private todos: TodoItem[] = []
+  private lastImage: ToolboxImage | undefined
 
   constructor(private readonly options: AgentToolboxOptions) {
     this.root = resolve(options.projectPath)
@@ -317,6 +404,7 @@ export class AgentToolbox {
     const mutable = new Set(['edit', 'write', 'apply_patch'])
     this.definitions = TOOL_DEFINITIONS.filter((tool) => !options.readOnly || !mutable.has(tool.name))
       .filter((tool) => tool.name !== 'task' || options.runTask)
+      .filter((tool) => tool.name !== 'view_screenshot' || options.captureScreenshot)
       .filter((tool) => !TERMINAL_TOOL_NAMES.has(tool.name) || (!options.readOnly && options.terminalController))
   }
 
@@ -361,6 +449,7 @@ export class AgentToolbox {
 
   async execute(name: string, args: Record<string, unknown>): Promise<string> {
     this.options.signal?.throwIfAborted()
+    this.lastImage = undefined
     switch (name) {
       case TASK_STATE_TOOL_NAME: return 'Task state accepted. Continue the agentic loop without an ordinary assistant response.'
       case 'read': return this.read(args)
@@ -394,8 +483,29 @@ export class AgentToolbox {
       case 'todo_read': return this.readTodos()
       case 'skill': return this.skill(args)
       case 'task': return this.task(args)
+      case 'view_file': return await this.viewFile(args)
+      case 'view_text': return this.viewText(args)
+      case 'view_json': return await this.viewPath(args, 'json')
+      case 'view_yaml': return await this.viewPath(args, 'yaml')
+      case 'view_csv': return await this.viewPath(args, 'csv')
+      case 'view_pdf': return await this.viewPath(args, 'pdf')
+      case 'view_docx': return await this.viewPath(args, 'docx')
+      case 'view_pptx': return await this.viewPath(args, 'pptx')
+      case 'view_xlsx': return await this.viewPath(args, 'xlsx')
+      case 'view_log': return this.viewLog(args)
+      case 'view_hex': return this.viewHex(args)
+      case 'view_archive': return await this.viewPath(args, 'archive')
+      case 'view_env': return this.viewEnv(args)
+      case 'view_image': return this.viewImage(args)
+      case 'view_screenshot': return await this.viewScreenshot(args)
       default: throw new Error(`Unknown tool: ${name}`)
     }
+  }
+
+  consumeImage(): ToolboxImage | undefined {
+    const image = this.lastImage
+    this.lastImage = undefined
+    return image
   }
 
   private terminal(): AgentTerminalController {
@@ -413,6 +523,71 @@ export class AgentToolbox {
     const limit = integerArgument(args, 'limit', DEFAULT_READ_LINES, 1, MAX_READ_LINES)
     this.readPaths.add(path)
     return truncate(lines.slice(offset - 1, offset - 1 + limit).map((line, index) => `${offset + index}: ${line}`).join('\n'))
+  }
+
+  private assertViewFile(path: string): void {
+    if (!existsSync(path) || !statSync(path).isFile()) throw new Error('File does not exist')
+  }
+
+  private async viewFile(args: Record<string, unknown>): Promise<string> {
+    const path = this.path(stringArgument(args, 'path'))
+    this.assertViewFile(path)
+    return truncate(await viewFile(path, { offset: optionalViewOffset(args), limit: optionalViewLimit(args) }))
+  }
+
+  private viewText(args: Record<string, unknown>): string {
+    const path = this.path(stringArgument(args, 'path'))
+    this.assertViewFile(path)
+    return truncate(viewTextFile(path, { offset: optionalViewOffset(args), limit: optionalViewLimit(args) }))
+  }
+
+  private viewLog(args: Record<string, unknown>): string {
+    const path = this.path(stringArgument(args, 'path'))
+    this.assertViewFile(path)
+    return truncate(viewLogFile(path, { offset: optionalViewOffset(args), limit: optionalViewLimit(args) }))
+  }
+
+  private viewHex(args: Record<string, unknown>): string {
+    const path = this.path(stringArgument(args, 'path'))
+    this.assertViewFile(path)
+    const offset = optionalIntegerArgument(args, 'offset') ?? 0
+    const limit = integerArgument(args, 'limit', MAX_VIEW_HEX_BYTES, 1, MAX_VIEW_HEX_BYTES)
+    return truncate(viewHexFile(path, { offset, limit }))
+  }
+
+  private viewEnv(args: Record<string, unknown>): string {
+    const path = this.path(stringArgument(args, 'path'))
+    this.assertViewFile(path)
+    return truncate(viewEnvFile(path))
+  }
+
+  private async viewPath(args: Record<string, unknown>, format: 'json' | 'yaml' | 'csv' | 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'archive'): Promise<string> {
+    const path = this.path(stringArgument(args, 'path'))
+    this.assertViewFile(path)
+    switch (format) {
+      case 'json': return truncate(viewJsonFile(path))
+      case 'yaml': return truncate(viewYamlFile(path))
+      case 'csv': return truncate(viewCsvFile(path))
+      case 'pdf': return truncate(await viewPdfFile(path))
+      case 'docx': return truncate(await viewDocxFile(path))
+      case 'pptx': return truncate(await viewPptxFile(path))
+      case 'xlsx': return truncate(await viewXlsxFile(path))
+      case 'archive': return truncate(await viewArchiveFile(path))
+    }
+  }
+
+  private viewImage(args: Record<string, unknown>): string {
+    const path = this.path(stringArgument(args, 'path'))
+    this.assertViewFile(path)
+    this.lastImage = { dataUrl: viewImageDataUrl(path), alt: this.relativePath(path) }
+    return `Loaded image for review: ${this.relativePath(path)}.`
+  }
+
+  private async viewScreenshot(_args: Record<string, unknown>): Promise<string> {
+    if (!this.options.captureScreenshot) throw new Error('Browser screenshot capture is unavailable')
+    const dataUrl = await this.options.captureScreenshot()
+    this.lastImage = { dataUrl, alt: 'Browser screenshot' }
+    return 'Captured the embedded browser panel as an image for review.'
   }
 
   private list(args: Record<string, unknown>): string {

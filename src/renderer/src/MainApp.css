@@ -81,12 +81,15 @@
   --browser-tab-padding-inline: 9px;
   --browser-tab-font-size: 11px;
   --browser-tab-close-size: 20px;
+  --browser-tab-close-icon-size: 12px;
+  --browser-tab-close-color: var(--text-base);
+  --browser-tab-close-active-color: var(--text-strong);
   --browser-tab-separator-inset: 8px;
   --browser-favicon-size: 13px;
   --browser-tab-inactive-icon-opacity: 0.68;
   --browser-tab-overflow-fade-width: 56px;
   --browser-tab-overflow-fade-solid-stop: 28%;
-  --browser-new-tab-margin: 0 2px;
+  --browser-new-tab-margin-inline: 2px;
   --browser-toolbar-height: 40px;
   --browser-toolbar-gap: 2px;
   --browser-toolbar-padding-inline: 6px;
@@ -817,6 +820,8 @@
 .work-duration-chevron.expanded { transform: rotate(90deg); }
 .message-attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--attachment-gap); margin-bottom: var(--attachment-gap); }
 .message-attachments img { width: var(--attachment-message-size); height: var(--attachment-message-size); margin: 0; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--attachment-message-radius); background: var(--surface-raised); object-fit: cover; box-shadow: var(--shadow-composer-project-strip); }
+.message-attachment-file { display: flex; align-items: center; gap: 6px; max-width: 260px; padding: 5px 9px; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--text-base); font-size: 11px; box-shadow: var(--shadow-composer-project-strip); }
+.message-attachment-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .completion-error { margin: -20px 0 30px; color: var(--surface-error); font-size: 12px; }
 .jump-to-latest { position: absolute; z-index: 3; right: 0; bottom: calc(var(--app-composer-bottom) + var(--app-composer-min-height) + var(--jump-to-latest-todo-clearance) + 12px); left: 0; display: grid; place-items: center; width: var(--jump-to-latest-size); height: var(--jump-to-latest-size); margin: auto; padding: 0; border: var(--border-width-hairline) solid var(--border-base); border-radius: 50%; background: var(--surface-raised); color: var(--text-base); box-shadow: var(--shadow-menu); cursor: pointer; animation: menuEnter 140ms var(--motion-ease-out); }
 .jump-to-latest:hover { color: var(--text-strong); }
@@ -931,6 +936,9 @@
 .composer-attachment { position: relative; width: var(--attachment-preview-size); height: var(--attachment-preview-size); }
 .composer-attachment img { width: 100%; height: 100%; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-lg); object-fit: cover; }
 .composer-attachment button { position: absolute; top: -5px; right: -5px; display: grid; place-items: center; width: var(--attachment-remove-size); height: var(--attachment-remove-size); padding: 0; border: var(--border-width-hairline) solid var(--border-base); border-radius: 50%; background: var(--surface-raised); color: var(--text-base); cursor: pointer; }
+.composer-attachment.file { width: auto; height: auto; max-width: 240px; }
+.composer-attachment-file { display: flex; align-items: center; gap: 6px; min-height: var(--attachment-preview-size); padding: 6px 10px; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--text-base); font-size: 11px; }
+.composer-attachment-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-error, .prompt-refinement-error { position: relative; z-index: 1; margin-top: 4px; color: var(--surface-error); font-size: 11px; }
 .prompt-composer textarea::placeholder { color: var(--text-weaker); }
 .prompt-composer textarea::-webkit-scrollbar { width: var(--app-composer-scrollbar-width); }
@@ -1011,9 +1019,12 @@
 .composer-project-option > svg:last-child { justify-self: end; }
 
 .composer-menu-wrap { position: relative; display: flex; align-items: center; min-width: 0; gap: 4px; }
-.composer-menu { position: absolute; right: 0; bottom: calc(100% + var(--app-menu-gap)); width: var(--app-menu-width); max-height: 280px; overflow: auto; padding: var(--app-agent-menu-padding); border: var(--border-width-hairline) solid var(--border-agent-menu); border-radius: var(--app-menu-corner-radius); corner-shape: squircle; background-color: var(--surface-agent-menu); background-image: var(--surface-agent-menu-sheen); box-shadow: var(--shadow-agent-menu); -webkit-backdrop-filter: var(--filter-agent-menu); backdrop-filter: var(--filter-agent-menu); animation: agentMenuEnter var(--app-agent-menu-motion-duration) var(--app-agent-menu-motion-ease-out) both; transform-origin: center; }
+.composer-menu { position: absolute; right: 0; bottom: calc(100% + var(--app-menu-gap)); z-index: 20; width: var(--app-menu-width); max-height: 280px; overflow: auto; padding: var(--app-agent-menu-padding); border: var(--border-width-hairline) solid var(--border-agent-menu); border-radius: var(--app-menu-corner-radius); corner-shape: squircle; background-color: var(--surface-agent-menu); background-image: var(--surface-agent-menu-sheen); box-shadow: var(--shadow-agent-menu); -webkit-backdrop-filter: var(--filter-agent-menu); backdrop-filter: var(--filter-agent-menu); animation: agentMenuEnter var(--app-agent-menu-motion-duration) var(--app-agent-menu-motion-ease-out) both; transform-origin: center; }
 .advanced-menu { right: var(--app-menu-alignment-offset); width: var(--app-advanced-menu-width); overflow: visible; }
 .submenu-menu { right: auto; left: calc(100% + var(--app-submenu-gap) - var(--app-menu-alignment-offset)); }
+.app-workspace.browser-open .advanced-menu { right: auto; left: calc(var(--app-menu-alignment-offset) * -1); }
+.app-workspace.browser-open .submenu-menu { left: auto; right: calc(100% + var(--app-menu-alignment-offset) + var(--app-submenu-gap)); }
+.app-workspace.browser-open .composer-project-menu { left: auto; right: calc(var(--app-composer-padding-inline) * -1); }
 .reasoning-menu { width: var(--app-reasoning-menu-width); }
 .model-menu { width: var(--app-model-menu-width); max-height: 360px; overflow-y: auto; }
 .menu-heading { padding: 5px var(--app-agent-menu-item-padding-inline) 7px; color: var(--text-weak); font-size: 10px; font-weight: 500; }

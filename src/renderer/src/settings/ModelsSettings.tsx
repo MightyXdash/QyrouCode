@@ -1,14 +1,16 @@
 import { Search } from 'lucide-react'
 import { useEffect, useMemo, useState, type JSX } from 'react'
 import { MAX_SELECTED_MODELS_PER_CONNECTION, type ConnectionSummary } from '../../../shared/connections'
-import { sortRemoteModels, type RemoteModel } from '../../../shared/remoteModels'
+import { sortRemoteModels } from '../../../shared/remoteModels'
 import { SettingsSwitch } from './SettingsControls'
+import type { RemoteCatalogState } from './settingsTypes'
 
 interface ModelsSettingsProps {
   connection?: ConnectionSummary
-  catalog: readonly RemoteModel[]
+  catalog?: RemoteCatalogState
   onManageConnection: (connection: ConnectionSummary) => void
   onUpdateSelection: (connectionId: string, selectedModelIds: readonly string[]) => Promise<void> | void
+  onRefreshCatalog: (connectionId: string) => Promise<void> | void
 }
 
 interface ModelItem {
@@ -25,7 +27,7 @@ const contextLabel = (tokens: number): string => tokens >= 1_000_000
 
 const readableError = (error: unknown): string => error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not update models.'
 
-export default function ModelsSettings({ connection, catalog, onManageConnection, onUpdateSelection }: ModelsSettingsProps): JSX.Element {
+export default function ModelsSettings({ connection, catalog, onManageConnection, onUpdateSelection, onRefreshCatalog }: ModelsSettingsProps): JSX.Element {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<string[]>(connection ? [...connection.selectedModelIds] : [])
   const [saving, setSaving] = useState('')
@@ -42,7 +44,7 @@ export default function ModelsSettings({ connection, catalog, onManageConnection
     if (connection.kind === 'openai-compatible') {
       return connection.modelIds.map((id) => ({ id, name: id.split('/').at(-1) ?? id, publisher: connection.providerName, subtitle: id, search: id }))
     }
-    return sortRemoteModels(catalog.filter((model) => model.availableOn.includes(connection.kind))).map((model) => {
+    return sortRemoteModels([...(catalog?.models ?? [])]).map((model) => {
       const capabilities = [contextLabel(model.contextWindow)]
       if (model.inputModalities.includes('image')) capabilities.push('Vision')
       if (model.supportsTools) capabilities.push('Tools')
@@ -88,6 +90,8 @@ export default function ModelsSettings({ connection, catalog, onManageConnection
     }
   }
 
+  const catalogLoading = connection !== undefined && connection.kind !== 'openai-compatible' && !catalog?.models && !catalog?.error
+
   return (
     <>
       <div className="settings-tab-header settings-models-header">
@@ -97,6 +101,14 @@ export default function ModelsSettings({ connection, catalog, onManageConnection
       <div className="settings-tab-body">
         {!connection ? (
           <div className="settings-empty-panel"><strong>No provider connected</strong><span>Connect a provider, then choose which models appear in the composer.</span></div>
+        ) : catalogLoading ? (
+          <div className="settings-empty-panel"><strong>Loading models…</strong><span>Fetching the available models from {connection.providerName}.</span></div>
+        ) : catalog?.error ? (
+          <div className="settings-empty-panel">
+            <strong>Could not load models</strong>
+            <span>{catalog.error}</span>
+            <button className="settings-text-button" type="button" onClick={() => void onRefreshCatalog(connection.id)}>Retry</button>
+          </div>
         ) : (
           <>
             <div className="settings-model-toolbar">

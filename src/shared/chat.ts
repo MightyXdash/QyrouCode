@@ -2,15 +2,24 @@ export type ChatRole = 'user' | 'assistant' | 'tool'
 
 export const MAX_CHAT_ATTACHMENTS = 4
 export const MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024
+export const MAX_FILE_PREVIEW_CHARACTERS = 30_000
 export const CHAT_ATTACHMENT_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const
 export type ChatAttachmentMimeType = typeof CHAT_ATTACHMENT_MIME_TYPES[number]
+export type ChatAttachmentKind = 'image' | 'file'
 
 export interface ChatAttachment {
   id: string
   name: string
-  mimeType: ChatAttachmentMimeType
+  mimeType: string
   dataUrl: string
   size: number
+  kind?: ChatAttachmentKind
+  preview?: string
+}
+
+export interface StoredChatFile {
+  attachment: ChatAttachment
+  preview: string
 }
 
 export type AssistantMessageStatus = 'pending' | 'completed' | 'cancelled' | 'error'

@@ -108,7 +108,8 @@ function attachmentMetadata(attachments: readonly ChatAttachment[] | undefined):
     id: attachment.id,
     name: attachment.name,
     mime_type: attachment.mimeType,
-    size: attachment.size
+    size: attachment.size,
+    kind: attachment.kind ?? 'image'
   })) ?? []
 }
 

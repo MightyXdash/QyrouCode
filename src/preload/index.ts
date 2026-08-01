@@ -5,9 +5,10 @@ import type { WindowCommand } from '../shared/windowCommands'
 import type { LocalCompletionEvent, LocalCompletionStart } from '../main/localCompletionClient'
 import type { AgentRunRequest } from '../main/agentRuntime'
 import type { Project } from '../shared/projects'
-import type { ChatAttachment, ChatThread } from '../shared/chat'
+import type { ChatAttachment, ChatThread, StoredChatFile } from '../shared/chat'
 import type { AgentExecutionTarget, PersistedAgentSession, WorkspaceViewState } from '../shared/agent'
 import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, ConnectionTestResult } from '../shared/connections'
+import type { ConnectionModelsResult } from '../shared/remoteModels'
 import type { ConnectionSecurityStatus } from '../main/connectionStore'
 import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../shared/conversationExport'
 import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinementTarget } from '../shared/promptRefinement'
@@ -61,6 +62,8 @@ const api = {
   getTheme: (): Promise<ThemePreference> => ipcRenderer.invoke('get-theme'),
   getResponseStylePreference: (): Promise<ResponseStylePreference> => ipcRenderer.invoke('get-response-style-preference'),
   setResponseStylePreference: (preference: ResponseStylePreference): Promise<ResponseStylePreference> => ipcRenderer.invoke('set-response-style-preference', preference),
+  getContextWindowTokens: (): Promise<number> => ipcRenderer.invoke('get-context-window-tokens'),
+  setContextWindowTokens: (tokens: number): Promise<number> => ipcRenderer.invoke('set-context-window-tokens', tokens),
   getNativeLanguage: (): Promise<NativeLanguage> => ipcRenderer.invoke('get-native-language'),
   setNativeLanguage: (nativeLanguage: NativeLanguage): Promise<NativeLanguage> => ipcRenderer.invoke('set-native-language', nativeLanguage),
   setTheme: (theme: ThemePreference): Promise<ThemePreference> => ipcRenderer.invoke('set-theme', theme),
@@ -74,6 +77,8 @@ const api = {
   testConnection: (input: ConnectionInput, connectionId?: string): Promise<ConnectionTestResult> => ipcRenderer.invoke('test-connection', input, connectionId),
   deleteConnection: (connectionId: string): Promise<boolean> => ipcRenderer.invoke('delete-connection', connectionId),
   updateConnectionModels: (connectionId: string, selectedModelIds: string[]): Promise<ConnectionMutationResult> => ipcRenderer.invoke('update-connection-models', connectionId, selectedModelIds),
+  getConnectionModels: (connectionId: string): Promise<ConnectionModelsResult> => ipcRenderer.invoke('get-connection-models', connectionId),
+  refreshConnectionModels: (connectionId: string): Promise<ConnectionModelsResult> => ipcRenderer.invoke('refresh-connection-models', connectionId),
   previewConversationExport: (request: ConversationExportRequest): Promise<ConversationExportPreview> => ipcRenderer.invoke('preview-conversation-export', request),
   exportConversations: (request: ConversationExportRequest): Promise<ConversationExportResult> => ipcRenderer.invoke('export-conversations', request),
   getProjects: (): Promise<Project[]> => ipcRenderer.invoke('get-projects'),
@@ -87,6 +92,8 @@ const api = {
   saveChatThread: (thread: ChatThread): Promise<ChatThread[]> => ipcRenderer.invoke('save-chat-thread', thread),
   deleteChatThread: (threadId: string): Promise<ChatThread[]> => ipcRenderer.invoke('delete-chat-thread', threadId),
   chooseChatImages: (): Promise<ChatAttachment[]> => ipcRenderer.invoke('choose-chat-images'),
+  chooseChatFiles: (): Promise<ChatAttachment[]> => ipcRenderer.invoke('choose-chat-files'),
+  storeChatFiles: (threadId: string, attachments: ChatAttachment[]): Promise<StoredChatFile[]> => ipcRenderer.invoke('store-chat-files', threadId, attachments),
   getAgentSession: (threadId: string, projectPath: string): Promise<PersistedAgentSession | null> => ipcRenderer.invoke('get-agent-session', threadId, projectPath),
   getWorkspaceViewState: (): Promise<WorkspaceViewState> => ipcRenderer.invoke('get-workspace-view-state'),
   saveWorkspaceViewState: (state: WorkspaceViewState): Promise<WorkspaceViewState> => ipcRenderer.invoke('save-workspace-view-state', state),

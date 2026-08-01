@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { AgentRuntime, type AgentCompletionProvider, type AgentToolEvent } from '../src/main/agentRuntime.js'
-import type { LocalCompletion, LocalCompletionRequest, LocalMessageContent } from '../src/main/localCompletionClient.js'
+import type { LocalCompletion, LocalCompletionRequest, LocalImageContentPart, LocalMessageContent } from '../src/main/localCompletionClient.js'
 
 const textContent = (content: LocalMessageContent | undefined): string => typeof content === 'string' ? content : ''
 const uiMessage = (uim_prt: string, uim_pat: string): { uim_prt: string; uim_pat: string } => ({ uim_prt, uim_pat })
@@ -663,6 +663,114 @@ test('executes healed tool calls emitted in hidden reasoning without persisting 
 
     assert.equal(readFileSync(join(projectPath, 'result.txt'), 'utf8'), 'done')
     assert.ok(persisted.flat().every((message) => !textContent(message.content).includes('<tool_call>')))
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('injects a view_image result as an image message when vision is available', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    writeFileSync(join(projectPath, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]))
+    const provider = new ScriptedProvider([
+      {
+        text: '',
+        toolCalls: [
+          { id: 'view', name: 'view_image', arguments: { ui_message: uiMessage('Inspecting the screenshot', 'Inspected the screenshot'), path: 'shot.png' } }
+        ]
+      },
+      { text: 'The screenshot was inspected.', toolCalls: [] }
+    ])
+    const persisted: LocalCompletionRequest['messages'][] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-vision',
+      projectPath,
+      visionAvailable: true,
+      messages: [{ role: 'user', content: 'Look at the screenshot.' }]
+    }, () => {}, (messages) => persisted.push(messages.map((message) => ({ ...message }))))
+
+    const imageRequest = provider.requests[1]
+    const imageUser = imageRequest.messages.find((message) =>
+      message.role === 'user' &&
+      Array.isArray(message.content) &&
+      message.content.some((part) => part.type === 'image_url')
+    )
+    assert.ok(imageUser, 'expected an injected image user message')
+    const parts = imageUser.content as LocalImageContentPart[]
+    assert.equal(parts.length, 1)
+    assert.ok(parts[0].image_url.url.startsWith('data:image/png;base64,'))
+    const persistedImage = persisted.flat().find((message) => message.role === 'user' && Array.isArray(message.content) && message.content.some((part) => part.type === 'image_url'))
+    assert.ok(persistedImage, 'expected the injected image message in persisted state')
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('skips image injection when vision is unavailable', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    writeFileSync(join(projectPath, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]))
+    const provider = new ScriptedProvider([
+      {
+        text: '',
+        toolCalls: [
+          { id: 'view', name: 'view_image', arguments: { ui_message: uiMessage('Inspecting the screenshot', 'Inspected the screenshot'), path: 'shot.png' } }
+        ]
+      },
+      { text: 'The screenshot was inspected.', toolCalls: [] }
+    ])
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-no-vision',
+      projectPath,
+      visionAvailable: false,
+      messages: [{ role: 'user', content: 'Look at the screenshot.' }]
+    }, () => {}, undefined, () => {})
+
+    const toolMessages = provider.requests[1].messages.filter((message) => message.role === 'tool')
+    assert.equal(toolMessages.length, 1)
+    assert.match(textContent(toolMessages[0].content), /Loaded image for review/)
+    assert.ok(provider.requests[1].messages.every((message) =>
+      message.role !== 'user' ||
+      !Array.isArray(message.content) ||
+      !message.content.some((part) => part.type === 'image_url')
+    ))
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('injects a view_screenshot result as an image message', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  try {
+    const provider = new ScriptedProvider([
+      {
+        text: '',
+        toolCalls: [
+          { id: 'capture', name: 'view_screenshot', arguments: { ui_message: uiMessage('Capturing the browser', 'Captured the browser') } }
+        ]
+      },
+      { text: 'The page renders correctly.', toolCalls: [] }
+    ])
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-screenshot',
+      projectPath,
+      visionAvailable: true,
+      captureScreenshot: async () => 'data:image/png;base64,U0NST1Q=',
+      messages: [{ role: 'user', content: 'Check the browser page.' }]
+    }, () => {}, undefined, () => {})
+
+    const imageRequest = provider.requests[1]
+    const imageUser = imageRequest.messages.find((message) =>
+      message.role === 'user' &&
+      Array.isArray(message.content) &&
+      message.content.some((part) => part.type === 'image_url')
+    )
+    assert.ok(imageUser, 'expected an injected screenshot message')
+    const parts = imageUser.content as LocalImageContentPart[]
+    assert.equal(parts[0].image_url.url, 'data:image/png;base64,U0NST1Q=')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

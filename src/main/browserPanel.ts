@@ -10,6 +10,8 @@ import {
   type WebContents
 } from 'electron'
 import {
+  BROWSER_CAPTURE_FLASH_COLORS,
+  BROWSER_CAPTURE_FLASH_DURATION_MS,
   BROWSER_NEW_TAB_TITLE,
   BROWSER_NEW_TAB_URL,
   BROWSER_SESSION_PARTITION,
@@ -25,6 +27,7 @@ import {
 } from '../shared/browser'
 import { getBrowserState, saveBrowserState } from './settings'
 import { BrowserFaviconCache } from './browserFaviconCache'
+import { prepareNativeImage } from './imagePrep'
 
 const BROWSER_STATE_EVENT = 'browser-state-changed'
 const BROWSER_REVEAL_EVENT = 'browser-reveal'
@@ -125,7 +128,12 @@ class BrowserPanelController {
   }
 
   setVisible(visible: boolean): BrowserPanelState {
+    const wasVisible = this.visible
     this.visible = visible
+    if (visible && !wasVisible && this.activeTab()?.state.url !== BROWSER_NEW_TAB_URL) {
+      this.ensureView(this.activeTabId)
+      this.owner.webContents.send(BROWSER_REVEAL_EVENT)
+    }
     if (visible && this.activeTab()?.state.url !== BROWSER_NEW_TAB_URL) this.ensureView(this.activeTabId)
     this.layoutViews()
     this.emitState()
@@ -266,12 +274,54 @@ class BrowserPanelController {
     this.emitState()
   }
 
+  async captureActiveTab(): Promise<string> {
+    const tab = this.tabs.get(this.activeTabId)
+    if (!tab || tab.state.url === BROWSER_NEW_TAB_URL) throw new Error('Open a website in the browser panel before taking a screenshot')
+    if (!this.visible) throw new Error('The browser panel is hidden; open a website first')
+    const contents = this.ensureView(this.activeTabId).webContents
+    if (contents.isLoading()) {
+      await new Promise<void>((resolvePromise) => {
+        contents.once('did-finish-load', () => resolvePromise())
+        contents.once('did-fail-load', () => resolvePromise())
+      })
+    }
+    const image = await contents.capturePage()
+    if (image.isEmpty()) throw new Error('The browser screenshot was empty; wait for the page to finish loading')
+    this.flashCapture(contents)
+    return prepareNativeImage(image, { format: 'png' }).dataUrl
+  }
+
   syncTheme(): void {
     for (const tab of this.tabs.values()) {
       if (tab.view && !tab.view.webContents.isDestroyed()) {
         void applyBrowserTheme(tab.view.webContents)
       }
     }
+  }
+
+  private flashCapture(contents: WebContents): void {
+    const color = nativeTheme.shouldUseDarkColors ? BROWSER_CAPTURE_FLASH_COLORS.dark : BROWSER_CAPTURE_FLASH_COLORS.light
+    // Injected into the page because the native WebContentsView always composites above
+    // renderer DOM overlays; WAAPI + CSSOM are used because page CSP can block <style>.
+    const script = `(() => {
+      const overlay = document.createElement('div')
+      overlay.style.cssText = ${JSON.stringify([
+        'position:fixed',
+        'inset:0',
+        'z-index:2147483647',
+        'pointer-events:none',
+        'opacity:0',
+        `background:${color}`
+      ].join(';'))}
+      document.documentElement.appendChild(overlay)
+      const animation = overlay.animate([
+        { opacity: 0 },
+        { opacity: 1, offset: 0.14 },
+        { opacity: 0 }
+      ], { duration: ${BROWSER_CAPTURE_FLASH_DURATION_MS}, easing: 'ease-out' })
+      animation.onfinish = () => overlay.remove()
+    })()`
+    void contents.executeJavaScript(script).catch(() => undefined)
   }
 
   dispose(): void {
@@ -499,4 +549,10 @@ export async function openUrlInBrowserPanel(ownerContents: WebContents, url: str
   const controller = controllerFor(ownerContents)
   if (!controller) throw new Error('The embedded browser is unavailable')
   controller.revealUrl(url)
+}
+
+export async function captureBrowserScreenshot(ownerContents: WebContents): Promise<string> {
+  const controller = controllerFor(ownerContents)
+  if (!controller) throw new Error('The embedded browser is unavailable')
+  return controller.captureActiveTab()
 }

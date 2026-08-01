@@ -3,7 +3,11 @@ import type { PromptRefinementPreferences } from './promptRefinement'
 export const SETTINGS_VERSION = 5
 export const MAX_CUSTOM_RESPONSE_STYLE_LENGTH = 600
 
-export const CONTEXT_WINDOW_TOKENS = [32000, 72000, 145000, 256000] as const
+export const CONTEXT_WINDOW_MIN_TOKENS = 32000
+export const CONTEXT_WINDOW_MAX_TOKENS = 256000
+export const CONTEXT_WINDOW_STEP_TOKENS = 8000
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 48000
+export const CONTEXT_WINDOW_PRESET_TOKENS = [32000, 72000, 145000, 256000] as const
 export const THEMES = ['light', 'dark', 'system'] as const
 export const MODEL_TIERS = ['large', 'medium', 'small'] as const
 export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'extra-high'] as const
@@ -200,7 +204,7 @@ export const NATIVE_LANGUAGES = [
 export const DEFAULT_NATIVE_LANGUAGE: NativeLanguage = 'English'
 
 export type ThemePreference = typeof THEMES[number]
-export type ContextWindowTokens = typeof CONTEXT_WINDOW_TOKENS[number]
+export type ContextWindowTokens = number
 export type ModelTier = typeof MODEL_TIERS[number]
 export type ReasoningEffort = typeof REASONING_EFFORTS[number]
 export type ExecutionApprovalPolicy = typeof EXECUTION_APPROVAL_POLICIES[number]
@@ -249,6 +253,19 @@ export const validateThemePreference = (value: unknown): ThemePreference => {
   return value
 }
 
+export const normalizeContextWindowTokens = (value: unknown): ContextWindowTokens => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) return DEFAULT_CONTEXT_WINDOW_TOKENS
+  const snapped = Math.round(value / CONTEXT_WINDOW_STEP_TOKENS) * CONTEXT_WINDOW_STEP_TOKENS
+  return Math.min(CONTEXT_WINDOW_MAX_TOKENS, Math.max(CONTEXT_WINDOW_MIN_TOKENS, snapped))
+}
+
+export const validateContextWindowTokens = (value: unknown): ContextWindowTokens => {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < CONTEXT_WINDOW_MIN_TOKENS || value > CONTEXT_WINDOW_MAX_TOKENS) {
+    throw new Error('Invalid context window preference')
+  }
+  return value
+}
+
 export const validateResponseStylePreference = (value: unknown): ResponseStylePreference => {
   if (!isRecord(value) || !includes(RESPONSE_STYLES, value.style)) throw new Error('Invalid response style preference')
   const customInstruction = typeof value.customInstruction === 'string' ? value.customInstruction.trim() : ''
@@ -287,7 +304,7 @@ export const validateOnboardingPreferences = (value: unknown): OnboardingPrefere
     !isStringArray(value.selectedRoles) ||
     !isStringArray(value.selectedModelIds) ||
     !includes(THEMES, value.theme) ||
-    !includes(CONTEXT_WINDOW_TOKENS, value.contextWindowTokens) ||
+    (typeof value.contextWindowTokens !== 'number' || value.contextWindowTokens < CONTEXT_WINDOW_MIN_TOKENS || value.contextWindowTokens > CONTEXT_WINDOW_MAX_TOKENS) ||
     !includes(MODEL_TIERS, value.mathModelTier) ||
     !includes(MODEL_TIERS, value.codingModelTier) ||
     typeof value.autoModelRouting !== 'boolean' ||

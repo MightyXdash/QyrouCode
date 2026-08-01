@@ -1,12 +1,12 @@
 import { app, shell, BrowserWindow, Menu, dialog, ipcMain, nativeImage, nativeTheme, net } from 'electron'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { basename, dirname, extname, join } from 'path'
-import { existsSync, readdirSync, createWriteStream, mkdirSync, unlinkSync, renameSync, statSync } from 'fs'
+import { existsSync, readdirSync, createWriteStream, createReadStream, mkdirSync, unlinkSync, renameSync, statSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getNativeLanguage, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setExpandedProjectPaths, setNativeLanguage, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
+import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getNativeLanguage, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setContextWindowTokens, setExpandedProjectPaths, setNativeLanguage, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
 import { DEFAULT_NATIVE_LANGUAGE, validateNativeLanguage } from '../shared/settings'
 import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
@@ -15,20 +15,23 @@ import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManife
 import { LLAMA_TITLE_SERVER_PORT } from '../shared/llama'
 import type { LocalCompletionEvent, LocalCompletionStart } from './localCompletionClient'
 import { AgentRuntime, type AgentRunRequest, type AgentStateListener, type AgentToolEvent } from './agentRuntime'
-import { CHAT_ATTACHMENT_MIME_TYPES, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatThread } from '../shared/chat'
-import { deleteConnection, getConnections, getConnectionSecurityStatus, resolveConnection, resolveProviderSiteIcon, saveConnection, testConnection, updateConnectionModels } from './connectionStore'
+import { CHAT_ATTACHMENT_MIME_TYPES, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, MAX_FILE_PREVIEW_CHARACTERS, type ChatAttachment, type ChatAttachmentMimeType, type ChatThread, type StoredChatFile } from '../shared/chat'
+import { deleteConnection, getConnections, getConnectionSecurityStatus, migrateLegacyCatalogModelIds, resolveConnection, resolveProviderSiteIcon, saveConnection, testConnection, updateConnectionModels, type ResolvedConnection } from './connectionStore'
 import type { ConnectionInput } from '../shared/connections'
 import { buildConversationExport, exportFilename } from './conversationExport'
 import { validateConversationExportRequest } from '../shared/conversationExport'
+import { prepareNativeImage } from './imagePrep'
+import { extractFileText } from './fileViewer'
 import type { AgentExecutionTarget, AgentModelProvenance, AgentModelSource } from '../shared/agent'
-import { getReasoningEffortPrompt, getRemoteModel, resolveRemoteReasoningEffort, shouldRetainRemoteReasoning } from '../shared/remoteModels'
+import { getReasoningEffortPrompt, humanizeRemoteModelId, inferRemoteModel, resolveRemoteReasoningEffort, shouldRetainRemoteReasoning, type CatalogConnectionKind, type ConnectionModelsResult, type RemoteModel } from '../shared/remoteModels'
+import { clearRemoteModelCatalog, getCachedRemoteModels, refreshRemoteModels } from './remoteModelCatalog'
 import { RemoteCompletionClient } from './remoteCompletionClient'
 import { getExternalProjectorSource, isModelProjectorFile, isModelWeightsFile, selectModelProjectorFile, type ModelTreeEntry } from '../shared/modelProjector'
 import { MAX_PROMPT_REFINEMENT_BACKUPS, MAX_PROMPT_REFINEMENT_MODEL_ID_CHARACTERS, type PromptRefinementTarget } from '../shared/promptRefinement'
 import { refinePrompt, type PromptRefinementCandidate } from './promptRefiner'
 import { createAgentTerminalController, disposeTerminals, registerTerminalIpc } from './terminalManager'
 import { DESKTOP_PLATFORMS, usesNativeWindowControls } from '../shared/platform'
-import { attachBrowserPanel, openUrlInBrowserPanel, registerBrowserPanelIpc } from './browserPanel'
+import { attachBrowserPanel, captureBrowserScreenshot, openUrlInBrowserPanel, registerBrowserPanelIpc } from './browserPanel'
 
 const WINDOW_READY_TIMEOUT_MS = 2500
 const ICON_DIRECTORY = 'icons'
@@ -134,7 +137,10 @@ function validateChatThread(value: unknown): ChatThread {
     if (!message || typeof message.id !== 'string' || !['user', 'assistant', 'tool'].includes(message.role) || typeof message.content !== 'string') return false
     if (message.attachments !== undefined && (!Array.isArray(message.attachments) || message.attachments.length > MAX_CHAT_ATTACHMENTS || !message.attachments.every((attachment) => {
       if (!attachment || typeof attachment.id !== 'string' || typeof attachment.name !== 'string' || typeof attachment.size !== 'number' || attachment.size > MAX_CHAT_ATTACHMENT_BYTES) return false
-      return CHAT_ATTACHMENT_MIME_TYPES.includes(attachment.mimeType) && typeof attachment.dataUrl === 'string' && attachment.dataUrl.startsWith(`data:${attachment.mimeType};base64,`)
+      if (attachment.kind !== undefined && !['image', 'file'].includes(attachment.kind)) return false
+      if (attachment.preview !== undefined && typeof attachment.preview !== 'string') return false
+      if (attachment.kind === 'file') return typeof attachment.dataUrl === 'string' && attachment.dataUrl.startsWith('data:')
+      return CHAT_ATTACHMENT_MIME_TYPES.includes(attachment.mimeType as ChatAttachmentMimeType) && typeof attachment.dataUrl === 'string' && attachment.dataUrl.startsWith(`data:${attachment.mimeType};base64,`)
     }))) return false
     if (message.status !== undefined && !['pending', 'completed', 'cancelled', 'error'].includes(message.status)) return false
     return true
@@ -147,15 +153,77 @@ function readChatAttachment(filePath: string): ChatAttachment {
   if (statSync(filePath).size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('Each image must be 10 MB or smaller')
   const image = nativeImage.createFromPath(filePath)
   if (image.isEmpty()) throw new Error(`Could not decode ${basename(filePath)} as an image`)
-  const data = image.toPNG()
-  if (data.length > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('The converted image must be 10 MB or smaller')
+  const prepared = prepareNativeImage(image, { format: 'png' })
+  if (prepared.bytes > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('The converted image must be 10 MB or smaller')
   return {
     id: randomUUID(),
     name: basename(filePath),
-    mimeType: 'image/png',
-    dataUrl: `data:image/png;base64,${data.toString('base64')}`,
-    size: data.length
+    mimeType: prepared.mimeType,
+    dataUrl: prepared.dataUrl,
+    size: prepared.bytes,
+    kind: 'image'
   }
+}
+
+const FILE_ATTACHMENT_EXTENSIONS = ['txt', 'md', 'json', 'jsonc', 'yaml', 'yml', 'csv', 'tsv', 'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'log', 'zip', 'tar', 'tgz', 'gz', 'py', 'js', 'ts', 'tsx', 'jsx', 'html', 'css', 'rs', 'go', 'java', 'c', 'cpp', 'h', 'sh', 'env', 'toml', 'xml', 'sql']
+
+function readChatFileAttachment(filePath: string): ChatAttachment {
+  if (!statSync(filePath).isFile()) throw new Error('Choose a file')
+  if (statSync(filePath).size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('Each file must be 10 MB or smaller')
+  const buffer = readFileSync(filePath)
+  const extension = extname(filePath).toLowerCase()
+  const mimeType = extension ? `application/${extension.slice(1)}` : 'application/octet-stream'
+  return {
+    id: randomUUID(),
+    name: basename(filePath),
+    mimeType,
+    dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}`,
+    size: buffer.length,
+    kind: 'file'
+  }
+}
+
+function chatAttachmentDirectory(threadId: string): string {
+  if (!/^[a-zA-Z0-9-]+$/.test(threadId)) throw new Error('Invalid thread ID')
+  return join(app.getPath('userData'), 'chat-attachments', threadId)
+}
+
+function sanitizeAttachmentName(name: string): string {
+  const base = basename(name).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120)
+  return base || 'attachment'
+}
+
+function validateFileAttachments(attachments: unknown): ChatAttachment[] {
+  if (!Array.isArray(attachments) || attachments.length === 0 || attachments.length > MAX_CHAT_ATTACHMENTS) throw new Error('Invalid file attachments')
+  return attachments.map((value) => {
+    if (!value || typeof value !== 'object') throw new Error('Invalid file attachment')
+    const attachment = value as Partial<ChatAttachment>
+    if (typeof attachment.id !== 'string' || !attachment.id || typeof attachment.name !== 'string' || typeof attachment.size !== 'number' || attachment.size > MAX_CHAT_ATTACHMENT_BYTES) throw new Error('Invalid file attachment')
+    if (attachment.kind !== undefined && attachment.kind !== 'file') throw new Error('Only file attachments can be stored')
+    if (typeof attachment.dataUrl !== 'string' || !attachment.dataUrl.startsWith('data:')) throw new Error('Invalid file attachment data')
+    return { ...attachment, kind: 'file' } as ChatAttachment
+  })
+}
+
+async function storeChatFiles(threadId: string, attachments: ChatAttachment[]): Promise<StoredChatFile[]> {
+  const directory = chatAttachmentDirectory(threadId)
+  mkdirSync(directory, { recursive: true })
+  return Promise.all(attachments.map(async (attachment) => {
+    const match = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/.exec(attachment.dataUrl)
+    if (!match) throw new Error('Invalid file attachment data')
+    const buffer = Buffer.from(match[1], 'base64')
+    if (buffer.length !== attachment.size) throw new Error('File attachment size mismatch')
+    const storedPath = join(directory, `${attachment.id}-${sanitizeAttachmentName(attachment.name)}`)
+    writeFileSync(storedPath, buffer)
+    const rawPreview = await extractFileText(storedPath)
+    const preview = rawPreview === undefined ? '' : truncatePreview(rawPreview)
+    return { attachment: { ...attachment, preview }, preview }
+  }))
+}
+
+function truncatePreview(value: string): string {
+  if (value.length <= MAX_FILE_PREVIEW_CHARACTERS) return value
+  return `${value.slice(0, MAX_FILE_PREVIEW_CHARACTERS)}\n\n... preview truncated (${value.length} characters total)`
 }
 
 function findProjector(modelPath: string): string | undefined {
@@ -174,6 +242,16 @@ function findProjector(modelPath: string): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function sha256File(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256')
+    const stream = createReadStream(path)
+    stream.on('error', reject)
+    stream.on('close', () => resolve(hash.digest('hex')))
+    stream.on('data', (chunk) => hash.update(chunk))
+  })
 }
 
 function messageContentEquals(left: AgentRunRequest['messages'][number]['content'], right: AgentRunRequest['messages'][number]['content'] | undefined): boolean {
@@ -261,6 +339,7 @@ interface ProjectorDownload {
   repository: string
   path: string
   size: number
+  sha256?: string
 }
 
 async function resolveProjectorDownload(repoId: string, tree: readonly ModelTreeEntry[]): Promise<ProjectorDownload | undefined> {
@@ -281,13 +360,13 @@ async function resolveProjectorDownload(repoId: string, tree: readonly ModelTree
   return { ...externalSource, size: entry.size }
 }
 
-async function ensureModelProjector(repoId: string, modelPath: string): Promise<string> {
+async function ensureModelProjector(repoId: string, modelPath: string): Promise<string | undefined> {
   const cachedProjector = findProjector(modelPath)
   if (cachedProjector) return cachedProjector
 
   const tree = await fetchModelTree(repoId)
   const projector = await resolveProjectorDownload(repoId, tree)
-  if (!projector) throw new Error('This model is missing the vision projector required for image input')
+  if (!projector) return undefined
 
   const filename = projector.path.split('/').at(-1)
   if (!filename) throw new Error('The model projector has an invalid filename')
@@ -301,6 +380,18 @@ async function ensureModelProjector(repoId: string, modelPath: string): Promise<
     const resumeFrom = existsSync(partPath) ? statSync(partPath).size : 0
     try {
       await downloadGgufFile(projector.repository, encodedPath, partPath, resumeFrom, () => {}, cancelFns)
+      if (!existsSync(partPath)) throw new Error('The vision projector download produced no file')
+      const partStats = statSync(partPath)
+      if (projector.size > 0 && partStats.size !== projector.size) {
+        throw new Error('The vision projector download size does not match the remote file')
+      }
+      if (projector.sha256) {
+        const digest = await sha256File(partPath)
+        if (digest !== projector.sha256) {
+          unlinkSync(partPath)
+          throw new Error('The vision projector SHA-256 does not match the expected value')
+        }
+      }
       renameSync(partPath, targetPath)
       return targetPath
     } catch (error) {
@@ -504,6 +595,12 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   nativeTheme.themeSource = getTheme()
+  migrateLegacyCatalogModelIds()
+  void Promise.allSettled(
+    getConnections()
+      .filter((connection) => connection.kind !== 'openai-compatible')
+      .map((connection) => refreshRemoteModels(resolveConnection(connection.id)))
+  )
   registerTerminalIpc()
   registerBrowserPanelIpc()
   registerModelDownloadIpc()
@@ -552,6 +649,8 @@ app.whenReady().then(() => {
   ipcMain.handle('get-theme', () => getTheme())
   ipcMain.handle('get-response-style-preference', () => getResponseStylePreference())
   ipcMain.handle('set-response-style-preference', (_event, preference: unknown) => setResponseStylePreference(preference))
+  ipcMain.handle('get-context-window-tokens', () => getSelectedContextWindowTokens())
+  ipcMain.handle('set-context-window-tokens', (_event, tokens: unknown) => setContextWindowTokens(tokens))
   ipcMain.handle('get-native-language', () => getNativeLanguage())
   ipcMain.handle('set-native-language', (_event, nativeLanguage: unknown) => setNativeLanguage(nativeLanguage))
   ipcMain.handle('get-prompt-refinement-preferences', () => getPromptRefinementPreferences())
@@ -573,12 +672,26 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('delete-connection', (_event, connectionId: unknown) => {
     if (typeof connectionId !== 'string' || !connectionId) throw new Error('Invalid connection ID')
+    clearRemoteModelCatalog(connectionId)
     return deleteConnection(connectionId)
   })
   ipcMain.handle('update-connection-models', (_event, connectionId: unknown, selectedModelIds: unknown) => {
     if (typeof connectionId !== 'string' || !connectionId || !Array.isArray(selectedModelIds)) throw new Error('Invalid model selection')
     return updateConnectionModels(connectionId, selectedModelIds)
   })
+  const connectionModels = async (connectionId: unknown, refresh: boolean): Promise<ConnectionModelsResult> => {
+    if (typeof connectionId !== 'string' || !connectionId) throw new Error('Invalid connection ID')
+    try {
+      const connection = resolveConnection(connectionId)
+      if (connection.kind === 'openai-compatible') return { ok: true, models: [] }
+      const cached = refresh ? undefined : getCachedRemoteModels(connectionId)
+      return { ok: true, models: cached ?? await refreshRemoteModels(connection) }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Could not load models' }
+    }
+  }
+  ipcMain.handle('get-connection-models', (_event, connectionId: unknown) => connectionModels(connectionId, false))
+  ipcMain.handle('refresh-connection-models', (_event, connectionId: unknown) => connectionModels(connectionId, true))
   ipcMain.handle('refine-prompt', async (_event, prompt: unknown, value: unknown) => {
     if (!Array.isArray(value) || value.length === 0 || value.length > MAX_PROMPT_REFINEMENT_BACKUPS + 1) {
       throw new Error('Choose at least one valid prompt refinement model')
@@ -630,22 +743,15 @@ app.whenReady().then(() => {
         complete: async (request) => {
           const connection = resolveConnection(target.connectionId)
           if (!connection.selectedModelIds.includes(target.modelId)) throw new Error('Select this model in Settings before using it')
-          const catalogModel = getRemoteModel(target.modelId)
-          if (connection.kind !== 'openai-compatible' && (!catalogModel || !catalogModel.availableOn.includes(connection.kind))) {
-            throw new Error('This prompt refinement model is unavailable from the selected provider')
-          }
           if (connection.kind === 'openai-compatible' && !connection.modelIds.includes(target.modelId)) {
             throw new Error('This prompt refinement model is not configured for the selected provider')
           }
-          const providerModelId = catalogModel
-            ? catalogModel.providerModelIds[connection.kind as keyof typeof catalogModel.providerModelIds]
-            : target.modelId
-          if (!providerModelId) throw new Error('This prompt refinement model does not have a valid provider model ID')
+          await ensureCatalogAvailable(connection, target.modelId)
           return new RemoteCompletionClient({
             kind: connection.kind,
             baseUrl: connection.baseUrl,
             apiKey: connection.apiKey,
-            modelId: providerModelId,
+            modelId: target.modelId,
             retainReasoning: false,
             reasoning: { enabled: false }
           }).complete(request)
@@ -684,8 +790,25 @@ app.whenReady().then(() => {
     if (result.canceled) return []
     return result.filePaths.slice(0, MAX_CHAT_ATTACHMENTS).map(readChatAttachment)
   })
+  ipcMain.handle('choose-chat-files', async (event): Promise<ChatAttachment[]> => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const result = await dialog.showOpenDialog(parent ?? undefined, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Documents', extensions: FILE_ATTACHMENT_EXTENSIONS },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+    if (result.canceled) return []
+    return result.filePaths.slice(0, MAX_CHAT_ATTACHMENTS).map(readChatFileAttachment)
+  })
+  ipcMain.handle('store-chat-files', (_event, threadId: unknown, attachments: unknown): Promise<StoredChatFile[]> => {
+    if (typeof threadId !== 'string' || !threadId) throw new Error('A valid thread ID is required')
+    return storeChatFiles(threadId, validateFileAttachments(attachments))
+  })
   ipcMain.handle('delete-chat-thread', (_event, threadId: unknown) => {
     if (typeof threadId !== 'string' || !threadId) throw new Error('A valid thread ID is required')
+    rmSync(chatAttachmentDirectory(threadId), { recursive: true, force: true })
     return deleteChatThread(threadId)
   })
   ipcMain.handle('get-agent-session', (_event, threadId: unknown, projectPath: unknown) => {
@@ -728,7 +851,7 @@ app.whenReady().then(() => {
     if (!artifact) throw new Error('The selected model is not approved for local runtime use')
     if (!llamaRuntime) throw new Error('llama-server is not available')
     const resolved = await resolveModelArtifact(huggingFaceHubPath(), artifact)
-    return llamaRuntime.start(resolved.path, getSelectedContextWindowTokens(), findProjector(resolved.path))
+    return llamaRuntime.start(resolved.path, getSelectedContextWindowTokens(), resolved.mmprojPath ?? findProjector(resolved.path))
   })
   ipcMain.handle('start-downloaded-model', async (_event, repoId: unknown, filename: unknown, requireVision: unknown = false) => {
     if (!llamaRuntime) throw new Error('llama-server is not available')
@@ -737,7 +860,8 @@ app.whenReady().then(() => {
     }
     if (typeof requireVision !== 'boolean') throw new Error('Invalid vision mode')
     const modelPath = resolveDownloadedModel(repoId, filename)
-    const projectorPath = requireVision ? await ensureModelProjector(repoId as string, modelPath) : findProjector(modelPath)
+    const projectorPath = await ensureModelProjector(repoId as string, modelPath)
+    if (requireVision && !projectorPath) throw new Error('This model is missing the vision projector required for image input')
     return llamaRuntime.start(modelPath, getSelectedContextWindowTokens(), projectorPath)
   })
   ipcMain.handle('generate-chat-title', async (_event, userMessage: unknown) => {
@@ -794,6 +918,13 @@ app.whenReady().then(() => {
     if (model.source === 'local' && [...activeCompletionRequests.values()].some((request) => request.source === 'local')) {
       throw new Error('A local model is already running in another thread')
     }
+    if (model.source === 'local' && request.messages.some((message) =>
+      message.role === 'user' && Array.isArray(message.content) && message.content.some((part) => part.type === 'image_url')
+    )) {
+      if (!llamaRuntime) throw new Error('llama-server is not available')
+      if (llamaRuntime.getStatus().state !== 'ready') throw new Error('Start the local model before attaching images')
+      if (!llamaRuntime.getStatus().visionReady) throw new Error('The selected local model cannot process images: its vision projector is missing or failed to load')
+    }
     const requestId = randomUUID()
     const controller = new AbortController()
     activeCompletionRequests.set(requestId, { senderId: event.sender.id, controller, source: model.source })
@@ -816,6 +947,8 @@ app.whenReady().then(() => {
       projectPath: project.path,
       signal: controller.signal,
       model,
+      visionAvailable: model.source === 'local' ? llamaRuntime?.getStatus().visionReady === true : true,
+      captureScreenshot: () => captureBrowserScreenshot(event.sender),
       terminalController: createAgentTerminalController(
         event.sender,
         project.path,
@@ -851,33 +984,42 @@ app.whenReady().then(() => {
     reasoningRetention: 'retain'
   })
 
-  const remoteRunner = (target: Extract<AgentExecutionTarget, { source: 'remote' }>): { model: AgentModelProvenance; runner: AgentRunner } => {
+  const runtimeCatalogModel = async (connection: ResolvedConnection, modelId: string): Promise<RemoteModel | undefined> => {
+    if (connection.kind === 'openai-compatible') return undefined
+    const models = getCachedRemoteModels(connection.id) ?? await refreshRemoteModels(connection).catch(() => undefined)
+    if (!models) return undefined
+    const catalogModel = models.find((model) => model.id === modelId)
+    if (!catalogModel) throw new Error('This model is not available from the selected connection')
+    return catalogModel
+  }
+
+  const ensureCatalogAvailable = async (connection: ResolvedConnection, modelId: string): Promise<void> => {
+    await runtimeCatalogModel(connection, modelId)
+  }
+
+  const remoteRunner = async (target: Extract<AgentExecutionTarget, { source: 'remote' }>): Promise<{ model: AgentModelProvenance; runner: AgentRunner }> => {
     const connection = resolveConnection(target.connectionId)
     if (!connection.selectedModelIds.includes(target.modelId)) throw new Error('Select this model in Settings before using it')
-    const catalogModel = getRemoteModel(target.modelId)
-    if (connection.kind !== 'openai-compatible' && (!catalogModel || !catalogModel.availableOn.includes(connection.kind))) {
-      throw new Error('This model is not available from the selected connection')
-    }
     if (connection.kind === 'openai-compatible' && !connection.modelIds.includes(target.modelId)) {
       throw new Error('This model is not configured for the selected connection')
     }
-    const reasoning = catalogModel
-      ? resolveRemoteReasoningEffort(catalogModel, target.reasoningEffort)
-      : {
+    const catalogModel = await runtimeCatalogModel(connection, target.modelId)
+    const reasoning = connection.kind === 'openai-compatible'
+      ? {
           enabled: target.reasoningEffort !== 'Instant',
           nativeEffort: null,
           systemPrompt: getReasoningEffortPrompt(target.reasoningEffort)
         }
-    const apiModelId = catalogModel
-      ? catalogModel.providerModelIds[connection.kind as keyof typeof catalogModel.providerModelIds]
-      : target.modelId
-    if (!apiModelId) throw new Error('This model does not have a valid provider model ID')
+      : resolveRemoteReasoningEffort(
+          catalogModel ?? inferRemoteModel(connection.kind as CatalogConnectionKind, { id: target.modelId }),
+          target.reasoningEffort
+        )
     const retainReasoning = shouldRetainRemoteReasoning(connection.kind)
     const client = new RemoteCompletionClient({
       kind: connection.kind,
       baseUrl: connection.baseUrl,
       apiKey: connection.apiKey,
-      modelId: apiModelId,
+      modelId: target.modelId,
       retainReasoning,
       reasoning: {
         enabled: reasoning.enabled,
@@ -892,14 +1034,14 @@ app.whenReady().then(() => {
         connectionId: connection.id,
         provider: connection.providerName,
         modelId: target.modelId,
-        displayName: catalogModel?.displayName ?? target.modelId,
+        displayName: catalogModel?.displayName ?? (connection.kind === 'openai-compatible' ? target.modelId : humanizeRemoteModelId(target.modelId)),
         reasoningRetention: retainReasoning ? 'retain' : 'discard'
       },
       runner: runtime.run.bind(runtime)
     }
   }
 
-  ipcMain.handle('start-agent-completion', (event, target: AgentExecutionTarget, request: AgentRunRequest): LocalCompletionStart => {
+  ipcMain.handle('start-agent-completion', async (event, target: AgentExecutionTarget, request: AgentRunRequest): Promise<LocalCompletionStart> => {
     if (!target || !['local', 'remote'].includes(target.source)) throw new Error('Choose a valid model')
     if (target.source === 'local') {
       if (!llamaRuntime) throw new Error('llama-server is not available')
@@ -907,7 +1049,7 @@ app.whenReady().then(() => {
       return startAgentRun(event, request, localTargetModel(target), llamaRuntime.runAgent.bind(llamaRuntime))
     }
     if (typeof target.connectionId !== 'string' || !target.connectionId || typeof target.modelId !== 'string' || !target.modelId) throw new Error('Choose a valid remote model')
-    const remote = remoteRunner(target)
+    const remote = await remoteRunner(target)
     return startAgentRun(event, request, remote.model, remote.runner)
   })
 

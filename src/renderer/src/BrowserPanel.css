@@ -50,8 +50,10 @@
 .browser-tabs-shell {
   position: relative;
   display: flex;
+  flex: 0 1 auto;
   min-width: 0;
-  flex: 1;
+  width: fit-content;
+  max-width: calc(100% - var(--browser-control-size) - (var(--browser-new-tab-margin-inline) * 2));
   overflow: hidden;
 }
 
@@ -97,7 +99,8 @@
   position: relative;
   display: flex;
   min-width: 0;
-  width: 100%;
+  width: max-content;
+  max-width: 100%;
   gap: var(--browser-tab-strip-gap);
   overflow-x: auto;
   scrollbar-width: none;
@@ -107,9 +110,17 @@
   display: none;
 }
 
-.browser-active-tab-indicator {
+.browser-active-tab-track {
   position: absolute;
   z-index: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.browser-active-tab-indicator {
+  position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
@@ -186,7 +197,7 @@
     color var(--browser-control-motion-duration) ease;
 }
 
-.browser-tab:not(.active)::after {
+.browser-tab:not(.active):not(:last-child)::after {
   position: absolute;
   top: var(--browser-tab-separator-inset);
   right: calc(var(--browser-tab-strip-gap) / -2);
@@ -198,6 +209,7 @@
 }
 
 .browser-tab.active {
+  z-index: 3;
   background: transparent;
   color: var(--text-strong);
 }
@@ -285,7 +297,16 @@
   margin-left: auto;
   place-items: center;
   border-radius: var(--radius-md);
-  color: var(--text-weak);
+  color: var(--browser-tab-close-color);
+}
+
+.browser-tab-close svg {
+  width: var(--browser-tab-close-icon-size);
+  height: var(--browser-tab-close-icon-size);
+}
+
+.browser-tab.active .browser-tab-close {
+  color: var(--browser-tab-close-active-color);
 }
 
 .browser-tab-close:hover,
@@ -311,7 +332,7 @@
 }
 
 .browser-new-tab {
-  margin: 0 var(--browser-new-tab-margin);
+  margin: 0 var(--browser-new-tab-margin-inline);
   border-radius: var(--browser-control-size);
 }
 

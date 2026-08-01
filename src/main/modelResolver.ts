@@ -9,6 +9,7 @@ export type { ModelArtifact } from '../shared/modelManifest'
 export interface ResolvedModelArtifact {
   artifact: ModelArtifact
   path: string
+  mmprojPath?: string
 }
 
 export const modelSnapshotPath = (hubPath: string, artifact: ModelArtifact): string =>
@@ -62,5 +63,22 @@ export const resolveModelArtifact = async (hubPath: string, artifact: ModelArtif
     throw new Error('The selected GGUF model SHA-256 does not match the manifest')
   }
 
-  return { artifact, path: resolvedModelPath }
+  let mmprojPath: string | undefined
+  if (artifact.mmproj) {
+    const projectorPath = join(snapshotPath, artifact.mmproj.filename)
+    let projectorStats: Awaited<ReturnType<typeof stat>>
+    try {
+      projectorStats = await stat(projectorPath)
+    } catch {
+      throw new Error('The selected vision projector does not exist')
+    }
+    if (!projectorStats.isFile()) throw new Error('The selected vision projector does not exist')
+    if (projectorStats.size !== artifact.mmproj.sizeBytes) throw new Error('The selected vision projector size does not match the manifest')
+    if (await hashFile(projectorPath) !== artifact.mmproj.sha256) throw new Error('The selected vision projector SHA-256 does not match the manifest')
+    const resolvedProjectorPath = await realpath(projectorPath)
+    ensureContainedPath(resolvedSnapshotPath, resolvedProjectorPath)
+    mmprojPath = resolvedProjectorPath
+  }
+
+  return { artifact, path: resolvedModelPath, mmprojPath }
 }

@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  CONTEXT_WINDOW_MAX_TOKENS,
+  CONTEXT_WINDOW_MIN_TOKENS,
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
   MAX_CUSTOM_RESPONSE_STYLE_LENGTH,
   NATIVE_LANGUAGES,
+  normalizeContextWindowTokens,
+  validateContextWindowTokens,
   validateNativeLanguage,
   validateOnboardingPreferences,
   validateResponseStylePreference,
@@ -79,6 +84,26 @@ test('validates supported native languages', () => {
   assert.ok(NATIVE_LANGUAGES.includes('English'))
   assert.ok(NATIVE_LANGUAGES.length >= 180)
   assert.throws(() => validateNativeLanguage('Klingon'), /Invalid native language/)
+})
+
+test('falls back to 48K and clamps corrupted context window preferences', () => {
+  assert.equal(normalizeContextWindowTokens(undefined), DEFAULT_CONTEXT_WINDOW_TOKENS)
+  assert.equal(normalizeContextWindowTokens(null), DEFAULT_CONTEXT_WINDOW_TOKENS)
+  assert.equal(normalizeContextWindowTokens('72000'), DEFAULT_CONTEXT_WINDOW_TOKENS)
+  assert.equal(normalizeContextWindowTokens(NaN), DEFAULT_CONTEXT_WINDOW_TOKENS)
+  assert.equal(normalizeContextWindowTokens(8192), CONTEXT_WINDOW_MIN_TOKENS)
+  assert.equal(normalizeContextWindowTokens(1000000), CONTEXT_WINDOW_MAX_TOKENS)
+  assert.equal(normalizeContextWindowTokens(50000), 48000)
+  assert.equal(normalizeContextWindowTokens(72000), 72000)
+})
+
+test('validates context window updates from settings', () => {
+  assert.equal(validateContextWindowTokens(CONTEXT_WINDOW_MIN_TOKENS), CONTEXT_WINDOW_MIN_TOKENS)
+  assert.equal(validateContextWindowTokens(CONTEXT_WINDOW_MAX_TOKENS), CONTEXT_WINDOW_MAX_TOKENS)
+  assert.throws(() => validateContextWindowTokens(31000), /Invalid context window preference/)
+  assert.throws(() => validateContextWindowTokens(31000.5), /Invalid context window preference/)
+  assert.throws(() => validateContextWindowTokens('48000'), /Invalid context window preference/)
+  assert.throws(() => validateContextWindowTokens(undefined), /Invalid context window preference/)
 })
 
 test('validates prompt refinement preferences', () => {

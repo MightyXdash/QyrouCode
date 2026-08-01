@@ -6,7 +6,7 @@ import type { FileChangeDisplay, TodoDisplay, ToolUiMessage } from '../shared/ch
 import type { AgentModelProvenance } from '../shared/agent'
 import { DEFAULT_NATIVE_LANGUAGE, type NativeLanguage } from '../shared/settings'
 import { COMPACTION_SYSTEM_PROMPT, buildAgentSystemPrompt } from './agentPrompt'
-import { AgentToolbox, TASK_STATE_TOOL_NAME, type AgentTaskRequest } from './agentTools'
+import { AgentToolbox, TASK_STATE_TOOL_NAME, type AgentTaskRequest, type ToolboxImage } from './agentTools'
 import type { AgentTerminalController } from './terminalManager'
 import { parseHealedToolCalls, stripToolCallMarkup } from './toolCallParser'
 
@@ -22,6 +22,8 @@ export interface AgentRunRequest extends Omit<LocalCompletionRequest, 'signal' |
   model?: AgentModelProvenance
   nativeLanguage?: NativeLanguage
   terminalController?: AgentTerminalController
+  visionAvailable?: boolean
+  captureScreenshot?: () => Promise<string>
 }
 
 export type AgentStateListener = (messages: readonly LocalChatMessage[]) => void
@@ -51,7 +53,7 @@ const TASK_STATE_SIMILARITY_THRESHOLD = 0.55
 const MAX_PARALLEL_READ_TOOLS = 4
 const FINAL_RESPONSE_WORDS_PER_SECOND = 200
 const FINAL_RESPONSE_WORD_INTERVAL_MS = 1_000 / FINAL_RESPONSE_WORDS_PER_SECOND
-const PARALLEL_TOOL_NAMES = new Set(['read', 'list', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_read', 'skill', 'terminal_list', 'terminal_read', 'terminal_status'])
+const PARALLEL_TOOL_NAMES = new Set(['read', 'list', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_read', 'skill', 'terminal_list', 'terminal_read', 'terminal_status', 'view_file', 'view_text', 'view_json', 'view_yaml', 'view_csv', 'view_pdf', 'view_docx', 'view_pptx', 'view_xlsx', 'view_log', 'view_hex', 'view_archive', 'view_env', 'view_image'])
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
 const TASK_STATE_REMINDER = 'Agentic work is continuing after several actions without a recent visible update. If more tools are needed, include one fresh cur_task_state of 8–63 words in this same response alongside the actions it describes. Do not call it alone, repeat an earlier update, or add one when returning the final answer.'
 
@@ -221,6 +223,7 @@ interface ToolExecution {
   result: string
   error?: string
   filePath?: string
+  images?: ToolboxImage[]
 }
 
 function modelSettings(request: AgentRunRequest, enableThinking = request.enableThinking): Omit<LocalCompletionRequest, 'messages'> {
@@ -297,6 +300,7 @@ export class AgentRuntime {
       projectPath: request.projectPath,
       signal: request.signal,
       readOnly,
+      captureScreenshot: request.captureScreenshot,
       terminalController: depth === 0 && !readOnly ? request.terminalController : undefined,
       runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, originalFiles, onToolEvent, visibleTaskStates) : undefined,
       onTodosChanged: (todos) => onToolEvent?.({ type: 'todos-updated', todos })
@@ -314,12 +318,17 @@ export class AgentRuntime {
       duplicateCalls.set(key, repeats)
       let result: string
       let error: string | undefined
+      let images: ToolboxImage[] | undefined
       if (repeats >= 3) {
         result = 'Error: This exact tool call has already been attempted twice. Do not repeat it. Change approach or provide the best final answer now.'
         error = result
       } else {
         try {
           result = await toolbox.execute(call.name, call.arguments)
+          if ((call.name === 'view_image' || call.name === 'view_screenshot') && request.visionAvailable !== false) {
+            const image = toolbox.consumeImage()
+            if (image) images = [image]
+          }
         } catch (cause) {
           result = `Error: ${cause instanceof Error ? cause.message : 'Tool execution failed'}. Inspect this result and try a different approach.`
           error = result
@@ -339,7 +348,7 @@ export class AgentRuntime {
       }
       if (filePath) modifiedFiles?.add(filePath)
       if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] tool', { name: call.name, durationMs: Date.now() - startedAt, ok: !error })
-      return { call, result, error, filePath }
+      return { call, result, error, filePath, images }
     }
     const emitExecution = (execution: ToolExecution): void => {
       if (execution.error) onToolEvent?.({ type: 'tool-error', toolCallId: execution.call.id, error: execution.error })
@@ -452,6 +461,13 @@ export class AgentRuntime {
         const execution = results.get(call.id)
         if (!execution) continue
         messages.push({ role: 'tool', name: call.name, toolCallId: call.id, content: execution.result, filePath: execution.filePath })
+      }
+      const injectedImages = [...results.values()].flatMap((execution) => execution.images ?? [])
+      if (injectedImages.length) {
+        messages.push({
+          role: 'user',
+          content: injectedImages.map((image) => ({ type: 'image_url', image_url: { url: image.dataUrl } }))
+        })
       }
       onState?.(persistedMessages(messages))
     }

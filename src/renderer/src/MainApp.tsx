@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { MODEL_LIST } from './modelCatalog'
-import { DEFAULT_NATIVE_LANGUAGE, DEFAULT_RESPONSE_STYLE, type NativeLanguage, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
+import { DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_NATIVE_LANGUAGE, DEFAULT_RESPONSE_STYLE, type NativeLanguage, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
 import {
   DEFAULT_PROMPT_REFINEMENT_PREFERENCES,
   orderPromptRefinementModels,
@@ -15,14 +15,15 @@ import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
-import { Search, Plus, ChevronDown, ChevronRight, ArrowUp, PanelLeft, PanelTop, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, ChartNoAxesGantt, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal } from 'lucide-react'
+import { Search, Plus, ChevronDown, ChevronRight, ArrowUp, PanelLeft, PanelTop, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, ChartNoAxesGantt, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal, Paperclip, FileText, Activity, AppWindow, Binary, BookOpen, Bot, Camera, CircleStop, CornerDownLeft, Eraser, File as FileIcon, FileArchive, FileCode, FileJson, FileSpreadsheet, FileTerminal, FileType, FolderSearch, Hand, Hourglass, Image, Keyboard, KeyRound, ListChecks, ListTodo, Play, Presentation, Rocket, ScrollText, SquareX, Sparkles, Table } from 'lucide-react'
 import type { AgentExecutionTarget, AgentModelProvenance } from '../../shared/agent'
 import type { ConnectionSummary } from '../../shared/connections'
-import { REMOTE_MODEL_CATALOG, getRemoteModel, shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
+import { shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
 import type { ConversationExportRequest } from '../../shared/conversationExport'
 import { DESKTOP_PLATFORMS, usesNativeWindowControls } from '../../shared/platform'
 import SettingsDialog, {
   type LocalModelDownloadState,
+  type RemoteCatalogState,
   type SettingsConnectionRequest,
   type SettingsConnectionTestResult,
   type SettingsExportOptions,
@@ -32,6 +33,12 @@ import './MainApp.css'
 import TerminalPanel from './TerminalPanel'
 import BrowserPanel from './BrowserPanel'
 import { DEFAULT_BROWSER_STATE, type BrowserPanelState } from '../../shared/browser'
+import captureSoundUrl from '../assets/audio/screen_capture_1.wav'
+
+function playCaptureSound(): void {
+  const audio = new Audio(captureSoundUrl)
+  audio.play().catch(() => {})
+}
 
 const AUTO_SCROLL_THRESHOLD = 72
 const WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND = 150
@@ -115,6 +122,42 @@ const toolIconMap: Record<string, typeof Terminal> = {
   web_search: Search,
   web_fetch: Globe,
   list: Folder,
+  terminal_create: SquareTerminal,
+  terminal_list: List,
+  terminal_set_title: PenLine,
+  terminal_run: Play,
+  terminal_write: Keyboard,
+  terminal_send_key: CornerDownLeft,
+  terminal_read: FileTerminal,
+  terminal_wait: Hourglass,
+  terminal_status: Activity,
+  terminal_interrupt: CircleStop,
+  terminal_clear: Eraser,
+  terminal_close: SquareX,
+  terminal_request_user_input: Hand,
+  open_url: AppWindow,
+  open_path: FolderOpen,
+  reveal_path: FolderSearch,
+  launch_app: Rocket,
+  todo_write: ListTodo,
+  todo_read: ListChecks,
+  skill: Sparkles,
+  task: Bot,
+  view_file: FileIcon,
+  view_text: FileText,
+  view_json: FileJson,
+  view_yaml: FileCode,
+  view_csv: Table,
+  view_pdf: BookOpen,
+  view_docx: FileType,
+  view_pptx: Presentation,
+  view_xlsx: FileSpreadsheet,
+  view_log: ScrollText,
+  view_hex: Binary,
+  view_archive: FileArchive,
+  view_env: KeyRound,
+  view_image: Image,
+  view_screenshot: Camera,
   default: Braces,
 }
 
@@ -290,6 +333,11 @@ function runningToolLabel(toolCall: ToolCallDisplay): string {
 function completedToolLabel(toolCall: ToolCallDisplay): string {
   if (WEB_TOOL_NAMES.has(toolCall.name)) return 'Searched the web'
   if (toolCall.uiMessage?.uim_pat) return toolCall.uiMessage.uim_pat
+  if (toolCall.name.startsWith('view_')) {
+    if (toolCall.name === 'view_image' || toolCall.name === 'view_screenshot') return 'Viewed an image'
+    if (toolCall.name === 'view_env') return 'Inspected environment variables'
+    return 'Viewed a file'
+  }
   if (toolCall.name === 'read') return 'Viewed a file'
   if (toolCall.name === 'grep' || toolCall.name === 'glob' || toolCall.name === 'list') return 'Looked through the project'
   if (toolCall.name === 'write' || toolCall.name === 'edit') return 'Edited one file'
@@ -462,6 +510,7 @@ export default function MainApp(): JSX.Element {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [browserOpen, setBrowserOpen] = useState(false)
+  const browserOpenRef = useRef(false)
   const [browserState, setBrowserState] = useState<BrowserPanelState>(DEFAULT_BROWSER_PANEL_STATE)
   const revealTerminal = useCallback(() => setTerminalOpen(true), [])
   const [terminalHeight, setTerminalHeight] = useState(() => {
@@ -472,6 +521,7 @@ export default function MainApp(): JSX.Element {
   const [theme, setTheme] = useState<ThemePreference>('system')
   const [responseStylePreference, setResponseStylePreference] = useState<ResponseStylePreference>({ style: DEFAULT_RESPONSE_STYLE, customInstruction: '' })
   const [nativeLanguage, setNativeLanguage] = useState<NativeLanguage>(DEFAULT_NATIVE_LANGUAGE)
+  const [contextWindowTokens, setContextWindowTokens] = useState<number>(DEFAULT_CONTEXT_WINDOW_TOKENS)
   const [promptRefinementPreferences, setPromptRefinementPreferences] = useState<PromptRefinementPreferences>(DEFAULT_PROMPT_REFINEMENT_PREFERENCES)
   const [promptRefinementBusy, setPromptRefinementBusy] = useState(false)
   const [promptRefinementError, setPromptRefinementError] = useState('')
@@ -536,6 +586,7 @@ export default function MainApp(): JSX.Element {
   const [deleteConfirmThread, setDeleteConfirmThread] = useState<ChatThread | null>(null)
   const [regeneratingThreadId, setRegeneratingThreadId] = useState<string | null>(null)
   const [connections, setConnections] = useState<ConnectionSummary[] | null>(null)
+  const [remoteCatalogs, setRemoteCatalogs] = useState<Record<string, RemoteCatalogState>>({})
   const [exportOptions, setExportOptions] = useState<SettingsExportOptions>(DEFAULT_EXPORT_OPTIONS)
   const [exportState, setExportState] = useState<SettingsExportState>(DEFAULT_EXPORT_STATE)
   const downloadedModels = downloadedModelIds
@@ -554,8 +605,7 @@ export default function MainApp(): JSX.Element {
     }))
     const remoteModels = (connections ?? []).flatMap((connection): ComposerModel[] =>
       connection.selectedModelIds.flatMap((modelId) => {
-        const remoteModel = getRemoteModel(modelId)
-        if (connection.kind !== 'openai-compatible' && (!remoteModel || !remoteModel.availableOn.includes(connection.kind))) return []
+        const remoteModel = remoteCatalogs[connection.id]?.models?.find((model) => model.id === modelId)
         return [{
           id: `remote:${connection.id}:${modelId}`,
           source: 'remote',
@@ -569,7 +619,7 @@ export default function MainApp(): JSX.Element {
         }]
       }))
     return [...localModels, ...remoteModels]
-  }, [connections, downloadedModels])
+  }, [connections, downloadedModels, remoteCatalogs])
   const promptRefinementModels = useMemo<PromptRefinementModelOption[]>(() => composerModels.map((model) => ({
     id: model.id,
     source: model.source,
@@ -782,6 +832,7 @@ export default function MainApp(): JSX.Element {
     void window.api.getTheme().then(setTheme)
     void window.api.getResponseStylePreference().then(setResponseStylePreference)
     void window.api.getNativeLanguage().then(setNativeLanguage)
+    void window.api.getContextWindowTokens().then(setContextWindowTokens)
     void window.api.getPromptRefinementPreferences().then(setPromptRefinementPreferences)
     void window.api.getConnections().then(setConnections).catch(() => setConnections([]))
     void Promise.all([window.api.getProjects(), window.api.getExpandedProjectPaths(), window.api.getChatThreads(), window.api.getWorkspaceViewState()]).then(async ([storedProjects, storedExpandedPaths, storedThreads, storedViewState]) => {
@@ -799,9 +850,35 @@ export default function MainApp(): JSX.Element {
             if (m.role === 'user') {
               const content = messageText(m.content)
               if (content.includes('<previous-context-summary>')) continue
-              const storedUser = storedUsers[userIndex]
+              const parts = Array.isArray(m.content) ? m.content : undefined
+              const imageParts = parts?.filter((part) => part.type === 'image_url') ?? []
+              const imageOnly = parts !== undefined && parts.length > 0 && imageParts.length === parts.length
+              const candidateStored = storedUsers[userIndex]
+              const matchesStored = Boolean(candidateStored) && (candidateStored?.attachments?.length ?? 0) === imageParts.length
+              const synthesizedAttachments = (): ChatAttachment[] | undefined => imageParts.map((part, index) => {
+                const mimeType = part.image_url.url.match(/^data:(image\/[a-z+]+);/)?.[1] ?? 'image/png'
+                return {
+                  id: crypto.randomUUID(),
+                  name: `Injected image ${index + 1}`,
+                  mimeType,
+                  dataUrl: part.image_url.url,
+                  size: Math.round((part.image_url.url.length - part.image_url.url.indexOf(',')) * 0.75),
+                  kind: 'image'
+                }
+              })
+              if (imageOnly && !matchesStored) {
+                const attachments = synthesizedAttachments()
+                sessionMsgs.push({ id: crypto.randomUUID(), role: 'user', content: '', ...(attachments ? { attachments } : {}) })
+                continue
+              }
+              const storedUser = candidateStored
               userIndex += 1
-              sessionMsgs.push(storedUser ?? { id: crypto.randomUUID(), role: 'user', content })
+              if (storedUser) {
+                sessionMsgs.push(storedUser)
+              } else {
+                const attachments = synthesizedAttachments()
+                sessionMsgs.push({ id: crypto.randomUUID(), role: 'user', content, ...(attachments ? { attachments } : {}) })
+              }
             } else if (m.role === 'assistant') {
               const assistantId = crypto.randomUUID()
               const pendingToolCalls = m.toolCalls?.map((tc) => ({
@@ -870,6 +947,32 @@ export default function MainApp(): JSX.Element {
     })
     void refreshDownloadedModels().catch(() => setDownloadedModelIds(new Set()))
   }, [])
+
+  useEffect(() => {
+    ;(connections ?? []).forEach((connection) => {
+      if (connection.kind === 'openai-compatible' || remoteCatalogs[connection.id]) return
+      setRemoteCatalogs((current) => ({ ...current, [connection.id]: { loading: true } }))
+      void window.api.getConnectionModels(connection.id).then((result) => {
+        setRemoteCatalogs((current) => ({
+          ...current,
+          [connection.id]: result.ok ? { models: result.models } : { error: result.error }
+        }))
+      })
+    })
+  }, [connections, remoteCatalogs])
+
+  const refreshProviderCatalog = async (connectionId: string): Promise<void> => {
+    setRemoteCatalogs((current) => ({ ...current, [connectionId]: { loading: true } }))
+    const result = await window.api.refreshConnectionModels(connectionId)
+    setRemoteCatalogs((current) => ({
+      ...current,
+      [connectionId]: result.ok ? { models: result.models } : { error: result.error }
+    }))
+  }
+
+  useEffect(() => {
+    browserOpenRef.current = browserOpen
+  }, [browserOpen])
 
   useEffect(() => {
     void window.api.getBrowserState().then(setBrowserState)
@@ -979,6 +1082,9 @@ export default function MainApp(): JSX.Element {
       const assistantId = current.messages.at(-1)?.role === 'assistant' ? current.messages.at(-1)?.id : undefined
       toolCallStartedAtRef.current.set(event.toolCallId, Date.now())
       setPresentTenseToolIds((current) => new Set(current).add(event.toolCallId))
+      if (event.name === 'view_screenshot' && browserOpenRef.current) {
+        playCaptureSound()
+      }
       if (assistantId && activeThreadRef.current?.id === requestThreadId) {
         if (WEB_TOOL_NAMES.has(event.name)) {
           holdWebActivity(assistantId, event.toolCallId)
@@ -1480,6 +1586,17 @@ export default function MainApp(): JSX.Element {
     }
   }
 
+  const chooseChatFiles = async (): Promise<void> => {
+    setAttachmentError('')
+    try {
+      const selected = await window.api.chooseChatFiles()
+      if (selected.length === 0) return
+      setPendingAttachments((current) => [...current, ...selected].slice(0, MAX_CHAT_ATTACHMENTS))
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not attach the file')
+    }
+  }
+
   const pasteChatImages = async (files: File[]): Promise<void> => {
     setAttachmentError('')
     try {
@@ -1521,6 +1638,11 @@ export default function MainApp(): JSX.Element {
     const result = await window.api.saveConnection(input, connectionId)
     if (!result.ok) throw new Error(result.error)
     setConnections((current) => [...(current ?? []).filter((connection) => connection.id !== result.connection.id), result.connection])
+    setRemoteCatalogs((current) => {
+      const next = { ...current }
+      delete next[result.connection.id]
+      return next
+    })
   }
 
   const testProviderConnection = ({ input, connectionId }: SettingsConnectionRequest): Promise<SettingsConnectionTestResult> =>
@@ -1529,6 +1651,11 @@ export default function MainApp(): JSX.Element {
   const disconnectProvider = async (connectionId: string): Promise<void> => {
     await window.api.deleteConnection(connectionId)
     setConnections((current) => (current ?? []).filter((connection) => connection.id !== connectionId))
+    setRemoteCatalogs((current) => {
+      const next = { ...current }
+      delete next[connectionId]
+      return next
+    })
   }
 
   const updateProviderModels = async (connectionId: string, selectedModelIds: readonly string[]): Promise<void> => {
@@ -1579,6 +1706,16 @@ export default function MainApp(): JSX.Element {
       setNativeLanguage(await window.api.setNativeLanguage(nextNativeLanguage))
     } catch {
       setNativeLanguage(previous)
+    }
+  }
+
+  const changeContextWindowTokens = async (tokens: number): Promise<void> => {
+    const previous = contextWindowTokens
+    setContextWindowTokens(tokens)
+    try {
+      setContextWindowTokens(await window.api.setContextWindowTokens(tokens))
+    } catch {
+      setContextWindowTokens(previous)
     }
   }
 
@@ -1649,7 +1786,8 @@ export default function MainApp(): JSX.Element {
     if (promptRefinementBusy) return
     const content = prompt.trim()
     if ((!content && pendingAttachments.length === 0) || completionState !== 'idle' || !selectedModel) return
-    if (pendingAttachments.length > 0 && !selectedModel.vision) {
+    const imageAttachments = pendingAttachments.filter((attachment) => (attachment.kind ?? 'image') === 'image')
+    if (imageAttachments.length > 0 && !selectedModel.vision) {
       setAttachmentError('The selected model does not support images')
       return
     }
@@ -1662,6 +1800,21 @@ export default function MainApp(): JSX.Element {
     }
     const projectPath = activeThreadRef.current?.projectPath ?? selectedProjectPath ?? projects[0]?.path ?? ''
     const now = Date.now()
+    let pendingForSend = pendingAttachments
+    const fileAttachments = pendingAttachments.filter((attachment) => (attachment.kind ?? 'image') === 'file')
+    if (fileAttachments.length > 0) {
+      try {
+        const stored = await window.api.storeChatFiles(threadId, fileAttachments)
+        const previews = new Map(stored.map((item) => [item.attachment.id, item.preview]))
+        pendingForSend = pendingAttachments.map((attachment) => {
+          const preview = previews.get(attachment.id)
+          return preview === undefined ? attachment : { ...attachment, preview }
+        })
+      } catch (error) {
+        setAttachmentError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not prepare the attached files')
+        return
+      }
+    }
     const modelProvenance: AgentModelProvenance = selectedModel.source === 'local'
       ? {
           source: 'local',
@@ -1678,12 +1831,12 @@ export default function MainApp(): JSX.Element {
           displayName: selectedModel.displayName,
           reasoningRetention: shouldRetainRemoteReasoning(connections?.find((connection) => connection.id === selectedModel.connectionId)?.kind ?? 'openai') ? 'retain' : 'discard'
         }
-    const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content, attachments: pendingAttachments, timestamp: now }
+    const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content, attachments: pendingForSend, timestamp: now }
     const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '', timestamp: now, startedAt: now, status: 'pending', model: modelProvenance }
     const thread: ChatThread = {
       id: threadId,
       projectPath,
-      title: activeThreadRef.current?.title ?? (content.slice(0, 44) || 'Image request'),
+      title: activeThreadRef.current?.title ?? (content.slice(0, 44) || 'Attachment request'),
       messages: [...(activeThreadRef.current?.messages ?? []), userMessage, assistantMessage],
       updatedAt: Date.now()
     }
@@ -1704,20 +1857,28 @@ export default function MainApp(): JSX.Element {
       if (selectedModel.source === 'local') {
         const localModel = selectedModel.localModel
         if (!localModel) throw new Error('The selected local model is unavailable')
-        const status = await window.api.startDownloadedModel(localModel.hf_repo, localModel.gguf_file, pendingAttachments.length > 0)
+        const status = await window.api.startDownloadedModel(localModel.hf_repo, localModel.gguf_file, imageAttachments.length > 0)
         if (cancelledThreadIdsRef.current.has(threadId)) return
         if (status.state !== 'ready') throw new Error(status.message ?? 'The local model could not start')
       }
       const messages = thread.messages.flatMap((message) => {
         if (message.role === 'tool' || (message.role === 'assistant' && !message.content)) return []
         if (message.role === 'user' && message.attachments?.length) {
-          return [{
-            role: 'user' as const,
-            content: [
-              ...(message.content ? [{ type: 'text' as const, text: message.content }] : []),
-              ...message.attachments.map((attachment) => ({ type: 'image_url' as const, image_url: { url: attachment.dataUrl } }))
-            ]
-          }]
+          const imageParts = message.attachments
+            .filter((attachment) => (attachment.kind ?? 'image') === 'image')
+            .map((attachment) => ({ type: 'image_url' as const, image_url: { url: attachment.dataUrl } }))
+          const fileText = message.attachments
+            .filter((attachment) => (attachment.kind ?? 'image') === 'file')
+            .map((attachment) => attachment.preview
+              ? `[Attached file: ${attachment.name}]\n${attachment.preview}`
+              : `[Attached file: ${attachment.name} (no readable text preview)]`)
+            .join('\n\n')
+          const textParts = [
+            ...(message.content ? [{ type: 'text' as const, text: message.content }] : []),
+            ...(fileText ? [{ type: 'text' as const, text: fileText }] : [])
+          ]
+          if (textParts.length === 0 && imageParts.length === 0) return []
+          return [{ role: 'user' as const, content: [...textParts, ...imageParts] }]
         }
         return message.content ? [{ role: message.role as 'user' | 'assistant', content: message.content }] : []
       })
@@ -1950,7 +2111,9 @@ export default function MainApp(): JSX.Element {
                     <div className="user-turn" key={message.id}>
                       {message.attachments && message.attachments.length > 0 && (
                         <div className="message-attachments">
-                          {message.attachments.map((attachment) => <img src={attachment.dataUrl} alt={attachment.name} title={attachment.name} key={attachment.id} />)}
+                          {message.attachments.map((attachment) => (attachment.kind ?? 'image') === 'file'
+                            ? <div className="message-attachment-file" title={attachment.name} key={attachment.id}><FileText size={14} /><span>{attachment.name}</span></div>
+                            : <img src={attachment.dataUrl} alt={attachment.name} title={attachment.name} key={attachment.id} />)}
                         </div>
                       )}
                       {message.content && (
@@ -2156,10 +2319,12 @@ export default function MainApp(): JSX.Element {
         <form className={activeThread ? 'prompt-composer' : 'prompt-composer new-thread-composer'} ref={promptComposerRef} onSubmit={(event) => void submitPrompt(event)}>
           <div className="composer-shape" aria-hidden="true" />
           {pendingAttachments.length > 0 && (
-            <div className="composer-attachments" aria-label="Attached images">
+            <div className="composer-attachments" aria-label="Attached items">
               {pendingAttachments.map((attachment) => (
-                <div className="composer-attachment" key={attachment.id}>
-                  <img src={attachment.dataUrl} alt={attachment.name} />
+                <div className={`composer-attachment${(attachment.kind ?? 'image') === 'file' ? ' file' : ''}`} key={attachment.id} title={attachment.name}>
+                  {(attachment.kind ?? 'image') === 'file'
+                    ? <div className="composer-attachment-file"><FileText size={18} /><span>{attachment.name}</span></div>
+                    : <img src={attachment.dataUrl} alt={attachment.name} />}
                   <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setPendingAttachments((current) => current.filter((item) => item.id !== attachment.id))}><X size={11} /></button>
                 </div>
               ))}
@@ -2202,6 +2367,7 @@ export default function MainApp(): JSX.Element {
           <div className="composer-toolbar" ref={controlsRef}>
             <div className="composer-actions">
               <button className="composer-icon-button" type="button" aria-label="Attach images" title="Attach images" disabled={completionState !== 'idle' || !selectedModel?.vision || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => void chooseChatImages()}><Plus size={14} /></button>
+              <button className="composer-icon-button" type="button" aria-label="Attach files" title="Attach files" disabled={completionState !== 'idle' || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => void chooseChatFiles()}><Paperclip size={14} /></button>
               <button
                 className={promptRefinementBusy ? 'composer-icon-button prompt-refinement-button busy' : 'composer-icon-button prompt-refinement-button'}
                 type="button"
@@ -2389,7 +2555,7 @@ export default function MainApp(): JSX.Element {
       {settingsOpen && (
         <SettingsDialog
           connections={connections ?? []}
-          catalog={REMOTE_MODEL_CATALOG}
+          catalogs={remoteCatalogs}
           localCatalog={MODEL_LIST}
           downloadedLocalModelIds={downloadedModelIds ?? new Set()}
           localModelDownloads={localModelDownloads}
@@ -2397,6 +2563,7 @@ export default function MainApp(): JSX.Element {
           reasoningEffort={reasoningEffort}
           responseStyle={responseStylePreference}
           nativeLanguage={nativeLanguage}
+          contextWindowTokens={contextWindowTokens}
           promptRefinementPreferences={promptRefinementPreferences}
           promptRefinementModels={promptRefinementModels}
           exportOptions={exportRequest(exportOptions)}
@@ -2405,11 +2572,13 @@ export default function MainApp(): JSX.Element {
           onReasoningEffortChange={setReasoningEffort}
           onResponseStyleChange={changeResponseStyle}
           onNativeLanguageChange={changeNativeLanguage}
+          onContextWindowTokensChange={changeContextWindowTokens}
           onPromptRefinementPreferencesChange={changePromptRefinementPreferences}
           onSaveConnection={saveProviderConnection}
           onTestConnection={testProviderConnection}
           onDisconnectConnection={disconnectProvider}
           onUpdateModelSelection={updateProviderModels}
+          onRefreshCatalog={refreshProviderCatalog}
           onDownloadLocalModel={downloadLocalModel}
           onCancelLocalModelDownload={cancelLocalModelDownload}
           onExportOptionsChange={updateExportOptions}

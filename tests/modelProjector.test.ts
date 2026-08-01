@@ -19,10 +19,17 @@ test('selects the preferred bundled projector without mutating the model tree', 
   assert.deepEqual(tree.map((entry) => entry.path), ['mmproj-F32.gguf', 'mmproj-BF16.gguf', 'mmproj-F16.gguf'])
 })
 
-test('provides external projectors for vision models whose weights repositories omit them', () => {
+test('provides external projectors for every vision model in the catalog', () => {
   assert.deepEqual(getExternalProjectorSource('hinny/Qwen3.5-4B-GGUF-Q4_K_M'), {
     repository: 'unsloth/Qwen3.5-4B-GGUF',
     path: 'mmproj-BF16.gguf'
   })
-  assert.equal(getExternalProjectorSource('google/gemma-4-E2B-it-qat-q4_0-gguf'), undefined)
+  assert.deepEqual(getExternalProjectorSource('Abiray/Qwen3.6-35B-A3B-Q4_K_M-GGUF'), {
+    repository: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+    path: 'mmproj-BF16.gguf'
+  })
+  assert.deepEqual(getExternalProjectorSource('google/gemma-4-26B-A4B-it-qat-q4_0-gguf'), {
+    repository: 'google/gemma-4-26B-A4B-it-qat-q4_0-gguf',
+    path: 'mmproj-vision-f16.gguf'
+  })
 })

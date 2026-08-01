@@ -6,9 +6,10 @@ import type { WindowCommand } from '../../shared/windowCommands'
 import type { LocalCompletionEvent, LocalCompletionStart } from '../../main/localCompletionClient'
 import type { AgentRunRequest } from '../../main/agentRuntime'
 import type { Project } from '../../shared/projects'
-import type { ChatAttachment, ChatThread } from '../../shared/chat'
+import type { ChatAttachment, ChatThread, StoredChatFile } from '../../shared/chat'
 import type { AgentExecutionTarget, PersistedAgentSession, WorkspaceViewState } from '../../shared/agent'
 import type { ConnectionInput, ConnectionMutationResult, ConnectionSummary, ConnectionTestResult } from '../../shared/connections'
+import type { ConnectionModelsResult } from '../../shared/remoteModels'
 import type { ConnectionSecurityStatus } from '../../main/connectionStore'
 import type { ConversationExportPreview, ConversationExportRequest, ConversationExportResult } from '../../shared/conversationExport'
 import type { PromptRefinementPreferences, PromptRefinementResult, PromptRefinementTarget } from '../../shared/promptRefinement'
@@ -46,6 +47,8 @@ declare global {
       getTheme: () => Promise<ThemePreference>
       getResponseStylePreference: () => Promise<ResponseStylePreference>
       setResponseStylePreference: (preference: ResponseStylePreference) => Promise<ResponseStylePreference>
+      getContextWindowTokens: () => Promise<number>
+      setContextWindowTokens: (tokens: number) => Promise<number>
       setTheme: (theme: ThemePreference) => Promise<ThemePreference>
       getPromptRefinementPreferences: () => Promise<PromptRefinementPreferences>
       setPromptRefinementPreferences: (preference: PromptRefinementPreferences) => Promise<PromptRefinementPreferences>
@@ -57,6 +60,8 @@ declare global {
       testConnection: (input: ConnectionInput, connectionId?: string) => Promise<ConnectionTestResult>
       deleteConnection: (connectionId: string) => Promise<boolean>
       updateConnectionModels: (connectionId: string, selectedModelIds: string[]) => Promise<ConnectionMutationResult>
+      getConnectionModels: (connectionId: string) => Promise<ConnectionModelsResult>
+      refreshConnectionModels: (connectionId: string) => Promise<ConnectionModelsResult>
       previewConversationExport: (request: ConversationExportRequest) => Promise<ConversationExportPreview>
       exportConversations: (request: ConversationExportRequest) => Promise<ConversationExportResult>
       getProjects: () => Promise<Project[]>
@@ -70,6 +75,8 @@ declare global {
       saveChatThread: (thread: ChatThread) => Promise<ChatThread[]>
       deleteChatThread: (threadId: string) => Promise<ChatThread[]>
       chooseChatImages: () => Promise<ChatAttachment[]>
+      chooseChatFiles: () => Promise<ChatAttachment[]>
+      storeChatFiles: (threadId: string, attachments: ChatAttachment[]) => Promise<StoredChatFile[]>
       getAgentSession: (threadId: string, projectPath: string) => Promise<PersistedAgentSession | null>
       getWorkspaceViewState: () => Promise<WorkspaceViewState>
       saveWorkspaceViewState: (state: WorkspaceViewState) => Promise<WorkspaceViewState>

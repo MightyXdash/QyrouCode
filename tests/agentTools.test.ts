@@ -77,6 +77,72 @@ test('coding tools block workspace escapes and destructive commands', async () =
     const tools = new AgentToolbox({ projectPath })
     await assert.rejects(tools.execute('read', { filePath: '../secret.txt' }), /outside the workspace/)
     await assert.rejects(tools.execute('bash', { command: 'git reset --hard' }), /blocked/)
+    await assert.rejects(tools.execute('view_file', { path: '../secret.txt' }), /outside the workspace/)
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('view tools dispatch by format and redact env values', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  try {
+    writeFileSync(join(projectPath, 'data.json'), '{"b":2,"a":1}', 'utf8')
+    writeFileSync(join(projectPath, 'app.log'), 'one\ntwo\nthree\n', 'utf8')
+    writeFileSync(join(projectPath, '.env'), 'SECRET=supersecret\n', 'utf8')
+    const tools = new AgentToolbox({ projectPath })
+    assert.equal(await tools.execute('view_file', { path: 'data.json' }), '{\n  "b": 2,\n  "a": 1\n}')
+    assert.equal(await tools.execute('view_text', { path: 'app.log', offset: 2, limit: 1 }), '2: two')
+    assert.equal(await tools.execute('view_log', { path: 'app.log', offset: 1, limit: 2 }), '1: one\n2: two')
+    const envOutput = await tools.execute('view_env', { path: '.env' })
+    assert.ok(envOutput.includes('SECRET'))
+    assert.ok(!envOutput.includes('supersecret'))
+    const envViaFile = await tools.execute('view_file', { path: '.env' })
+    assert.ok(envViaFile.includes('SECRET'))
+    assert.ok(!envViaFile.includes('supersecret'))
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('view_image captures an image for consumption with vision', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  try {
+    writeFileSync(join(projectPath, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]))
+    const tools = new AgentToolbox({ projectPath })
+    const result = await tools.execute('view_image', { path: 'shot.png' })
+    assert.match(result, /Loaded image for review/)
+    const image = tools.consumeImage()
+    assert.ok(image)
+    assert.ok(image.dataUrl.startsWith('data:image/png;base64,'))
+    assert.equal(image.alt, 'shot.png')
+    assert.equal(tools.consumeImage(), undefined)
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('view_screenshot is available only with a capture callback', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  try {
+    const plain = new AgentToolbox({ projectPath })
+    assert.ok(!plain.definitions.some((tool) => tool.name === 'view_screenshot'))
+    await assert.rejects(plain.execute('view_screenshot', {}), /unavailable/)
+    let captured = false
+    const tools = new AgentToolbox({
+      projectPath,
+      captureScreenshot: async () => {
+        captured = true
+        return 'data:image/png;base64,QUJD'
+      }
+    })
+    assert.ok(tools.definitions.some((tool) => tool.name === 'view_screenshot'))
+    const result = await tools.execute('view_screenshot', {})
+    assert.match(result, /Captured the embedded browser panel/)
+    assert.equal(captured, true)
+    const image = tools.consumeImage()
+    assert.ok(image)
+    assert.equal(image.dataUrl, 'data:image/png;base64,QUJD')
+    assert.equal(image.alt, 'Browser screenshot')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
