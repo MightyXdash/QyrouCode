@@ -25,6 +25,7 @@
   --settings-dropdown-option-detail-size: 9px;
   --settings-button-hover: var(--surface-selected);
   --settings-primary-hover: color-mix(in srgb, var(--text-strong) 88%, var(--background-base));
+  --settings-box-title-color: var(--text-base);
   --settings-refinement-row-min-height: 64px;
   --settings-refinement-row-gap: 20px;
   --settings-refinement-copy-gap: 4px;
@@ -296,7 +297,7 @@
 .settings-model-row strong,
 .settings-local-model-copy strong,
 .settings-provider-copy strong {
-  color: var(--text-strong);
+  color: var(--settings-box-title-color);
   font-size: 12px;
   font-weight: 500;
 }
@@ -597,7 +598,7 @@
   font-family: 'DM Sans', sans-serif;
   opacity: 0;
   pointer-events: none;
-  transform: scale(var(--settings-dropdown-reveal-scale));
+  transform: translate3d(0, 0, 0) scale(var(--settings-dropdown-reveal-scale));
   transform-origin: top center;
   transition: transform var(--settings-dropdown-reveal-duration) var(--settings-dropdown-reveal-easing), opacity 120ms ease-out;
 }
@@ -605,7 +606,7 @@
 .settings-select-menu.expanded {
   opacity: 1;
   pointer-events: auto;
-  transform: scale(1);
+  transform: translate3d(0, 0, 0) scale(1);
 }
 
 .settings-select-menu.opens-upward {
@@ -726,7 +727,7 @@
 }
 
 .settings-refinement-copy strong {
-  color: var(--text-strong);
+  color: var(--settings-box-title-color);
   font-size: var(--settings-refinement-copy-title-size);
   font-weight: 500;
 }
