@@ -195,8 +195,8 @@ function persistedMessages(messages: readonly LocalChatMessage[]): LocalChatMess
   })
 }
 
-function requestNeedsSupraLabsContext(messages: readonly LocalChatMessage[]): boolean {
-  return messages.some((message) => message.role === 'user' && typeof message.content === 'string' && /\b(?:supra\s*labs|supra\s*code|hugging\s*face\s+organization|supra-(?:50m|mini|router|vl|a2a))\b/i.test(message.content))
+function requestNeedsQyrouContext(messages: readonly LocalChatMessage[]): boolean {
+  return messages.some((message) => message.role === 'user' && typeof message.content === 'string' && /\b(?:qyrou\s*labs|qyrou\s*code|hugging\s*face\s+organization|qyrou-(?:50m|mini|router|vl|a2a))\b/i.test(message.content))
 }
 
 function compactUiMessage(value: unknown): string {
@@ -288,7 +288,7 @@ export class AgentRuntime {
       additionalInstructions: additionalSystemInstructions(request.messages),
       nativeLanguage: request.nativeLanguage ?? DEFAULT_NATIVE_LANGUAGE,
       readOnly,
-      includeSupraLabsContext: requestNeedsSupraLabsContext(request.messages)
+      includeQyrouContext: requestNeedsQyrouContext(request.messages)
     })
     let messages = conversationMessages(request.messages)
     const duplicateCalls = new Map<string, number>()

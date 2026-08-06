@@ -4,7 +4,7 @@
 
 **Goal:** Reliably start one exact locally downloaded GGUF model through a curated, app-bundled, pinned `llama-server` runtime, then report a truthful `ready` state after the server has loaded that model.
 
-**Architecture:** SupraCode will continue using an external `llama-server` child process rather than embedding native inference in Electron. The packaged app owns a curated native runtime under `process.resourcesPath`; the main process owns its manifest, exact model-path resolution, lifecycle control, and health validation. The renderer receives only typed runtime state and requests start/stop by catalog model ID; it never supplies paths, binary locations, or arbitrary server arguments. A verified developer bootstrap/override exists only to support source-tree development.
+**Architecture:** QyrouCode will continue using an external `llama-server` child process rather than embedding native inference in Electron. The packaged app owns a curated native runtime under `process.resourcesPath`; the main process owns its manifest, exact model-path resolution, lifecycle control, and health validation. The renderer receives only typed runtime state and requests start/stop by catalog model ID; it never supplies paths, binary locations, or arbitrary server arguments. A verified developer bootstrap/override exists only to support source-tree development.
 
 **Tech stack:** Electron main/preload/renderer, TypeScript, `llama.cpp` `llama-server`, Node HTTPS/streams/crypto/filesystem APIs, the existing Hugging Face GGUF cache, Node `node:test`.
 
@@ -46,7 +46,7 @@ Those are retained for later sequences below.
 
 ### Chosen runtime model: curated bundled `llama-server` distribution
 
-SupraCode should use `llama-server` as a supervised child process and package one curated platform/backend-specific runtime as an Electron `extraResource`. The app should not rely on a user having an executable on `PATH` and should not execute binaries found next to models. This follows the layout that `src/main/llamaRuntime.ts` already expects: `process.resourcesPath/llama.cpp/<platform>-<arch>/llama-server` in packaged builds and `vendor/llama.cpp/<platform>-<arch>/llama-server` only in development.
+QyrouCode should use `llama-server` as a supervised child process and package one curated platform/backend-specific runtime as an Electron `extraResource`. The app should not rely on a user having an executable on `PATH` and should not execute binaries found next to models. This follows the layout that `src/main/llamaRuntime.ts` already expects: `process.resourcesPath/llama.cpp/<platform>-<arch>/llama-server` in packaged builds and `vendor/llama.cpp/<platform>-<arch>/llama-server` only in development.
 
 Initial supported proof target:
 
@@ -181,7 +181,7 @@ Every failure must include a user-safe summary and an internal diagnostic code. 
 **Steps:**
 1. Replace raw `start(modelPath, contextTokens)` with a main-owned resolved model and runtime artifact input.
 2. Use the Sequence 1 profile: 8K context, one server slot, bounded batch/microbatch, loopback binding, and no unplanned model-server features.
-3. Preserve a developer-only absolute `SUPRACODE_LLAMA_SERVER` override behind explicit development-mode checks. It must still pass executable validation and never become the default release path.
+3. Preserve a developer-only absolute `QYROU_LLAMA_SERVER` override behind explicit development-mode checks. It must still pass executable validation and never become the default release path.
 4. Replace environment-variable backend guesses with explicit manifest selection plus a runtime feature probe. If the selected Vulkan runtime cannot initialize on the host, report `unsupported` or `error`; do not silently claim CUDA.
 5. Allocate/protect the loopback server endpoint and add a generated in-memory server credential if the pinned server release supports it. Keep that credential in main only.
 6. Capture stdout/stderr, report a bounded diagnostic, detect unexpected exit, and make stop idempotent.
@@ -248,7 +248,7 @@ Every failure must include a user-safe summary and an internal diagnostic code. 
 
 **Steps:**
 1. Bootstrap the pinned Linux x64 CPU runtime on the active Linux machine, then package it through the same resource layout.
-2. Download one exact manifest-approved small GGUF model through SupraCode’s model flow.
+2. Download one exact manifest-approved small GGUF model through QyrouCode’s model flow.
 3. Start it with the Sequence 1 8K profile.
 4. Verify the child PID, `ready` state, loopback `/health`, model path, backend, and bounded stderr diagnostics.
 5. Record wall-clock install/start timing and GPU/CPU/RAM observations without claiming throughput yet.
@@ -258,7 +258,7 @@ Every failure must include a user-safe summary and an internal diagnostic code. 
 9. Commit and push:
    `test(runtime): add opt-in local llama-server smoke`.
 
-**Acceptance gate for Sequence 1:** On a clean app-data runtime cache, SupraCode installs one pinned runtime, resolves one exact downloaded model, starts one `llama-server` child process, receives a successful loopback health response after the model loads, exposes `ready` in the UI, and reliably stops the process. Any failure is explicit and diagnosable.
+**Acceptance gate for Sequence 1:** On a clean app-data runtime cache, QyrouCode installs one pinned runtime, resolves one exact downloaded model, starts one `llama-server` child process, receives a successful loopback health response after the model loads, exposes `ready` in the UI, and reliably stops the process. Any failure is explicit and diagnosable.
 
 ## Verification matrix
 

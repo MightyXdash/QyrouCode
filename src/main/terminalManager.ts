@@ -142,7 +142,7 @@ function appendOutput(terminal: ManagedTerminal, data: string): void {
 }
 
 function systemOutput(terminal: ManagedTerminal, message: string): void {
-  appendOutput(terminal, `\r\n\u001b[2m[SupraCode] ${message}\u001b[0m\r\n`)
+  appendOutput(terminal, `\r\n\u001b[2m[QyrouCode] ${message}\u001b[0m\r\n`)
 }
 
 function hasChildProcess(pid: number): Promise<boolean> {

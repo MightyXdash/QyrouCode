@@ -21,18 +21,18 @@ const artifact: RuntimeArtifact = {
 
 test('keeps accelerated runtime paths distinct by backend', () => {
   assert.equal(
-    developmentRuntimeDirectory('/workspace/SupraCode', artifact),
-    join('/workspace/SupraCode', 'vendor', 'llama.cpp', 'linux-x64-cuda')
+    developmentRuntimeDirectory('/workspace/QyrouCode', artifact),
+    join('/workspace/QyrouCode', 'vendor', 'llama.cpp', 'linux-x64-cuda')
   )
   assert.equal(
-    packagedRuntimeExecutable('/opt/SupraCode/resources', artifact),
-    join('/opt/SupraCode/resources', 'llama.cpp', 'linux-x64-cuda', 'llama-server')
+    packagedRuntimeExecutable('/opt/QyrouCode/resources', artifact),
+    join('/opt/QyrouCode/resources', 'llama.cpp', 'linux-x64-cuda', 'llama-server')
   )
 })
 
 test('keeps the CPU fallback separate from accelerated runtimes', () => {
   assert.equal(
-    developmentRuntimeDirectory('/workspace/SupraCode', { ...artifact, backend: 'cpu' }),
-    join('/workspace/SupraCode', 'vendor', 'llama.cpp', 'linux-x64-cpu')
+    developmentRuntimeDirectory('/workspace/QyrouCode', { ...artifact, backend: 'cpu' }),
+    join('/workspace/QyrouCode', 'vendor', 'llama.cpp', 'linux-x64-cpu')
   )
 })

@@ -20,7 +20,7 @@ const artifact: ModelArtifact = {
 }
 
 const createFixture = (): { hubPath: string; modelPath: string } => {
-  const hubPath = mkdtempSync(join(tmpdir(), 'supracode-model-resolver-'))
+  const hubPath = mkdtempSync(join(tmpdir(), 'qyroucode-model-resolver-'))
   const snapshotsPath = join(
     hubPath,
     'models--example--test-model',

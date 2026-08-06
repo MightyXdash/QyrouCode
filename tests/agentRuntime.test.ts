@@ -26,7 +26,7 @@ class ScriptedProvider implements AgentCompletionProvider {
 }
 
 test('retries provider errors without placing hardcoded text in the task-state slot', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     let attempts = 0
     const events: AgentToolEvent[] = []
@@ -52,7 +52,7 @@ test('retries provider errors without placing hardcoded text in the task-state s
 })
 
 test('co-batches progress, mutation, and verification in two provider turns', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     writeFileSync(join(projectPath, 'AGENTS.md'), 'Always create files under src.\n', 'utf8')
     const provider = new ScriptedProvider([
@@ -88,7 +88,7 @@ test('co-batches progress, mutation, and verification in two provider turns', as
     assert.match(system, /8–63 useful words/)
     assert.match(system, /Batch independent tools/)
     assert.doesNotMatch(system, /Call exactly one tool/)
-    assert.doesNotMatch(system, /Supra-50M/)
+    assert.doesNotMatch(system, /Qyrou-50M/)
     assert.ok(system.length + JSON.stringify(provider.requests[0].tools).length < 32_000)
     const persistedAssistant = persisted.flat().find((message) => message.role === 'assistant' && message.toolCalls?.some((call) => call.id === 'write'))
     assert.deepEqual(persistedAssistant?.toolCalls?.map((call) => call.id), ['write', 'read'])
@@ -100,7 +100,7 @@ test('co-batches progress, mutation, and verification in two provider turns', as
 })
 
 test('executes every tool in a returned batch and preserves result order', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const provider = new ScriptedProvider([
       {
@@ -132,7 +132,7 @@ test('executes every tool in a returned batch and preserves result order', async
 })
 
 test('truncates progress, suppresses duplicates, and never reprompts for status', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const longState = Array.from({ length: 100 }, (_, index) => `word${index}`).join(' ')
     const provider = new ScriptedProvider([
@@ -165,7 +165,7 @@ test('truncates progress, suppresses duplicates, and never reprompts for status'
 })
 
 test('keeps local UI fallbacks inside tool rows without creating task-state progress', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const provider = new ScriptedProvider([
       { text: '', toolCalls: [{ id: 'missing_ui', name: 'write', arguments: { filePath: 'generated.txt', content: 'done' } }] },
@@ -189,7 +189,7 @@ test('keeps local UI fallbacks inside tool rows without creating task-state prog
 })
 
 test('adds a transient cadence reminder without creating hardcoded progress or another request', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const writes = Array.from({ length: 7 }, (_, index) => ({
       id: `write_${index}`,
@@ -222,7 +222,7 @@ test('adds a transient cadence reminder without creating hardcoded progress or a
 })
 
 test('accepts only task states with at least eight Unicode-aware words', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const sevenWords = 'Inspecting relevant files before making safe changes'
     const eightWords = 'Inspecting relevant files before making one safe change'
@@ -270,7 +270,7 @@ test('accepts only task states with at least eight Unicode-aware words', async (
 })
 
 test('buffers provider deltas and paces only the confirmed final response', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const requests: LocalCompletionRequest[] = []
     let index = 0
@@ -316,7 +316,7 @@ test('buffers provider deltas and paces only the confirmed final response', asyn
 })
 
 test('preserves Unicode, Markdown, code, and whitespace during final playback', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const finalText = '完成了 世界。\n\n**Result:**\n\n```ts\nconst value = 1\n```\n'
     const provider = new ScriptedProvider([{ text: finalText, toolCalls: [] }])
@@ -338,7 +338,7 @@ test('preserves Unicode, Markdown, code, and whitespace during final playback', 
 })
 
 test('discards streamed prose from a mixed tool turn and executes its side effects', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const requests: LocalCompletionRequest[] = []
     const persisted: LocalCompletionRequest['messages'][] = []
@@ -381,7 +381,7 @@ test('discards streamed prose from a mixed tool turn and executes its side effec
 })
 
 test('keeps cur_task_state as the only progress source in a mixed tool turn', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     let index = 0
     const provider: AgentCompletionProvider = {
@@ -423,7 +423,7 @@ test('keeps cur_task_state as the only progress source in a mixed tool turn', as
 })
 
 test('discards streamed prose when healed tool markup supplies the action', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     let index = 0
     const mixedText = 'I will create it now. <tool_call>{"name":"write","arguments":{"filePath":"healed.txt","content":"healed"}}</tool_call>'
@@ -456,7 +456,7 @@ test('discards streamed prose when healed tool markup supplies the action', asyn
 })
 
 test('does not display a streamed intent-only response before recovery', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const requests: LocalCompletionRequest[] = []
     let index = 0
@@ -491,7 +491,7 @@ test('does not display a streamed intent-only response before recovery', async (
 })
 
 test('cancels final-answer playback without emitting later deltas', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const controller = new AbortController()
     const provider: AgentCompletionProvider = {
@@ -525,7 +525,7 @@ test('cancels final-answer playback without emitting later deltas', async () => 
 })
 
 test('cancellation during a buffered tool response prevents side effects', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const controller = new AbortController()
     const provider: AgentCompletionProvider = {
@@ -558,7 +558,7 @@ test('cancellation during a buffered tool response prevents side effects', async
 })
 
 test('exploration subagents cannot receive file mutation tools', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const provider = new ScriptedProvider([
       {
@@ -587,7 +587,7 @@ test('exploration subagents cannot receive file mutation tools', async () => {
 })
 
 test('keeps large image payloads out of text compaction and sends them to the model', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const provider = new ScriptedProvider([{ text: 'The image contains a document.', toolCalls: [] }])
     const imageUrl = `data:image/png;base64,${'a'.repeat(180_000)}`
@@ -615,7 +615,7 @@ test('keeps large image payloads out of text compaction and sends them to the mo
 })
 
 test('retries a reasoning-only turn with thinking disabled and keeps reasoning hidden', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const provider = new ScriptedProvider([
       { text: '', reasoningText: 'private reasoning without a final answer', toolCalls: [], finishReason: 'stop' },
@@ -641,7 +641,7 @@ test('retries a reasoning-only turn with thinking disabled and keeps reasoning h
 })
 
 test('executes healed tool calls emitted in hidden reasoning without persisting reasoning markup', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const provider = new ScriptedProvider([
       {
@@ -669,7 +669,7 @@ test('executes healed tool calls emitted in hidden reasoning without persisting 
 })
 
 test('injects a view_image result as an image message when vision is available', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     writeFileSync(join(projectPath, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]))
     const provider = new ScriptedProvider([
@@ -708,7 +708,7 @@ test('injects a view_image result as an image message when vision is available',
 })
 
 test('skips image injection when vision is unavailable', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     writeFileSync(join(projectPath, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]))
     const provider = new ScriptedProvider([
@@ -742,7 +742,7 @@ test('skips image injection when vision is unavailable', async () => {
 })
 
 test('injects a view_screenshot result as an image message', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-agent-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const provider = new ScriptedProvider([
       {

@@ -14,7 +14,7 @@ const REQUEST_TIMEOUT_MS = 15000
 
 const fetchModelTree = async (repository: string): Promise<ModelTreeEntry[]> => {
   const response = await fetch(`https://huggingface.co/api/models/${repository}/tree/main?recursive=true`, {
-    headers: { 'user-agent': 'supracode-verify-vision-models' },
+    headers: { 'user-agent': 'qyroucode-verify-vision-models' },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   })
   if (!response.ok) throw new Error(`Failed to list ${repository} (HTTP ${response.status})`)
@@ -32,7 +32,7 @@ const downloadProjector = async (source: ModelProjectorSource): Promise<{ sizeBy
   const url = `https://huggingface.co/${source.repository}/resolve/main/${source.path}`
   const response = await fetch(url, {
     redirect: 'follow',
-    headers: { 'user-agent': 'supracode-verify-vision-models' },
+    headers: { 'user-agent': 'qyroucode-verify-vision-models' },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   })
   if (!response.ok) throw new Error(`Failed to download ${source.path} (HTTP ${response.status})`)

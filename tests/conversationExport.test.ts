@@ -96,7 +96,7 @@ test('keeps legacy local reasoning and filters tool messages when requested', ()
 })
 
 test('uses stable dated filenames', () => {
-  assert.equal(exportFilename(baseRequest, new Date('2026-07-12T10:00:00.000Z')), 'supracode-conversations-2026-07-12.jsonl')
+  assert.equal(exportFilename(baseRequest, new Date('2026-07-12T10:00:00.000Z')), 'qyroucode-conversations-2026-07-12.jsonl')
 })
 
 test('exports attachment metadata with kinds for file attachments', () => {

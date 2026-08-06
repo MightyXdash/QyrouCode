@@ -1,7 +1,7 @@
 export const BROWSER_NEW_TAB_URL = ''
 export const BROWSER_NEW_TAB_TITLE = 'New tab'
 export const BROWSER_SEARCH_URL = 'https://www.google.com/search?q='
-export const BROWSER_SESSION_PARTITION = 'persist:supracode-browser'
+export const BROWSER_SESSION_PARTITION = 'persist:qyroucode-browser'
 export const DEFAULT_BROWSER_PANEL_WIDTH = 620
 export const MIN_BROWSER_PANEL_WIDTH = 360
 export const MAX_BROWSER_PANEL_WIDTH = 2000

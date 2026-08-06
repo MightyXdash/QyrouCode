@@ -9,7 +9,7 @@ import type { AgentTerminalController } from '../src/main/terminalManager.js'
 const terminalController = {} as AgentTerminalController
 
 test('non-web tools require a compact UI message while web tools do not', () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-tools-'))
   try {
     const tools = new AgentToolbox({ projectPath })
     for (const definition of tools.definitions) {
@@ -31,7 +31,7 @@ test('non-web tools require a compact UI message while web tools do not', () => 
 })
 
 test('visible terminal tools are available only to the root toolbox with a terminal controller', () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-tools-'))
   try {
     const rootNames = new Set(new AgentToolbox({ projectPath, terminalController }).definitions.map((tool) => tool.name))
     const ordinaryNames = new Set(new AgentToolbox({ projectPath }).definitions.map((tool) => tool.name))
@@ -54,7 +54,7 @@ test('visible terminal tools are available only to the root toolbox with a termi
 })
 
 test('coding tools read, search, edit, write, and patch inside the workspace', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-tools-'))
   try {
     writeFileSync(join(projectPath, 'app.ts'), 'export const value = 1\n', 'utf8')
     const tools = new AgentToolbox({ projectPath })
@@ -72,7 +72,7 @@ test('coding tools read, search, edit, write, and patch inside the workspace', a
 })
 
 test('coding tools block workspace escapes and destructive commands', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-tools-'))
   try {
     const tools = new AgentToolbox({ projectPath })
     await assert.rejects(tools.execute('read', { filePath: '../secret.txt' }), /outside the workspace/)
@@ -84,7 +84,7 @@ test('coding tools block workspace escapes and destructive commands', async () =
 })
 
 test('view tools dispatch by format and redact env values', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-tools-'))
   try {
     writeFileSync(join(projectPath, 'data.json'), '{"b":2,"a":1}', 'utf8')
     writeFileSync(join(projectPath, 'app.log'), 'one\ntwo\nthree\n', 'utf8')
@@ -105,7 +105,7 @@ test('view tools dispatch by format and redact env values', async () => {
 })
 
 test('view_image captures an image for consumption with vision', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-tools-'))
   try {
     writeFileSync(join(projectPath, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]))
     const tools = new AgentToolbox({ projectPath })
@@ -122,7 +122,7 @@ test('view_image captures an image for consumption with vision', async () => {
 })
 
 test('view_screenshot is available only with a capture callback', async () => {
-  const projectPath = mkdtempSync(join(tmpdir(), 'supracode-tools-'))
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-tools-'))
   try {
     const plain = new AgentToolbox({ projectPath })
     assert.ok(!plain.definitions.some((tool) => tool.name === 'view_screenshot'))

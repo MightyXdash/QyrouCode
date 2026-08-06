@@ -1,5 +1,4 @@
 export const LLAMA_SERVER_PORT = 39281
-export const LLAMA_TITLE_SERVER_PORT = 39282
 export const LLAMA_SERVER_HOST = '127.0.0.1'
 
 export type LlamaPlatform = 'darwin' | 'linux' | 'win32'

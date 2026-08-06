@@ -34,7 +34,7 @@ export interface OnboardingQuestion {
   choices: readonly QuestionChoice[]
 }
 
-export const CUSTOM_RESPONSE_INSTRUCTION_LABEL = 'How should SupraCode respond?'
+export const CUSTOM_RESPONSE_INSTRUCTION_LABEL = 'How should QyrouCode respond?'
 export const CUSTOM_RESPONSE_INSTRUCTION_PLACEHOLDER =
   'For example: Be concise, challenge my assumptions, and explain trade-offs plainly.'
 
@@ -42,7 +42,7 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
   {
     key: 'theme',
     group: 'Appearance',
-    title: 'Which appearance should SupraCode use?',
+    title: 'Which appearance should QyrouCode use?',
     description: 'Choose the visual environment that feels most comfortable for focused work.',
     choices: [
       { value: 'light', label: 'Light', description: 'Clean, bright, and easy to scan.' },
@@ -54,7 +54,7 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
     key: 'contextWindowTokens',
     group: 'Model capacity',
     title: 'How much context should your models keep?',
-    description: 'More context lets SupraCode consider more of your conversation and project at once. Larger windows use more RAM and VRAM.',
+    description: 'More context lets QyrouCode consider more of your conversation and project at once. Larger windows use more RAM and VRAM.',
     choices: [
       { value: 32000, label: 'Focused', description: 'A lean context window for lighter work.', detail: '32K tokens' },
       { value: 72000, label: 'Balanced', description: 'A strong balance of context and resource use.', detail: '72K tokens', recommended: true },
@@ -65,7 +65,7 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
   {
     key: 'mathModelTier',
     group: 'Model routing',
-    title: 'How should SupraCode handle demanding math?',
+    title: 'How should QyrouCode handle demanding math?',
     description: 'Choose the default model tier for complex calculations and technical reasoning.',
     choices: [
       { value: 'large', label: 'Largest model', description: 'Prioritise capability over speed.' },
@@ -76,7 +76,7 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
   {
     key: 'codingModelTier',
     group: 'Model routing',
-    title: 'How should SupraCode handle demanding coding?',
+    title: 'How should QyrouCode handle demanding coding?',
     description: 'Choose the default model tier for difficult implementation and debugging work.',
     choices: [
       { value: 'large', label: 'Largest model', description: 'Favour the strongest planning and code reasoning.', recommended: true },
@@ -87,10 +87,10 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
   {
     key: 'autoModelRouting',
     group: 'Model routing',
-    title: 'Should SupraCode automatically route models?',
-    description: 'Choose whether SupraCode should select from your downloaded models for each request.',
+    title: 'Should QyrouCode automatically route models?',
+    description: 'Choose whether QyrouCode should select from your downloaded models for each request.',
     choices: [
-      { value: true, label: 'Yes', description: 'Let SupraCode decide which downloaded model best fits each request.' },
+      { value: true, label: 'Yes', description: 'Let QyrouCode decide which downloaded model best fits each request.' },
       { value: false, label: 'No', description: 'Choose the right AI model yourself for every prompt.', recommended: true }
     ]
   },
@@ -110,7 +110,7 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
   {
     key: 'executionApproval',
     group: 'Safety and access',
-    title: 'When should SupraCode ask for permission?',
+    title: 'When should QyrouCode ask for permission?',
     description: 'This will control how the future execution layer asks before taking action.',
     choices: [
       { value: 'always', label: 'Ask before every action', description: 'Review each action before it runs.' },
@@ -121,8 +121,8 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
   {
     key: 'responseStyle',
     group: 'Response style',
-    title: 'What response style should SupraCode use?',
-    description: 'This shapes how SupraCode communicates, not the quality of its work.',
+    title: 'What response style should QyrouCode use?',
+    description: 'This shapes how QyrouCode communicates, not the quality of its work.',
     choices: [
       { value: 'warm', label: 'Warm', description: 'Friendly, encouraging, and clear.' },
       { value: 'gen-z', label: 'Gen Z', description: 'Casual, expressive, and current.' },

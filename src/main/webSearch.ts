@@ -15,7 +15,7 @@ const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 const DEFAULT_RESULTS = 5
 const MAX_RESULTS = 10
 const SEARCH_RETRIES_PER_ENGINE = 2
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 SupraCode/1.0'
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 QyrouCode/1.0'
 
 interface SearchEngine {
   name: string

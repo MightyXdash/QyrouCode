@@ -15,10 +15,7 @@ import {
 import { MAX_CUSTOM_RESPONSE_STYLE_LENGTH } from '../../shared/settings'
 import './WelcomeScreen.css'
 
-const ESSENTIAL_MODELS: { id: string; hf_repo: string; label: string; gguf_file: string }[] = [
-  { id: 'supra-title', hf_repo: 'SupraLabs/supra-title-50M-pre-gguf', label: 'Title Generator', gguf_file: 'SupraTitle-50M-Q4_K_M.gguf' },
-  { id: 'supra-router', hf_repo: 'SupraLabs/Supra-Router-51M-gguf', label: 'Model Router', gguf_file: 'Supra-Router-51M-Q4_K_M.gguf' },
-]
+const ESSENTIAL_MODELS: { id: string; hf_repo: string; label: string; gguf_file: string }[] = []
 
 const ROLES = [
   'General Agent',
@@ -68,7 +65,7 @@ const TRANSITION_CLEARANCE_MS = 80
 const DOWNLOAD_VISIBLE_ITEM_COUNT = 6
 const READY_TITLE_LINES = [
   'Let’s get your workspace ready',
-  'SupraCode will fetch these models and essentials.',
+  'QyrouCode will fetch these models and essentials.',
 ] as const
 const READY_SUBTITLE_LINES = [
   'This may take a little while. Perfect time to',
@@ -578,10 +575,10 @@ export default function WelcomeScreen(): JSX.Element {
         <div className={`page-inner welcome-inner${phase === 'exit' ? ' welcome-exit' : ''}`}>
           <div className="welcome-center">
             <h1 className="welcome-title initial-enter">
-              SupraCode
+              QyrouCode
             </h1>
             <p className="welcome-subtitle initial-enter">
-              Welcome to SupraCode!
+              Welcome to QyrouCode!
             </p>
             <p className="welcome-description initial-enter">
               Let&apos;s download (or connect to) the necessary AI models we
@@ -598,7 +595,7 @@ export default function WelcomeScreen(): JSX.Element {
           <div className="roles-header">
             <h2 className={`roles-title${phase === 'enter' ? ' enter-fade' : phase === 'idle' ? ' motion-settled' : ''}${phase === 'exit' ? ' exit-left' : ''}`}
                 style={phase === 'enter' ? animationDelay(0) : phase === 'exit' ? animationDelay(0) : undefined}>
-              Before we continue, let&apos;s see what you will be doing with SupraCode
+              Before we continue, let&apos;s see what you will be doing with QyrouCode
             </h2>
           </div>
           <div className="roles-list">
@@ -712,9 +709,9 @@ export default function WelcomeScreen(): JSX.Element {
       {displayPage === SETUP_INTRO_PAGE && (
         <div className={`page-inner setup-intro${phase === 'enter' ? ' setup-intro-enter' : phase === 'idle' ? ' motion-settled' : ''}${phase === 'exit' ? ' setup-intro-exit' : ''}`}>
           <div className="setup-intro-content">
-            <p className="setup-eyebrow">Personalise SupraCode</p>
+            <p className="setup-eyebrow">Personalise QyrouCode</p>
             <h2>We&apos;re almost done</h2>
-            <p>SupraCode will ask a few quick questions to tailor the app to how you work. Select Ready whenever you&apos;re set.</p>
+            <p>QyrouCode will ask a few quick questions to tailor the app to how you work. Select Ready whenever you&apos;re set.</p>
           </div>
           <button className="next-btn" onClick={goNext}>Ready</button>
         </div>
@@ -830,7 +827,7 @@ function CompletionScene({ phase }: { phase: Phase }): JSX.Element {
             </div>
             <div className="completion-terminal">
               <span className="completion-terminal-prompt">›</span>
-              <code>supra --start local</code>
+              <code>qyrou --start local</code>
               <span className="completion-terminal-cursor" />
             </div>
           </div>
@@ -847,10 +844,10 @@ function CompletionScene({ phase }: { phase: Phase }): JSX.Element {
         </div>
       </div>
       <button className="next-btn completion-continue" type="button" onClick={openMainApp}>
-        <span>Continue to SupraCode</span>
+        <span>Continue to QyrouCode</span>
         <ArrowRight size={14} />
       </button>
-      <p className="completion-footer-mark">SUPRACODE / ENVIRONMENT ASSEMBLY</p>
+      <p className="completion-footer-mark">QYROU / ENVIRONMENT ASSEMBLY</p>
     </div>
   )
 }

@@ -99,7 +99,7 @@ test('returns a diagnostic error when the local runtime rejects a completion req
 test('emits deltas from a fragmented server-sent event response', async () => {
   const server = await startServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/event-stream' })
-    response.write('data: {"choices":[{"delta":{"content":"Supra"}}]}\n\n')
+    response.write('data: {"choices":[{"delta":{"content":"Qyrou"}}]}\n\n')
     response.write('data: {"choices":[{"delta":{"content":"Code"}}]}\n\n')
     response.end('data: [DONE]\n\n')
   })
@@ -111,8 +111,8 @@ test('emits deltas from a fragmented server-sent event response', async () => {
       { messages: [{ role: 'user', content: 'Stream a response.' }] },
       (delta) => deltas.push(delta)
     )
-    assert.deepEqual(deltas, ['Supra', 'Code'])
-    assert.equal(completion.text, 'SupraCode')
+    assert.deepEqual(deltas, ['Qyrou', 'Code'])
+    assert.equal(completion.text, 'QyrouCode')
     assert.deepEqual(completion.toolCalls, [])
   } finally {
     await server.close()

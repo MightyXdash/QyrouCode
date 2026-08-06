@@ -56,7 +56,7 @@ const MODEL_SUBMENU_RETURN_DELAY_MS = 400
 const TODO_VISIBLE_ITEM_COUNT = 3
 const CHAT_SCROLLBAR_REVEAL_RATIO = 0.1
 const DEFAULT_TERMINAL_HEIGHT = 320
-const TERMINAL_HEIGHT_STORAGE_KEY = 'supracode.terminal.height'
+const TERMINAL_HEIGHT_STORAGE_KEY = 'qyroucode.terminal.height'
 
 interface ComposerModel {
   id: string
@@ -214,7 +214,7 @@ const TITLEBAR_MENUS: Record<TitlebarMenuId, TitlebarMenuItem[]> = {
     { label: 'Light', theme: 'light' }
   ],
   help: [
-    { label: 'SupraCode', disabled: true },
+    { label: 'QyrouCode', disabled: true },
     { label: 'Local coding model runner', disabled: true }
   ]
 }
@@ -1436,7 +1436,7 @@ export default function MainApp(): JSX.Element {
       }
       setDeleteConfirmProject(null)
     } catch (error) {
-      setProjectRemovalError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not remove the project from SupraCode')
+      setProjectRemovalError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not remove the project from QyrouCode')
     } finally {
       setProjectRemoving(false)
     }
@@ -1500,13 +1500,19 @@ export default function MainApp(): JSX.Element {
     void window.api.saveChatThread(updated)
   }
 
+  const deriveThreadTitle = (message: string): string => {
+    const words = message.trim().split(/\s+/)
+    const title = words.slice(0, 6).join(' ')
+    return title.length > 60 ? title.slice(0, 57) + '...' : title
+  }
+
   const regenerateThreadTitle = async (thread: ChatThread): Promise<void> => {
     setContextMenu(null)
     const firstUserMsg = thread.messages.find((m) => m.role === 'user')
     if (!firstUserMsg) return
     setRegeneratingThreadId(thread.id)
     try {
-      const title = await window.api.generateChatTitle(firstUserMsg.content)
+      const title = deriveThreadTitle(firstUserMsg.content)
       if (!title) return
       const updated = { ...thread, title, updatedAt: Date.now() }
       replaceThread(updated)
@@ -1559,7 +1565,7 @@ export default function MainApp(): JSX.Element {
 
   const updateThreadTitle = async (threadId: string, userMessage: string): Promise<void> => {
     try {
-      const title = await window.api.generateChatTitle(userMessage)
+      const title = deriveThreadTitle(userMessage)
       const current = threadsRef.current.find((thread) => thread.id === threadId)
       if (!current || !title) return
       const updated = { ...current, title, updatedAt: Date.now() }
@@ -1744,7 +1750,7 @@ export default function MainApp(): JSX.Element {
     try {
       const result = await window.api.refinePrompt(originalPrompt, promptRefinementTargets)
       if (promptRef.current !== originalPrompt) {
-        setPromptRefinementError('Your draft changed while refinement was running, so SupraCode left it untouched.')
+        setPromptRefinementError('Your draft changed while refinement was running, so QyrouCode left it untouched.')
         return
       }
       if (result.outcome === 'harm') {
@@ -1761,7 +1767,7 @@ export default function MainApp(): JSX.Element {
     } catch (error) {
       const message = error instanceof Error
         ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
-        : 'SupraCode could not refine this prompt.'
+        : 'QyrouCode could not refine this prompt.'
       setPromptRefinementError(message)
     } finally {
       setPromptRefinementBusy(false)
@@ -2620,7 +2626,7 @@ export default function MainApp(): JSX.Element {
         <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectSaving) setRenamingProject(null) }}>
           <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-project-dialog-title">
             <h2 id="rename-project-dialog-title">Rename project</h2>
-            <p>This changes the project name shown in SupraCode. Its folder stays unchanged.</p>
+            <p>This changes the project name shown in QyrouCode. Its folder stays unchanged.</p>
             <form onSubmit={(event) => void renameProject(event)}>
               <input ref={projectNameRef} value={projectName} onChange={(event) => { setProjectName(event.target.value); setProjectError('') }} aria-label="Project name" aria-describedby={projectError ? 'project-name-error' : undefined} disabled={projectSaving} />
               {projectError && <div className="project-dialog-error" id="project-name-error" role="alert">{projectError}</div>}
@@ -2635,7 +2641,7 @@ export default function MainApp(): JSX.Element {
       {deleteConfirmProject && (
         <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectRemoving) setDeleteConfirmProject(null) }}>
           <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-project-dialog-title">
-            <h2 id="delete-project-dialog-title">SupraCode will delete this project</h2>
+            <h2 id="delete-project-dialog-title">QyrouCode will delete this project</h2>
             <p>Deleting “<strong>{deleteConfirmProject.name}</strong>” won’t delete its project folder from your computer. To completely get rid of it, please delete the folder manually.</p>
             {projectRemovalError && <div className="project-dialog-error" role="alert">{projectRemovalError}</div>}
             <div className="project-dialog-actions">

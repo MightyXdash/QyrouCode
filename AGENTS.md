@@ -1,14 +1,14 @@
-# SupraCode AGENTS.md
+# QyrouCode AGENTS.md
 
-This file defines conventions, design system, and workflow rules for SupraCode. AI agents should follow these instructions when working on this codebase.
+This file defines conventions, design system, and workflow rules for QyrouCode. AI agents should follow these instructions when working on this codebase.
 
 ---
 
-## SupraCode Design System
+## QyrouCode Design System
 
 ### Visual Theme Overview
 
-SupraCode features a minimal, low-contrast design system with intentional restraint. The default theme prioritizes clarity and accessibility through carefully calibrated color hierarchies rather than bold visual separations.
+QyrouCode features a minimal, low-contrast design system with intentional restraint. The default theme prioritizes clarity and accessibility through carefully calibrated color hierarchies rather than bold visual separations.
 
 ### Typography
 

@@ -1,4 +1,4 @@
-# SupraCode TODO
+# QyrouCode TODO
 
 Audit-derived backlog for turning the current onboarding/model-download shell into a responsive, safe local coding platform. This is intentionally ordered by dependencies and user value rather than by implementation convenience.
 

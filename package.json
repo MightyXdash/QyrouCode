@@ -1,5 +1,5 @@
 {
-  "name": "suprarcode",
+  "name": "qyroucode",
   "version": "0.0.1",
   "private": true,
   "description": "Local coding model runner",
@@ -40,20 +40,20 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@electron-toolkit/preload": "^3.0.0",
+    "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/tsconfig": "^1.0.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.4.0",
-    "electron": "^34.0.0",
-    "electron-builder": "^26.0.12",
-    "electron-vite": "^3.0.0",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.7",
+    "electron-vite": "^5.0.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0"
   },
   "build": {
-    "appId": "com.supracode.app",
-    "productName": "SupraCode",
+    "appId": "com.qyroucode.app",
+    "productName": "QyrouCode",
     "afterPack": "scripts/afterPack.cjs",
     "directories": {
       "buildResources": "build",

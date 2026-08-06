@@ -18,7 +18,7 @@ const writeGguf = (keys: Array<{ key: string; type: number; payload: Buffer }>):
     typeBuffer.writeUInt32LE(type, 0)
     return [keyLength, Buffer.from(key, 'utf8'), typeBuffer, payload]
   }))
-  const directory = mkdtempSync(join(tmpdir(), 'supracode-gguf-'))
+  const directory = mkdtempSync(join(tmpdir(), 'qyroucode-gguf-'))
   const path = join(directory, 'test.gguf')
   writeFileSync(path, Buffer.concat([header, body]))
   return path
@@ -77,7 +77,7 @@ test('returns undefined when the context length key is absent', async () => {
 })
 
 test('returns undefined for invalid GGUF headers', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'supracode-gguf-'))
+  const directory = mkdtempSync(join(tmpdir(), 'qyroucode-gguf-'))
   const badPath = join(directory, 'bad.gguf')
   writeFileSync(badPath, 'NOTAGGUF')
   assert.equal(await readGgufContextLimit(badPath), undefined)

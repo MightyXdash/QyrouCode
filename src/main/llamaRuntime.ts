@@ -36,7 +36,7 @@ const currentPlatform = (): LlamaPlatform => {
 }
 
 const configuredBackend = (): LlamaBackend | undefined => {
-  const configured = process.env['SUPRACODE_LLAMA_BACKEND']
+  const configured = process.env['QYROU_LLAMA_BACKEND']
   if (configured === 'metal' || configured === 'cuda' || configured === 'vulkan' || configured === 'cpu') return configured
   return undefined
 }
@@ -95,7 +95,7 @@ const inferredBackend = (executablePath: string, fallback: LlamaBackend): LlamaB
 const findLegacyRuntime = (targetPlatform: LlamaPlatform): RuntimeCandidate | undefined => {
   const legacyDirectory = `${platform()}-${arch()}`
   const candidates = [
-    ...(process.env['SUPRACODE_LLAMA_SERVER'] ? [process.env['SUPRACODE_LLAMA_SERVER']] : []),
+    ...(process.env['QYROU_LLAMA_SERVER'] ? [process.env['QYROU_LLAMA_SERVER']] : []),
     join(process.resourcesPath, 'llama.cpp', legacyDirectory, SERVER_BINARY_NAME),
     join(app.getAppPath(), 'vendor', 'llama.cpp', legacyDirectory, SERVER_BINARY_NAME),
     ...(process.env['PATH'] ?? '').split(delimiter).filter(Boolean).map((directory) => join(directory, SERVER_BINARY_NAME))
@@ -111,7 +111,7 @@ const findLegacyRuntime = (targetPlatform: LlamaPlatform): RuntimeCandidate | un
 const findRuntime = (): RuntimeCandidate | undefined => {
   const targetPlatform = currentPlatform()
   const targetArchitecture = currentArchitecture()
-  const configuredPath = process.env['SUPRACODE_LLAMA_SERVER']
+  const configuredPath = process.env['QYROU_LLAMA_SERVER']
   const configured = configuredBackend()
   if (configuredPath && configured && existsSync(configuredPath)) {
     const candidate = { backend: inferredBackend(configuredPath, configured), executablePath: configuredPath }

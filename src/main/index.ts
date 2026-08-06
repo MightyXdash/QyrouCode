@@ -12,7 +12,6 @@ import { LlamaRuntime } from './llamaRuntime'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
 import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManifest'
-import { LLAMA_TITLE_SERVER_PORT } from '../shared/llama'
 import type { LocalCompletionEvent, LocalCompletionStart } from './localCompletionClient'
 import { AgentRuntime, type AgentRunRequest, type AgentStateListener, type AgentToolEvent } from './agentRuntime'
 import { CHAT_ATTACHMENT_MIME_TYPES, MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, MAX_FILE_PREVIEW_CHARACTERS, type ChatAttachment, type ChatAttachmentMimeType, type ChatThread, type StoredChatFile } from '../shared/chat'
@@ -49,10 +48,6 @@ function applyTheme(value: unknown): ReturnType<typeof setTheme> {
   nativeTheme.themeSource = theme
   return theme
 }
-const TITLE_MODEL_REPOSITORY = 'SupraLabs/supra-title-50M-pre-gguf'
-const TITLE_MODEL_FILENAME = 'SupraTitle-50M-Q4_K_M.gguf'
-const TITLE_MODEL_CONTEXT_TOKENS = 4096
-const TITLE_MODEL_MAX_INPUT_CHARACTERS = 12000
 const MODEL_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const INVALID_PROJECT_NAME_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/
 const WINDOWS_RESERVED_PROJECT_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
@@ -62,7 +57,6 @@ const MODEL_DOWNLOAD_ATTEMPTS = 3
 
 let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
-let titleRuntime: LlamaRuntime | null = null
 const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController; source: AgentModelSource }>()
 const activeModelDownloads = new Map<string, () => void>()
 
@@ -432,7 +426,7 @@ function createMainAppWindow(): BrowserWindow {
     trafficLightPosition: process.platform === DESKTOP_PLATFORMS.macOS
       ? MACOS_TRAFFIC_LIGHT_POSITION
       : undefined,
-    title: 'SupraCode',
+    title: 'QyrouCode',
     show: false,
     icon: appIconPath(),
     webPreferences: {
@@ -466,7 +460,7 @@ function createMacApplicationMenu(): void {
     { role: 'editMenu' },
     { label: 'View', submenu: [{ label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => sendCommand('reload') }, { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => sendCommand('toggle-dev-tools') }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { label: 'Theme', submenu: [{ label: 'System', click: () => { applyTheme('system'); sendCommand('theme:system') } }, { label: 'Dark', click: () => { applyTheme('dark'); sendCommand('theme:dark') } }, { label: 'Light', click: () => { applyTheme('light'); sendCommand('theme:light') } }] },
-    { label: 'Help', submenu: [{ label: 'SupraCode', enabled: false }, { label: 'Local coding model runner', enabled: false }] }
+    { label: 'Help', submenu: [{ label: 'QyrouCode', enabled: false }, { label: 'Local coding model runner', enabled: false }] }
   ]))
 }
 
@@ -543,7 +537,7 @@ function createWindow(): void {
     trafficLightPosition: process.platform === DESKTOP_PLATFORMS.macOS
       ? MACOS_TRAFFIC_LIGHT_POSITION
       : undefined,
-    title: 'SupraCode',
+    title: 'QyrouCode',
     show: false,
     icon: appIconPath(),
     webPreferences: {
@@ -604,9 +598,8 @@ app.whenReady().then(() => {
   registerTerminalIpc()
   registerBrowserPanelIpc()
   registerModelDownloadIpc()
-  electronApp.setAppUserModelId('com.suprarcode')
+  electronApp.setAppUserModelId('com.qyroucode')
   llamaRuntime = new LlamaRuntime()
-  titleRuntime = new LlamaRuntime(LLAMA_TITLE_SERVER_PORT)
   createMacApplicationMenu()
 
   app.on('browser-window-created', (_, window) => {
@@ -863,16 +856,6 @@ app.whenReady().then(() => {
     const projectorPath = await ensureModelProjector(repoId as string, modelPath)
     if (requireVision && !projectorPath) throw new Error('This model is missing the vision projector required for image input')
     return llamaRuntime.start(modelPath, getSelectedContextWindowTokens(), projectorPath)
-  })
-  ipcMain.handle('generate-chat-title', async (_event, userMessage: unknown) => {
-    if (typeof userMessage !== 'string' || !userMessage.trim()) throw new Error('A user message is required for title generation')
-    if (!titleRuntime) throw new Error('Title model runtime is unavailable')
-    const modelPath = resolveDownloadedModel(TITLE_MODEL_REPOSITORY, TITLE_MODEL_FILENAME)
-    const status = await titleRuntime.start(modelPath, TITLE_MODEL_CONTEXT_TOKENS)
-    if (status.state !== 'ready') throw new Error(status.message ?? 'Title model could not start')
-    const titleInput = userMessage.trim().slice(0, TITLE_MODEL_MAX_INPUT_CHARACTERS)
-    const title = await titleRuntime.completePrompt(`User: ${titleInput}\nTitle: `)
-    return title.replace(/[\r\n]+/g, ' ').replace(/^Title:\s*/i, '').trim()
   })
   ipcMain.handle('stop-llama-server', () => llamaRuntime?.stop())
 

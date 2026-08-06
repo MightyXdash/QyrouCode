@@ -142,7 +142,7 @@ export default function GeneralSettings({
           <div className="settings-refinement-primary">
             <div className="settings-refinement-copy">
               <strong>Refinement model</strong>
-              <span>Choose a model or let SupraCode select one automatically.</span>
+              <span>Choose a model or let QyrouCode select one automatically.</span>
             </div>
             <SettingsSelect
               value={primaryModelId}
@@ -166,7 +166,7 @@ export default function GeneralSettings({
             <div className="settings-refinement-backups-header">
               <div className="settings-refinement-copy">
                 <strong>Backup models</strong>
-                <span>SupraCode tries these in order if refinement fails.</span>
+                <span>QyrouCode tries these in order if refinement fails.</span>
               </div>
               {promptRefinementPreferences.backupModelIds.length < MAX_PROMPT_REFINEMENT_BACKUPS && (
                 <SettingsSelect

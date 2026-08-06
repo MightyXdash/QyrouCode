@@ -20,7 +20,7 @@ import {
 
 const validPreferences = {
   selectedRoles: ['Coding & Software Engineering'],
-  selectedModelIds: ['supra-code'],
+  selectedModelIds: ['qyrou-code'],
   theme: 'system',
   contextWindowTokens: 72000,
   mathModelTier: 'medium',

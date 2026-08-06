@@ -27,7 +27,7 @@ import {
 } from '../src/main/fileViewer.js'
 
 const createTempDir = (): string => {
-  const directory = mkdtempSync(join(tmpdir(), 'supracode-fv-'))
+  const directory = mkdtempSync(join(tmpdir(), 'qyroucode-fv-'))
   return directory
 }
 

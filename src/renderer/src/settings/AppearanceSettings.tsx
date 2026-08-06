@@ -16,7 +16,7 @@ export default function AppearanceSettings({ theme, onThemeChange }: AppearanceS
       <div className="settings-tab-header"><h2>Appearance</h2></div>
       <div className="settings-tab-body">
         <SettingsGroup title="Theme">
-          <SettingsRow title="Color scheme" description="Choose how SupraCode follows your desktop theme.">
+          <SettingsRow title="Color scheme" description="Choose how QyrouCode follows your desktop theme.">
             <SettingsSelect
               value={theme}
               label="Color scheme"

@@ -190,5 +190,5 @@ export function buildConversationExport(
 
 export function exportFilename(request: ConversationExportRequest, now = new Date()): string {
   const date = now.toISOString().slice(0, 10)
-  return `supracode-conversations-${date}.${request.format}`
+  return `qyroucode-conversations-${date}.${request.format}`
 }
