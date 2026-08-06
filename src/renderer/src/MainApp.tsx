@@ -1500,19 +1500,13 @@ export default function MainApp(): JSX.Element {
     void window.api.saveChatThread(updated)
   }
 
-  const deriveThreadTitle = (message: string): string => {
-    const words = message.trim().split(/\s+/)
-    const title = words.slice(0, 6).join(' ')
-    return title.length > 60 ? title.slice(0, 57) + '...' : title
-  }
-
   const regenerateThreadTitle = async (thread: ChatThread): Promise<void> => {
     setContextMenu(null)
     const firstUserMsg = thread.messages.find((m) => m.role === 'user')
     if (!firstUserMsg) return
     setRegeneratingThreadId(thread.id)
     try {
-      const title = deriveThreadTitle(firstUserMsg.content)
+      const title = await window.api.generateChatTitle(firstUserMsg.content)
       if (!title) return
       const updated = { ...thread, title, updatedAt: Date.now() }
       replaceThread(updated)
@@ -1565,7 +1559,7 @@ export default function MainApp(): JSX.Element {
 
   const updateThreadTitle = async (threadId: string, userMessage: string): Promise<void> => {
     try {
-      const title = deriveThreadTitle(userMessage)
+      const title = await window.api.generateChatTitle(userMessage)
       const current = threadsRef.current.find((thread) => thread.id === threadId)
       if (!current || !title) return
       const updated = { ...current, title, updatedAt: Date.now() }

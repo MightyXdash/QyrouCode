@@ -9,6 +9,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getNativeLanguage, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setContextWindowTokens, setExpandedProjectPaths, setNativeLanguage, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
 import { DEFAULT_NATIVE_LANGUAGE, validateNativeLanguage } from '../shared/settings'
 import { LlamaRuntime } from './llamaRuntime'
+import { LLAMA_TITLE_SERVER_PORT } from '../shared/llama'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
 import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManifest'
@@ -48,6 +49,10 @@ function applyTheme(value: unknown): ReturnType<typeof setTheme> {
   nativeTheme.themeSource = theme
   return theme
 }
+const TITLE_MODEL_REPOSITORY = 'SupraLabs/Supra-Title-350M-exp-GGUF'
+const TITLE_MODEL_FILENAME = 'Supra-Title-350M-exp-Q5_K_M.gguf'
+const TITLE_MODEL_CONTEXT_TOKENS = 4096
+const TITLE_MODEL_MAX_INPUT_CHARACTERS = 12000
 const MODEL_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const INVALID_PROJECT_NAME_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/
 const WINDOWS_RESERVED_PROJECT_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
@@ -57,6 +62,7 @@ const MODEL_DOWNLOAD_ATTEMPTS = 3
 
 let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
+let titleRuntime: LlamaRuntime | null = null
 const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController; source: AgentModelSource }>()
 const activeModelDownloads = new Map<string, () => void>()
 
@@ -600,6 +606,7 @@ app.whenReady().then(() => {
   registerModelDownloadIpc()
   electronApp.setAppUserModelId('com.qyroucode')
   llamaRuntime = new LlamaRuntime()
+  titleRuntime = new LlamaRuntime(LLAMA_TITLE_SERVER_PORT)
   createMacApplicationMenu()
 
   app.on('browser-window-created', (_, window) => {
@@ -856,6 +863,16 @@ app.whenReady().then(() => {
     const projectorPath = await ensureModelProjector(repoId as string, modelPath)
     if (requireVision && !projectorPath) throw new Error('This model is missing the vision projector required for image input')
     return llamaRuntime.start(modelPath, getSelectedContextWindowTokens(), projectorPath)
+  })
+  ipcMain.handle('generate-chat-title', async (_event, userMessage: unknown) => {
+    if (typeof userMessage !== 'string' || !userMessage.trim()) throw new Error('A user message is required for title generation')
+    if (!titleRuntime) throw new Error('Title model runtime is unavailable')
+    const modelPath = resolveDownloadedModel(TITLE_MODEL_REPOSITORY, TITLE_MODEL_FILENAME)
+    const status = await titleRuntime.start(modelPath, TITLE_MODEL_CONTEXT_TOKENS)
+    if (status.state !== 'ready') throw new Error(status.message ?? 'Title model could not start')
+    const titleInput = userMessage.trim().slice(0, TITLE_MODEL_MAX_INPUT_CHARACTERS)
+    const title = await titleRuntime.completePrompt(`User: ${titleInput}\nTitle: `)
+    return title.replace(/[\r\n]+/g, ' ').replace(/^Title:\s*/i, '').trim()
   })
   ipcMain.handle('stop-llama-server', () => llamaRuntime?.stop())
 

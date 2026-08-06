@@ -15,7 +15,9 @@ import {
 import { MAX_CUSTOM_RESPONSE_STYLE_LENGTH } from '../../shared/settings'
 import './WelcomeScreen.css'
 
-const ESSENTIAL_MODELS: { id: string; hf_repo: string; label: string; gguf_file: string }[] = []
+const ESSENTIAL_MODELS: { id: string; hf_repo: string; label: string; gguf_file: string }[] = [
+  { id: 'supra-title', hf_repo: 'SupraLabs/Supra-Title-350M-exp-GGUF', label: 'Title Generator', gguf_file: 'Supra-Title-350M-exp-Q5_K_M.gguf' },
+]
 
 const ROLES = [
   'General Agent',
