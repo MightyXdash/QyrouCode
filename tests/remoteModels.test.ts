@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   NATIVE_REASONING_EFFORTS,
   REMOTE_REASONING_EFFORTS,
+  buildReasoningEffortPrompt,
   buildRemoteModelCatalog,
   groupRemoteModelsByPublisher,
   humanizeRemoteModelId,
@@ -69,6 +70,7 @@ const GEMINI_BODY = {
   data: [
     { id: 'gemini-3.5-flash' },
     { id: 'gemini-2.5-pro' },
+    { id: 'gemini-2.5-flash' },
     { id: 'gemini-2.0-flash' },
     { id: 'gemini-embedding-001' },
     { id: 'imagen-3.0-generate-002' },
@@ -121,7 +123,8 @@ test('OpenAI models infer capabilities from model ID patterns', () => {
   assert.equal(gpt.displayName, 'GPT 5.5')
   assert.equal(gpt.contextWindow, 400000)
   assert.equal(gpt.inputModalities.includes('image'), true)
-  assert.equal(gpt.reasoning.mandatory, true)
+  assert.equal(gpt.reasoning.mandatory, false)
+  assert.ok(gpt.reasoning.nativeEfforts.includes('none'))
   const legacy = catalogModel(openAiCatalog, 'gpt-4o')
   assert.equal(legacy.contextWindow, 128000)
   assert.equal(legacy.reasoning.nativeEfforts.length, 0)
@@ -148,6 +151,7 @@ test('Anthropic models use display names and infer thinking support', () => {
 test('Gemini models infer thinking from version and filter non-chat models', () => {
   assert.deepEqual(geminiCatalog.map((model) => model.id).sort(), [
     'gemini-2.0-flash',
+    'gemini-2.5-flash',
     'gemini-2.5-pro',
     'gemini-3.5-flash'
   ])
@@ -176,21 +180,28 @@ test('every inferred model has a valid control for every UI reasoning effort', (
   })
 })
 
-test('effort resolution follows provider-specific reasoning behavior', () => {
+test('effort resolution disables reasoning when providers expose a no-reasoning mode', () => {
   const openAiInstant = resolveRemoteReasoningEffort(catalogModel(openAiCatalog, 'gpt-5.5'), 'Instant')
   assert.deepEqual(openAiInstant, {
     requestedEffort: 'Instant',
-    enabled: true,
-    nativeEffort: 'minimal',
-    usesPromptFallback: false,
-    systemPrompt: null
+    enabled: false,
+    nativeEffort: 'none',
+    usesPromptFallback: true,
+    systemPrompt: buildReasoningEffortPrompt('Instant')
   })
   const anthropicInstant = resolveRemoteReasoningEffort(catalogModel(anthropicCatalog, 'claude-opus-4-8'), 'Instant')
   assert.equal(anthropicInstant.enabled, false)
   assert.equal(anthropicInstant.nativeEffort, null)
+  assert.match(anthropicInstant.systemPrompt ?? '', /do not perform or emit chain-of-thought/i)
   const openRouterInstant = resolveRemoteReasoningEffort(catalogModel(openRouterCatalog, 'openai/gpt-5.5'), 'Instant')
   assert.equal(openRouterInstant.enabled, false)
   assert.equal(openRouterInstant.nativeEffort, 'none')
+  const geminiFlashInstant = resolveRemoteReasoningEffort(catalogModel(geminiCatalog, 'gemini-2.5-flash'), 'Instant')
+  assert.equal(geminiFlashInstant.enabled, false)
+  assert.equal(geminiFlashInstant.nativeEffort, 'none')
+  const geminiProInstant = resolveRemoteReasoningEffort(catalogModel(geminiCatalog, 'gemini-2.5-pro'), 'Instant')
+  assert.equal(geminiProInstant.enabled, true)
+  assert.equal(geminiProInstant.nativeEffort, 'minimal')
   const geminiExtraHigh = resolveRemoteReasoningEffort(catalogModel(geminiCatalog, 'gemini-3.5-flash'), 'Extra high')
   assert.equal(geminiExtraHigh.nativeEffort, 'high')
   assert.equal(geminiExtraHigh.usesPromptFallback, true)
@@ -198,6 +209,10 @@ test('effort resolution follows provider-specific reasoning behavior', () => {
   assert.equal(promptOnly.nativeEffort, null)
   assert.equal(promptOnly.usesPromptFallback, true)
   assert.match(promptOnly.systemPrompt ?? '', /Reason deeply/i)
+  const promptOnlyInstant = resolveRemoteReasoningEffort(catalogModel(openRouterCatalog, 'qwen/qwen3.7-plus'), 'Instant')
+  assert.equal(promptOnlyInstant.enabled, false)
+  assert.equal(promptOnlyInstant.usesPromptFallback, true)
+  assert.match(promptOnlyInstant.systemPrompt ?? '', /do not perform or emit chain-of-thought/i)
 })
 
 test('reasoning inference uses OpenRouter supported parameters', () => {

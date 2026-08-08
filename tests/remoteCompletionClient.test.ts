@@ -83,6 +83,7 @@ test('injects prompt fallback controls for compatible models', async () => {
   await withServer(async (request, response) => {
     const body = await requestBody(request)
     assert.deepEqual((body.messages as Array<Record<string, unknown>>)[0], { role: 'system', content: 'Use brief reasoning.' })
+    assert.deepEqual(body.chat_template_kwargs, { enable_thinking: false })
     response.setHeader('content-type', 'application/json')
     response.end(JSON.stringify({ choices: [{ message: { content: 'Ready' } }] }))
   }, async (baseUrl) => {
@@ -94,7 +95,7 @@ test('injects prompt fallback controls for compatible models', async () => {
       retainReasoning: false,
       reasoning: { fallbackPrompt: 'Use brief reasoning.' }
     })
-    const completion = await client.complete({ messages: [{ role: 'user', content: 'Hello' }] })
+    const completion = await client.complete({ messages: [{ role: 'user', content: 'Hello' }], enableThinking: false })
     assert.equal(completion.text, 'Ready')
   })
 })

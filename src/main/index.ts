@@ -1019,7 +1019,7 @@ app.whenReady().then(() => {
           catalogModel ?? inferRemoteModel(connection.kind as CatalogConnectionKind, { id: target.modelId }),
           target.reasoningEffort
         )
-    const retainReasoning = shouldRetainRemoteReasoning(connection.kind)
+    const retainReasoning = shouldRetainRemoteReasoning(connection.kind) && reasoning.enabled
     const client = new RemoteCompletionClient({
       kind: connection.kind,
       baseUrl: connection.baseUrl,

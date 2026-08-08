@@ -279,11 +279,16 @@ export class LocalCompletionClient {
       }
       const choice = parsed.choices?.[0]
       const text = typeof choice?.message?.content === 'string' ? choice.message.content : ''
-      const reasoningText = typeof choice?.message?.reasoning_content === 'string'
+      const rawReasoningText = typeof choice?.message?.reasoning_content === 'string'
         ? choice.message.reasoning_content
         : typeof choice?.message?.reasoning === 'string' ? choice.message.reasoning : ''
+      const reasoningText = settings.enableThinking ? rawReasoningText : ''
       const toolCalls = parseToolCalls(choice?.message?.tool_calls)
-      if (!text && !reasoningText && toolCalls.length === 0) throw new Error('Local completion response did not contain assistant text, reasoning, or tool calls')
+      if (!text && !reasoningText && toolCalls.length === 0) {
+        throw new Error(settings.enableThinking
+          ? 'Local completion response did not contain assistant text, reasoning, or tool calls'
+          : 'Local completion returned only reasoning while thinking was disabled')
+      }
       return {
         text,
         toolCalls,
@@ -344,7 +349,10 @@ export class LocalCompletionClient {
         throw new Error(`Local completion request failed with ${response.status}${detail ? `: ${detail}` : ''}`)
       }
       if (!response.body) throw new Error('Local completion did not return a response stream')
-      return await consumeOpenAiCompletionStream(response.body, onDelta)
+      const completion = await consumeOpenAiCompletionStream(response.body, onDelta)
+      if (settings.enableThinking) return completion
+      if (!completion.text && completion.toolCalls.length === 0) throw new Error('Local completion returned only reasoning while thinking was disabled')
+      return { ...completion, reasoningText: undefined }
     } catch (error) {
       if (controller.signal.aborted) {
         const reason = controller.signal.reason

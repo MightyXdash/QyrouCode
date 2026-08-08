@@ -125,6 +125,9 @@ function completionBody(request: LocalCompletionRequest, configuration: RemoteCo
     top_p: usesNativeReasoning ? undefined : request.topP,
     tools: request.tools?.map((definition) => ({ type: 'function', function: definition })),
     tool_choice: request.tools?.length ? request.toolChoice ?? 'auto' : undefined,
+    chat_template_kwargs: configuration.kind === 'openai-compatible' && request.enableThinking !== undefined
+      ? { enable_thinking: request.enableThinking }
+      : undefined,
     store: configuration.kind === 'openai' ? false : undefined,
     ...reasoningFields(configuration.kind, configuration.reasoning, configuration.retainReasoning)
   }

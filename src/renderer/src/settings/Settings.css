@@ -60,6 +60,9 @@
   --settings-refinement-note-font-size: 10px;
   --settings-refinement-note-line-height: 1.45;
   --settings-refinement-note-background: light-dark(#f4f6fb, #222631);
+  --settings-local-model-progress-height: 3px;
+  --settings-local-model-progress-gap: 3px;
+  --settings-scrollbar-size: 6px;
   position: fixed;
   inset: 0;
   z-index: 95;
@@ -960,9 +963,43 @@ button.settings-empty-row {
   font-size: 10px;
 }
 
-.settings-model-list,
-.settings-local-model-list {
+.settings-model-list {
   overflow: visible;
+}
+
+.settings-local-model-section {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-local-model-section .settings-tab-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+}
+
+.settings-local-model-list {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: var(--border-base) transparent;
+  scrollbar-width: thin;
+}
+
+.settings-local-model-list::-webkit-scrollbar {
+  width: var(--settings-scrollbar-size);
+}
+
+.settings-local-model-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-local-model-list::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-lg);
+  background: var(--border-base);
 }
 
 .settings-model-groups {
@@ -1012,6 +1049,10 @@ button.settings-empty-row {
   min-height: 66px;
 }
 
+.settings-local-model-row.downloading {
+  align-items: flex-start;
+}
+
 .settings-local-model-copy > div {
   display: flex;
   align-items: center;
@@ -1034,16 +1075,25 @@ button.settings-empty-row {
   font-size: 10px;
 }
 
-.settings-download-progress {
-  position: relative;
-  width: min(320px, 100%);
-  height: 3px;
+.settings-local-model-copy > .settings-download-progress {
+  display: flex;
+  width: 100%;
+  align-items: stretch;
+  flex-direction: column;
+  gap: var(--settings-local-model-progress-gap);
   margin-top: 5px;
+}
+
+.settings-local-model-copy > .settings-download-progress > div {
+  display: block;
+  width: 100%;
+  height: var(--settings-local-model-progress-height);
+  overflow: hidden;
   border-radius: var(--radius-sm);
   background: var(--background-weak);
 }
 
-.settings-download-progress > span {
+.settings-download-progress > div > span {
   display: block;
   height: 100%;
   border-radius: inherit;
@@ -1051,11 +1101,10 @@ button.settings-empty-row {
 }
 
 .settings-download-progress small {
-  position: absolute;
-  top: 6px;
-  left: 0;
+  align-self: flex-start;
   color: var(--text-weak);
   font-size: 9px;
+  line-height: 1.2;
 }
 
 .settings-footnote {

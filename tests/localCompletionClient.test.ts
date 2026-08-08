@@ -129,7 +129,7 @@ test('reconstructs fragmented streamed reasoning and tool calls', async () => {
 
   try {
     const completion = await new LocalCompletionClient(server.url).stream(
-      { messages: [{ role: 'user', content: 'Inspect the app.' }] },
+      { messages: [{ role: 'user', content: 'Inspect the app.' }], enableThinking: true },
       () => {}
     )
     assert.equal(completion.reasoningText, 'checking files')
@@ -194,6 +194,30 @@ test('preserves reasoning-only completions for agent recovery without exposing t
     assert.equal(completion.text, '')
     assert.equal(completion.reasoningText, 'private model reasoning')
     assert.deepEqual(completion.toolCalls, [])
+  } finally {
+    await server.close()
+  }
+})
+
+test('rejects reasoning-only completions when thinking is disabled', async () => {
+  const server = await startServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({
+      choices: [{
+        finish_reason: 'stop',
+        message: { content: null, reasoning_content: 'private model reasoning' }
+      }]
+    }))
+  })
+
+  try {
+    await assert.rejects(
+      new LocalCompletionClient(server.url).complete({
+        messages: [{ role: 'user', content: 'Answer directly.' }],
+        enableThinking: false
+      }),
+      /only reasoning while thinking was disabled/
+    )
   } finally {
     await server.close()
   }

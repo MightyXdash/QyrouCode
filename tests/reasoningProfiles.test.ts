@@ -3,14 +3,15 @@ import test from 'node:test'
 import { MODEL_LIST } from '../src/renderer/src/modelCatalog.js'
 import { reasoningProfile } from '../src/renderer/src/reasoningProfiles.js'
 
-test('Instant disables native thinking for Qwen and Gemma models', () => {
+test('Instant disables native thinking and explicitly forbids reasoning for Qwen and Gemma models', () => {
   const models = MODEL_LIST.filter((model) => /qwen|gemma/i.test(model.base_model))
 
   assert.ok(models.length > 0)
   for (const model of models) {
     const profile = reasoningProfile(model, 'Instant')
     assert.equal(profile.enableThinking, false, model.name)
-    assert.doesNotMatch(profile.systemPrompt, /internal reasoning|chain-of-thought|thinking tokens/i, model.name)
+    assert.match(profile.systemPrompt, /do not perform or emit chain-of-thought/i, model.name)
+    assert.match(profile.systemPrompt, /return only tool calls or the final answer/i, model.name)
   }
 })
 

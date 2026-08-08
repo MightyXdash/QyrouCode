@@ -154,12 +154,20 @@ const modelIdNumbers = (modelId: string): number[] =>
 const isOpenAiReasoningModel = (modelId: string): boolean =>
   /^(?:o\d+|gpt-[5-9])/.test(modelId) && !/-chat(?:-|$)/.test(modelId)
 
+const openAiReasoningCanBeDisabled = (modelId: string): boolean => {
+  const version = modelId.match(/^gpt-(\d+(?:\.\d+)?)/)?.[1]
+  return version !== undefined && Number.parseFloat(version) >= 5.1 && !/-pro(?:-|$)/.test(modelId)
+}
+
 const anthropicSupportsThinking = (modelId: string): boolean => {
   const [major = 0, minor = 0] = modelIdNumbers(modelId.replace(/^claude-/, ''))
   return major >= 4 || (major === 3 && minor >= 7)
 }
 
 const geminiSupportsThinking = (modelId: string): boolean => (modelIdNumbers(modelId)[0] ?? 0) >= 2.5
+
+const geminiReasoningCanBeDisabled = (modelId: string): boolean =>
+  /^gemini-2\.5-flash(?:-lite)?(?:-|$)/.test(modelId)
 
 const isChatCapableModelId = (kind: CatalogConnectionKind, modelId: string): boolean => {
   const id = modelId.toLowerCase()
@@ -188,7 +196,9 @@ export const inferRemoteReasoning = (
   }
   if (kind === 'openai') {
     return isOpenAiReasoningModel(id)
-      ? defineReasoning(true, true, ['minimal', 'low', 'medium', 'high'], MINIMAL_FLOOR_EFFORT_MAP)
+      ? openAiReasoningCanBeDisabled(id)
+        ? defineReasoning(false, true, ['none', 'low', 'medium', 'high'], OPENROUTER_NATIVE_EFFORT_MAP)
+        : defineReasoning(true, true, ['minimal', 'low', 'medium', 'high'], MINIMAL_FLOOR_EFFORT_MAP)
       : promptOnlyReasoning(false)
   }
   if (kind === 'anthropic') {
@@ -197,7 +207,9 @@ export const inferRemoteReasoning = (
       : promptOnlyReasoning(false)
   }
   return geminiSupportsThinking(id)
-    ? defineReasoning(true, true, ['minimal', 'low', 'medium', 'high'], MINIMAL_FLOOR_EFFORT_MAP)
+    ? geminiReasoningCanBeDisabled(id)
+      ? defineReasoning(false, true, ['none', 'low', 'medium', 'high'], OPENROUTER_NATIVE_EFFORT_MAP)
+      : defineReasoning(true, true, ['minimal', 'low', 'medium', 'high'], MINIMAL_FLOOR_EFFORT_MAP)
     : promptOnlyReasoning(false)
 }
 
@@ -334,7 +346,7 @@ export const sortRemoteModels = (models: readonly RemoteModel[]): RemoteModel[] 
   })
 
 export const REASONING_EFFORT_PROMPTS: Readonly<Record<RemoteReasoningEffort, string>> = {
-  Instant: 'Use the shortest viable internal reasoning path and the fewest steps needed for a reliable answer.',
+  Instant: 'Do not perform or emit chain-of-thought, hidden analysis, deliberation, or thinking tokens. Answer immediately from the available context. If tools are necessary, select and call them directly without a narrated planning pass. Return only tool calls or the final answer.',
   Low: 'Use a short, focused internal reasoning pass. Consider only the decisive constraints and avoid unnecessary alternatives.',
   Medium: 'Use a balanced internal reasoning pass. Check the main assumptions and important tradeoffs before answering.',
   High: 'Reason deeply, test important assumptions, compare viable approaches, and check meaningful failure modes.',
@@ -352,7 +364,9 @@ export const groupRemoteModelsByPublisher = (models: readonly RemoteModel[]): Re
 }
 
 export const getReasoningEffortPrompt = (effort: RemoteReasoningEffort): string =>
-  `${REASONING_EFFORT_PROMPTS[effort]} Keep private reasoning private and return only the useful final answer.`
+  effort === 'Instant'
+    ? REASONING_EFFORT_PROMPTS.Instant
+    : `${REASONING_EFFORT_PROMPTS[effort]} Keep private reasoning private and return only the useful final answer.`
 
 export const buildReasoningEffortPrompt = getReasoningEffortPrompt
 
@@ -366,8 +380,10 @@ export const resolveRemoteReasoningEffort = (
     requestedEffort,
     enabled: control.enabled,
     nativeEffort: control.nativeEffort,
-    usesPromptFallback: control.promptFallback !== null,
-    systemPrompt: control.promptFallback === null ? null : getReasoningEffortPrompt(control.promptFallback)
+    usesPromptFallback: control.promptFallback !== null || (requestedEffort === 'Instant' && !model.reasoning.mandatory),
+    systemPrompt: requestedEffort === 'Instant' && !model.reasoning.mandatory
+      ? getReasoningEffortPrompt('Instant')
+      : control.promptFallback === null ? null : getReasoningEffortPrompt(control.promptFallback)
   }
 }
 

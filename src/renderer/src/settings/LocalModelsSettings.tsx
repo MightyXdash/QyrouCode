@@ -26,7 +26,7 @@ export default function LocalModelsSettings({ catalog, downloadedModelIds, downl
   }, [catalog, query])
 
   return (
-    <>
+    <div className="settings-local-model-section">
       <div className="settings-tab-header"><h2>Local models</h2></div>
       <div className="settings-tab-body">
         <div className="settings-model-toolbar">
@@ -39,12 +39,15 @@ export default function LocalModelsSettings({ catalog, downloadedModelIds, downl
             const download = downloads[model.hf_repo]
             const progress = download?.total ? Math.min(100, Math.round((download.downloaded / download.total) * 100)) : 0
             return (
-              <div className="settings-local-model-row" key={model.id}>
+              <div className={`settings-local-model-row${download && !download.error ? ' downloading' : ''}`} key={model.id}>
                 <div className="settings-local-model-copy">
                   <div><strong>{model.base_model}</strong>{model.vision && <span className="settings-badge">Vision</span>}</div>
                   <span>{model.parameters} · {model.quantization} · {model.recommended_vram_gb} GB recommended · {model.hf_repo}</span>
                   {download && !download.error && (
-                    <div className="settings-download-progress"><span style={{ width: `${progress}%` }} /><small>{progress}% · {formatBytes(download.downloaded)} / {formatBytes(download.total)}</small></div>
+                    <div className="settings-download-progress">
+                      <div><span style={{ width: `${progress}%` }} /></div>
+                      <small>{progress}% · {formatBytes(download.downloaded)} / {formatBytes(download.total)}</small>
+                    </div>
                   )}
                   {download?.error && <small className="error">{download.error}</small>}
                 </div>
@@ -61,6 +64,6 @@ export default function LocalModelsSettings({ catalog, downloadedModelIds, downl
         </div>
         <p className="settings-footnote">Downloads are stored in the local Hugging Face cache. Finished models appear in the composer automatically.</p>
       </div>
-    </>
+    </div>
   )
 }
