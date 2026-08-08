@@ -527,7 +527,10 @@ export default function MainApp(): JSX.Element {
   const [promptRefinementBusy, setPromptRefinementBusy] = useState(false)
   const [promptRefinementError, setPromptRefinementError] = useState('')
   const [projects, setProjects] = useState<Project[]>([])
+  const [projectsLoaded, setProjectsLoaded] = useState(false)
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
+  const [projectSetupOpen, setProjectSetupOpen] = useState(false)
+  const [projectSetupError, setProjectSetupError] = useState('')
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [projectError, setProjectError] = useState('')
@@ -563,6 +566,7 @@ export default function MainApp(): JSX.Element {
   const projectMenuRef = useRef<HTMLDivElement>(null)
   const projectActionMenuRef = useRef<HTMLDivElement>(null)
   const projectNameRef = useRef<HTMLInputElement>(null)
+  const projectSetupCreateRef = useRef<HTMLButtonElement>(null)
   const activeThreadRef = useRef<ChatThread | null>(null)
   const threadsRef = useRef<ChatThread[]>([])
   const threadRunsRef = useRef<Record<string, ThreadRun>>({})
@@ -654,6 +658,8 @@ export default function MainApp(): JSX.Element {
     })
   ), [composerModels, promptRefinementPreferences])
   const selectedModel = composerModels.find((model) => model.id === selectedModelId)
+  const hasSelectedProject = projects.some((project) => project.path === selectedProjectPath)
+  const canUseAgent = projectsLoaded && hasSelectedProject
   const completionState = activeThread && hasPendingAssistant(activeThread)
     ? threadRuns[activeThread.id]?.state ?? 'starting'
     : 'idle'
@@ -945,7 +951,8 @@ export default function MainApp(): JSX.Element {
       setExpandedWorkIds(new Set(storedViewState.expandedWorkIds))
       projectExpansionLoadedRef.current = true
       viewStateLoadedRef.current = true
-    })
+      setProjectsLoaded(true)
+    }).catch(() => setProjectsLoaded(true))
     void refreshDownloadedModels().catch(() => setDownloadedModelIds(new Set()))
   }, [])
 
@@ -1293,16 +1300,18 @@ export default function MainApp(): JSX.Element {
   }, [activeThread, terminalHeight, terminalOpen, todoCollapsed])
 
   useEffect(() => {
-    if (!projectDialogOpen && !renamingProject) return
-    projectNameRef.current?.focus()
+    if (!projectDialogOpen && !renamingProject && !projectSetupOpen) return
+    if (projectSetupOpen) projectSetupCreateRef.current?.focus()
+    else projectNameRef.current?.focus()
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape' || projectSaving) return
       setProjectDialogOpen(false)
       setRenamingProject(null)
+      setProjectSetupOpen(false)
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [projectDialogOpen, projectSaving, renamingProject])
+  }, [projectDialogOpen, projectSaving, projectSetupOpen, renamingProject])
 
   useEffect(() => {
     if (!renamingThreadId) return
@@ -1384,9 +1393,18 @@ export default function MainApp(): JSX.Element {
 
   const openCreateProjectDialog = (): void => {
     setProjectMenuOpen(false)
+    setProjectSetupOpen(false)
     setProjectName('')
     setProjectError('')
     setProjectDialogOpen(true)
+  }
+
+  const openProjectSetup = (): void => {
+    setComposerProjectMenuOpen(false)
+    setOpenAttachMenu(false)
+    setOpenMenu(null)
+    setProjectSetupError('')
+    setProjectSetupOpen(true)
   }
 
   const openRenameProjectDialog = (project: Project): void => {
@@ -1442,14 +1460,22 @@ export default function MainApp(): JSX.Element {
     }
   }
 
-  const chooseProjectFolder = async (): Promise<void> => {
+  const chooseProjectFolder = async (preserveDraft = false): Promise<void> => {
     setProjectMenuOpen(false)
-    const project = await window.api.chooseProjectFolder()
-    if (project) {
-      setProjects((current) => [project, ...current.filter((item) => item.path !== project.path)])
-      setSelectedProjectPath(project.path)
-      setExpandedProjects((current) => new Set(current).add(project.path))
-      startNewThread()
+    setProjectSetupError('')
+    try {
+      const project = await window.api.chooseProjectFolder()
+      if (project) {
+        setProjects((current) => [project, ...current.filter((item) => item.path !== project.path)])
+        setSelectedProjectPath(project.path)
+        setExpandedProjects((current) => new Set(current).add(project.path))
+        setProjectSetupOpen(false)
+        if (preserveDraft) requestAnimationFrame(() => promptTextareaRef.current?.focus())
+        else startNewThread()
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not open the project folder'
+      if (preserveDraft) setProjectSetupError(message)
     }
   }
 
@@ -1464,6 +1490,8 @@ export default function MainApp(): JSX.Element {
       setSelectedProjectPath(project.path)
       setExpandedProjects((current) => new Set(current).add(project.path))
       setProjectDialogOpen(false)
+      setProjectSetupOpen(false)
+      requestAnimationFrame(() => promptTextareaRef.current?.focus())
     } catch (error) {
       setProjectError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'Could not create the project')
     } finally {
@@ -1789,6 +1817,10 @@ export default function MainApp(): JSX.Element {
     if (promptRefinementBusy) return
     const content = prompt.trim()
     if ((!content && pendingAttachments.length === 0) || completionState !== 'idle' || !selectedModel) return
+    if (!canUseAgent) {
+      if (projectsLoaded) openProjectSetup()
+      return
+    }
     const imageAttachments = pendingAttachments.filter((attachment) => (attachment.kind ?? 'image') === 'image')
     if (imageAttachments.length > 0 && !selectedModel.vision) {
       setAttachmentError('The selected model does not support images')
@@ -1801,7 +1833,7 @@ export default function MainApp(): JSX.Element {
       setAttachmentError('A local model is already running in another thread')
       return
     }
-    const projectPath = activeThreadRef.current?.projectPath ?? selectedProjectPath ?? projects[0]?.path ?? ''
+    const projectPath = activeThreadRef.current?.projectPath ?? selectedProjectPath
     const now = Date.now()
     let pendingForSend = pendingAttachments
     const fileAttachments = pendingAttachments.filter((attachment) => (attachment.kind ?? 'image') === 'file')
@@ -2370,7 +2402,7 @@ export default function MainApp(): JSX.Element {
           <div className="composer-toolbar" ref={controlsRef}>
             <div className="composer-actions">
               <div className="composer-attach-wrap">
-                <button className="composer-icon-button" type="button" aria-label="Attach" title="Attach files or images" disabled={completionState !== 'idle' || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => setOpenAttachMenu((open) => !open)}><Plus size={14} /></button>
+                <button className="composer-icon-button" type="button" aria-label="Attach" title={canUseAgent ? 'Attach files or images' : 'Choose a project before attaching files'} disabled={!canUseAgent || completionState !== 'idle' || pendingAttachments.length >= MAX_CHAT_ATTACHMENTS} onClick={() => setOpenAttachMenu((open) => !open)}><Plus size={14} /></button>
                 {openAttachMenu && (
                   <div className="composer-menu attach-menu" role="menu">
                     <button className="menu-option" type="button" onClick={() => { setOpenAttachMenu(false); void chooseChatImages() }}>
@@ -2388,7 +2420,7 @@ export default function MainApp(): JSX.Element {
                 aria-label={promptRefinementBusy ? 'Refining prompt' : 'Refine prompt'}
                 aria-busy={promptRefinementBusy}
                 title={`Refine prompt (${PROMPT_REFINEMENT_SHORTCUT})`}
-                disabled={!prompt.trim() || promptRefinementBusy || completionState !== 'idle' || promptRefinementTargets.length === 0}
+                disabled={!canUseAgent || !prompt.trim() || promptRefinementBusy || completionState !== 'idle' || promptRefinementTargets.length === 0}
                 onClick={() => void refineCurrentPrompt()}
               >
                 {promptRefinementBusy ? <LoaderCircle size={14} /> : <ChartNoAxesGantt size={14} />}
@@ -2488,7 +2520,7 @@ export default function MainApp(): JSX.Element {
                 </button>
               </div>
               {completionState === 'idle'
-                ? <button className="send-button" type="submit" disabled={promptRefinementBusy || (!prompt.trim() && pendingAttachments.length === 0) || !selectedModel} aria-label="Send prompt"><ArrowUp size={16} /></button>
+                ? <button className="send-button" type="submit" disabled={promptRefinementBusy || (!prompt.trim() && pendingAttachments.length === 0) || !selectedModel} aria-label={canUseAgent ? 'Send prompt' : 'Choose a project before sending'} title={canUseAgent ? 'Send prompt' : 'Choose a project before sending'}><ArrowUp size={16} /></button>
                 : <button className="send-button stop-button" type="button" aria-label="Stop response" onClick={() => {
                   if (activeThread) stopThreadRun(activeThread.id)
                 }}><Square size={14} /></button>}
@@ -2496,6 +2528,13 @@ export default function MainApp(): JSX.Element {
           </div>
           {!activeThread && (
             <div className="composer-project-strip">
+              {projectsLoaded && !hasSelectedProject ? (
+                <button className="composer-project-required" type="button" onClick={openProjectSetup}>
+                  <FolderPlus size={14} aria-hidden="true" />
+                  <span>Project required</span>
+                  <span className="composer-project-required-copy">Choose where QyrouCode can work</span>
+                </button>
+              ) : (
               <div className="composer-project-selector" ref={composerProjectMenuRef}>
                 <button
                   className="composer-project-trigger"
@@ -2507,7 +2546,7 @@ export default function MainApp(): JSX.Element {
                   onClick={() => setComposerProjectMenuOpen((current) => !current)}
                 >
                   <FolderOpen size={14} aria-hidden="true" />
-                  <span>{projects.find((project) => project.path === selectedProjectPath)?.name ?? 'No project'}</span>
+                  <span>{projectsLoaded ? projects.find((project) => project.path === selectedProjectPath)?.name ?? 'No project' : 'Loading projects…'}</span>
                   <ChevronDown className={composerProjectMenuOpen ? 'expanded' : undefined} size={12} aria-hidden="true" />
                 </button>
                 {composerProjectMenuOpen && (
@@ -2533,6 +2572,7 @@ export default function MainApp(): JSX.Element {
                   </div>
                 )}
               </div>
+              )}
             </div>
           )}
         </form>
@@ -2600,9 +2640,29 @@ export default function MainApp(): JSX.Element {
           onClose={() => setSettingsOpen(false)}
         />
       )}
+      {projectSetupOpen && (
+        <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProjectSetupOpen(false) }}>
+          <section className="project-dialog project-setup-dialog" role="dialog" aria-modal="true" aria-labelledby="project-setup-dialog-title" aria-describedby="project-setup-dialog-description">
+            <h2 id="project-setup-dialog-title">Choose where to work</h2>
+            <p id="project-setup-dialog-description">QyrouCode needs a project folder to safely read and change files.</p>
+            {projectSetupError && <div className="project-dialog-error" role="alert">{projectSetupError}</div>}
+            <div className="project-setup-actions">
+              <button className="primary" type="button" ref={projectSetupCreateRef} onClick={openCreateProjectDialog}>
+                <FolderPlus size={15} />
+                <span>Create a project</span>
+              </button>
+              <button type="button" onClick={() => void chooseProjectFolder(true)}>
+                <FolderOpen size={15} />
+                <span>Open existing folder</span>
+              </button>
+            </div>
+            <button className="project-setup-cancel" type="button" onClick={() => setProjectSetupOpen(false)}>Not now</button>
+          </section>
+        </div>
+      )}
       {projectDialogOpen && (
         <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectSaving) setProjectDialogOpen(false) }}>
-          <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
+          <section className="project-dialog project-create-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
             <h2 id="project-dialog-title">Name your project</h2>
             <p>A project should be short and memorable</p>
             <form onSubmit={(event) => void createProject(event)}>
