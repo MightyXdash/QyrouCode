@@ -2787,7 +2787,7 @@ export default function MainApp(): JSX.Element {
       )}
       {deleteConfirmThread && (
         <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteConfirmThread(null) }}>
-          <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
+          <section className="project-dialog project-delete-thread-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
             <h2 id="delete-dialog-title">Delete thread</h2>
             <p>Are you sure you want to delete "<strong>{deleteConfirmThread.title}</strong>"? This action cannot be undone.</p>
             <div className="project-dialog-actions">

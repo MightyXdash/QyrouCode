@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { archSupportsVision, backendAppearsInDeviceList, buildLlamaServerArgs, inferReasoningFormat, llamaRuntimeProfileMatches, type LlamaLaunchProfile } from '../src/shared/llama.js'
+import { archSupportsVision, backendAppearsInDeviceList, buildLlamaServerArgs, llamaRuntimeProfileMatches, type LlamaLaunchProfile } from '../src/shared/llama.js'
 import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '../src/shared/settings.js'
 
 const baseProfile: LlamaLaunchProfile = {
@@ -72,11 +72,4 @@ test('detects vision-capable architectures from server probes', () => {
   assert.equal(archSupportsVision(['qwen2.5']), false)
   assert.equal(archSupportsVision(undefined), false)
   assert.equal(archSupportsVision(['llava', 'clip']), true)
-})
-
-test('selects the reasoning format from the model family', () => {
-  assert.equal(inferReasoningFormat('/models/qwen3.5-4b-q4.gguf'), 'qwen3')
-  assert.equal(inferReasoningFormat('gemma-4-26B.gguf'), 'gemma3')
-  assert.equal(inferReasoningFormat('/models/deepseek-r1.gguf'), 'deepseek')
-  assert.equal(inferReasoningFormat(undefined), 'deepseek')
 })

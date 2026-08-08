@@ -1,5 +1,4 @@
 import { consumeOpenAiCompletionStream } from './openAiCompletionStream'
-import type { LlamaReasoningFormat } from '../shared/llama'
 
 export type LocalChatRole = 'system' | 'user' | 'assistant' | 'tool'
 
@@ -48,7 +47,6 @@ export interface LocalCompletionRequest {
   minP?: number
   presencePenalty?: number
   repetitionPenalty?: number
-  reasoningFormat?: LlamaReasoningFormat
   tools?: readonly LocalToolDefinition[]
   toolChoice?: 'auto' | 'none'
   signal?: AbortSignal
@@ -140,7 +138,6 @@ interface CompletionSettings {
   minP?: number
   presencePenalty?: number
   repetitionPenalty?: number
-  reasoningFormat: LlamaReasoningFormat
 }
 
 const optionalNumber = (value: number | undefined, minimum: number, maximum: number, name: string): number | undefined => {
@@ -187,8 +184,7 @@ const validateRequest = (request: LocalCompletionRequest): CompletionSettings =>
     topK,
     minP: optionalNumber(request.minP, 0, 1, 'Min P'),
     presencePenalty: optionalNumber(request.presencePenalty, 0, 2, 'Presence penalty'),
-    repetitionPenalty: optionalNumber(request.repetitionPenalty, 0, 2, 'Repetition penalty'),
-    reasoningFormat: request.reasoningFormat ?? 'deepseek'
+    repetitionPenalty: optionalNumber(request.repetitionPenalty, 0, 2, 'Repetition penalty')
   }
 }
 
@@ -215,7 +211,6 @@ const completionBody = (request: LocalCompletionRequest, settings: CompletionSet
   presence_penalty: settings.presencePenalty,
   repeat_penalty: settings.repetitionPenalty,
   chat_template_kwargs: { enable_thinking: settings.enableThinking },
-  reasoning_format: settings.reasoningFormat,
   tools: request.tools?.map((definition) => ({
     type: 'function',
     function: definition

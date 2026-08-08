@@ -41,8 +41,7 @@ test('sends a bounded non-streaming OpenAI-compatible chat completion request', 
       stream: false,
       max_tokens: 32,
       temperature: 0,
-      chat_template_kwargs: { enable_thinking: false },
-      reasoning_format: 'deepseek'
+      chat_template_kwargs: { enable_thinking: false }
     })
   } finally {
     await server.close()

@@ -9,7 +9,6 @@ import {
   archSupportsVision,
   backendAppearsInDeviceList,
   buildLlamaServerArgs,
-  inferReasoningFormat,
   llamaRuntimeProfileMatches,
   type LlamaBackend,
   type LlamaPlatform,
@@ -155,22 +154,18 @@ export class LlamaRuntime {
 
   async streamCompletion(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<LocalCompletion> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
-    return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).stream(this.withReasoningFormat(request), onDelta)
+    return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).stream(request, onDelta)
   }
 
   async complete(request: LocalCompletionRequest): Promise<LocalCompletion> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
-    return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).complete(this.withReasoningFormat(request))
+    return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).complete(request)
   }
 
   async runAgent(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void): Promise<void> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
     const client = new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`)
-    await new AgentRuntime(client).run(this.withReasoningFormat(request), onDelta, onState, onToolEvent)
-  }
-
-  private withReasoningFormat<T extends LocalCompletionRequest>(request: T): T {
-    return request.reasoningFormat ? request : { ...request, reasoningFormat: inferReasoningFormat(this.status.modelPath) }
+    await new AgentRuntime(client).run(request, onDelta, onState, onToolEvent)
   }
 
   async completePrompt(prompt: string): Promise<string> {

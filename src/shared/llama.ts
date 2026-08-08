@@ -17,19 +17,10 @@ export interface LlamaRuntimeStatus {
   message?: string
 }
 
-export type LlamaReasoningFormat = 'deepseek' | 'qwen3' | 'gemma3'
-
 const VISION_ARCH_MARKERS = ['clip', 'llava', 'vl', 'minicpm', 'moondream', 'florence', 'siglip', 'pixtral', 'mllama', 'gemma3'] as const
 
 export const archSupportsVision = (modelArchs: readonly string[] | undefined): boolean =>
   (modelArchs ?? []).some((arch) => VISION_ARCH_MARKERS.some((marker) => arch.toLowerCase().includes(marker)))
-
-export const inferReasoningFormat = (modelPath: string | undefined): LlamaReasoningFormat => {
-  const normalized = (modelPath ?? '').toLowerCase()
-  if (normalized.includes('gemma')) return 'gemma3'
-  if (normalized.includes('qwen')) return 'qwen3'
-  return 'deepseek'
-}
 
 export interface LlamaLaunchProfile {
   platform: LlamaPlatform

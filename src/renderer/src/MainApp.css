@@ -908,6 +908,10 @@ body:has(.macos-window) {
 .project-create-dialog .project-dialog-actions button { border-radius: var(--project-setup-action-corner-radius); corner-shape: squircle; }
 .project-create-dialog .project-dialog-actions button.primary { border-color: var(--surface-brand); background: var(--surface-brand); color: var(--text-on-brand); }
 .project-create-dialog .project-dialog-actions button.primary:hover:not(:disabled), .project-create-dialog .project-dialog-actions button.primary:focus-visible { border-color: var(--surface-brand-hover); background: var(--surface-brand-hover); color: var(--text-on-brand); outline: 0; }
+.project-delete-thread-dialog { border-radius: var(--project-setup-dialog-corner-radius); corner-shape: squircle; }
+.project-delete-thread-dialog .project-dialog-actions button { border-radius: var(--project-setup-action-corner-radius); corner-shape: squircle; }
+.project-delete-thread-dialog .project-dialog-actions button.delete-confirm { border-color: var(--surface-brand); background: var(--surface-brand); color: var(--text-on-brand); }
+.project-delete-thread-dialog .project-dialog-actions button.delete-confirm:hover, .project-delete-thread-dialog .project-dialog-actions button.delete-confirm:focus-visible { border-color: var(--surface-brand-hover); background: var(--surface-brand-hover); color: var(--text-on-brand); outline: 0; }
 .project-setup-dialog > p { margin-bottom: 18px; }
 .project-setup-actions { display: grid; gap: var(--project-setup-action-gap); }
 .project-setup-actions button { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: var(--project-setup-action-height); padding: 0 12px; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--project-setup-action-corner-radius); corner-shape: squircle; background: transparent; color: var(--text-base); font: inherit; font-size: 12px; cursor: pointer; }
