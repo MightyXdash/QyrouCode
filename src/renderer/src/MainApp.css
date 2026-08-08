@@ -41,8 +41,8 @@
   --app-menu-padding: 4px;
   --app-menu-item-height: 30px;
   --app-menu-item-padding-inline: 7px;
-  --app-menu-corner-radius: 14px;
-  --app-menu-item-corner-radius: 8px;
+  --app-menu-corner-radius: 24px;
+  --app-menu-item-corner-radius: 14px;
   --app-selector-corner-radius: calc(var(--app-control-height) / 2);
   --app-user-message-corner-radius: 14px;
   --app-user-message-padding-block: 8px;

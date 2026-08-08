@@ -50,7 +50,7 @@ function applyTheme(value: unknown): ReturnType<typeof setTheme> {
   return theme
 }
 const TITLE_MODEL_REPOSITORY = 'SupraLabs/Supra-Title-350M-exp-GGUF'
-const TITLE_MODEL_FILENAME = 'Supra-Title-350M-exp-Q5_K_M.gguf'
+const TITLE_MODEL_FILENAME = 'LiquidAI_LFM2.5-350M-Base_1781204855.Q5_K_M.gguf'
 const TITLE_MODEL_CONTEXT_TOKENS = 4096
 const TITLE_MODEL_MAX_INPUT_CHARACTERS = 12000
 const MODEL_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
