@@ -152,6 +152,7 @@
   --project-dialog-width: 420px;
   --project-dialog-padding: 24px;
   --project-dialog-motion-duration: 180ms;
+  --project-dialog-morph-duration: 260ms;
   --project-dialog-enter-scale: 0.92;
   --project-setup-dialog-corner-radius: 36px;
   --project-setup-action-corner-radius: 18px;
@@ -888,7 +889,7 @@
 .project-dialog-actions button.primary { border-color: var(--interactive); background: var(--interactive); color: var(--text-on-color); }
 .project-dialog-actions button:disabled { opacity: 0.45; cursor: default; }
 .project-dialog-actions button.delete-confirm.primary { border-color: var(--surface-error); background: var(--surface-error); color: var(--text-on-color); }
-.project-setup-dialog, .project-create-dialog { border-radius: var(--project-setup-dialog-corner-radius); corner-shape: squircle; }
+.project-setup-dialog, .project-create-dialog { border-radius: var(--project-setup-dialog-corner-radius); corner-shape: squircle; view-transition-name: project-flow-dialog; }
 .project-create-dialog input { border-radius: var(--project-dialog-field-corner-radius); corner-shape: squircle; }
 .project-create-dialog input:focus { border-color: var(--surface-brand); box-shadow: 0 0 0 1px var(--surface-brand); }
 .project-create-dialog .project-dialog-actions button { border-radius: var(--project-setup-action-corner-radius); corner-shape: squircle; }
@@ -1149,6 +1150,8 @@
 @keyframes menuEnter { from { opacity: 0; transform: translateY(2px) scale(0.94); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @keyframes agentMenuEnter { from { opacity: 0; transform: translate3d(0, 0, 0) scale(0.94); } to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); } }
 @keyframes dialogEnter { from { opacity: 0; transform: translate3d(0, 0, 0) scale(var(--project-dialog-enter-scale)); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+::view-transition-group(project-flow-dialog), ::view-transition-old(project-flow-dialog), ::view-transition-new(project-flow-dialog) { animation-duration: var(--project-dialog-morph-duration); animation-timing-function: var(--motion-ease-out); }
 @keyframes activitySweep { 0% { -webkit-mask-position: var(--activity-sweep-start) 0; mask-position: var(--activity-sweep-start) 0; } 40%, 100% { -webkit-mask-position: var(--activity-sweep-end) 0; mask-position: var(--activity-sweep-end) 0; } }
 @keyframes assistantWordFade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
@@ -1160,6 +1163,7 @@
   .assistant-word-fade { animation: none; }
   .composer-menu { animation: none; }
   .project-dialog { animation: none; }
+  ::view-transition-group(project-flow-dialog), ::view-transition-old(project-flow-dialog), ::view-transition-new(project-flow-dialog) { animation: none; }
 }
 
 @media (max-width: 760px) {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { flushSync } from 'react-dom'
 import { MODEL_LIST } from './modelCatalog'
 import { DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_NATIVE_LANGUAGE, DEFAULT_RESPONSE_STYLE, type NativeLanguage, type ResponseStylePreference, type ThemePreference } from '../../shared/settings'
 import {
@@ -532,6 +533,7 @@ export default function MainApp(): JSX.Element {
   const [projectSetupOpen, setProjectSetupOpen] = useState(false)
   const [projectSetupError, setProjectSetupError] = useState('')
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
+  const [projectCreateFromSetup, setProjectCreateFromSetup] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [projectError, setProjectError] = useState('')
   const [projectSaving, setProjectSaving] = useState(false)
@@ -1394,15 +1396,32 @@ export default function MainApp(): JSX.Element {
   const openCreateProjectDialog = (): void => {
     setProjectMenuOpen(false)
     setProjectSetupOpen(false)
+    setProjectCreateFromSetup(false)
     setProjectName('')
     setProjectError('')
     setProjectDialogOpen(true)
+  }
+
+  const openCreateProjectFromSetup = (): void => {
+    const update = (): void => {
+      flushSync(() => {
+        setProjectSetupOpen(false)
+        setProjectCreateFromSetup(true)
+        setProjectName('')
+        setProjectError('')
+        setProjectDialogOpen(true)
+      })
+    }
+    const startViewTransition = (document as Document & { startViewTransition?: (callback: () => void) => unknown }).startViewTransition
+    if (startViewTransition) startViewTransition.call(document, update)
+    else update()
   }
 
   const openProjectSetup = (): void => {
     setComposerProjectMenuOpen(false)
     setOpenAttachMenu(false)
     setOpenMenu(null)
+    setProjectCreateFromSetup(false)
     setProjectSetupError('')
     setProjectSetupOpen(true)
   }
@@ -2640,27 +2659,55 @@ export default function MainApp(): JSX.Element {
           onClose={() => setSettingsOpen(false)}
         />
       )}
-      {projectSetupOpen && (
-        <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProjectSetupOpen(false) }}>
-          <section className="project-dialog project-setup-dialog" role="dialog" aria-modal="true" aria-labelledby="project-setup-dialog-title" aria-describedby="project-setup-dialog-description">
-            <h2 id="project-setup-dialog-title">Choose where to work</h2>
-            <p id="project-setup-dialog-description">QyrouCode needs a project folder to safely read and change files.</p>
-            {projectSetupError && <div className="project-dialog-error" role="alert">{projectSetupError}</div>}
-            <div className="project-setup-actions">
-              <button className="primary" type="button" ref={projectSetupCreateRef} onClick={openCreateProjectDialog}>
-                <FolderPlus size={15} />
-                <span>Create a project</span>
-              </button>
-              <button type="button" onClick={() => void chooseProjectFolder(true)}>
-                <FolderOpen size={15} />
-                <span>Open existing folder</span>
-              </button>
-            </div>
-            <button className="project-setup-cancel" type="button" onClick={() => setProjectSetupOpen(false)}>Not now</button>
+      {(projectSetupOpen || (projectDialogOpen && projectCreateFromSetup)) && (
+        <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target !== event.currentTarget || projectSaving) return
+          setProjectSetupOpen(false)
+          setProjectDialogOpen(false)
+          setProjectCreateFromSetup(false)
+        }}>
+          <section
+            className={projectSetupOpen ? 'project-dialog project-setup-dialog' : 'project-dialog project-create-dialog'}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={projectSetupOpen ? 'project-setup-dialog-title' : 'project-dialog-title'}
+            aria-describedby={projectSetupOpen ? 'project-setup-dialog-description' : undefined}
+          >
+            {projectSetupOpen ? (
+              <>
+                <h2 id="project-setup-dialog-title">Choose where to work</h2>
+                <p id="project-setup-dialog-description">QyrouCode needs a project folder to safely read and change files.</p>
+                {projectSetupError && <div className="project-dialog-error" role="alert">{projectSetupError}</div>}
+                <div className="project-setup-actions">
+                  <button className="primary" type="button" ref={projectSetupCreateRef} onClick={openCreateProjectFromSetup}>
+                    <FolderPlus size={15} />
+                    <span>Create a project</span>
+                  </button>
+                  <button type="button" onClick={() => void chooseProjectFolder(true)}>
+                    <FolderOpen size={15} />
+                    <span>Open existing folder</span>
+                  </button>
+                </div>
+                <button className="project-setup-cancel" type="button" onClick={() => setProjectSetupOpen(false)}>Not now</button>
+              </>
+            ) : (
+              <>
+                <h2 id="project-dialog-title">Name your project</h2>
+                <p>A project should be short and memorable</p>
+                <form onSubmit={(event) => void createProject(event)}>
+                  <input ref={projectNameRef} value={projectName} onChange={(event) => { setProjectName(event.target.value); setProjectError('') }} placeholder="e.g. Portfolio redesign" aria-label="Project name" aria-describedby={projectError ? 'project-name-error' : undefined} disabled={projectSaving} />
+                  {projectError && <div className="project-dialog-error" id="project-name-error" role="alert">{projectError}</div>}
+                  <div className="project-dialog-actions">
+                    <button type="button" onClick={() => { setProjectDialogOpen(false); setProjectCreateFromSetup(false) }} disabled={projectSaving}>Cancel</button>
+                    <button className="primary" type="submit" disabled={!projectName.trim() || projectSaving}>{projectSaving ? 'Saving…' : 'Save'}</button>
+                  </div>
+                </form>
+              </>
+            )}
           </section>
         </div>
       )}
-      {projectDialogOpen && (
+      {projectDialogOpen && !projectCreateFromSetup && (
         <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectSaving) setProjectDialogOpen(false) }}>
           <section className="project-dialog project-create-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
             <h2 id="project-dialog-title">Name your project</h2>
