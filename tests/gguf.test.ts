@@ -36,6 +36,12 @@ const u32Value = (value: number): Buffer => {
   return buffer
 }
 
+const u8Value = (value: number): Buffer => {
+  const buffer = Buffer.alloc(1)
+  buffer.writeUInt8(value, 0)
+  return buffer
+}
+
 test('reads llama.context_length from GGUF metadata', async () => {
   const path = writeGguf([
     { key: 'general.architecture', type: 8, payload: stringValue('qwen2vl') },
@@ -43,6 +49,15 @@ test('reads llama.context_length from GGUF metadata', async () => {
     { key: 'general.name', type: 8, payload: stringValue('test model') }
   ])
   assert.equal(await readGgufContextLimit(path), 131072)
+})
+
+test('scans past one-byte scalar metadata', async () => {
+  const path = writeGguf([
+    { key: 'general.quantization_version', type: 0, payload: u8Value(2) },
+    { key: 'general.use_mmap', type: 7, payload: u8Value(1) },
+    { key: 'llama.context_length', type: 4, payload: u32Value(32768) }
+  ])
+  assert.equal(await readGgufContextLimit(path), 32768)
 })
 
 test('skips array metadata values while scanning', async () => {

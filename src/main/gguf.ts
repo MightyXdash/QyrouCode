@@ -42,23 +42,27 @@ const readU64 = (buffer: Buffer): number => {
 const readScalar = (valueType: number, data: Buffer): number | undefined => {
   switch (valueType) {
     case 0:
-    case 4:
-    case 7:
-      return data.readUInt32LE(0)
+      return data.readUInt8(0)
     case 1:
       return data.readInt8(0)
     case 2:
       return data.readUInt16LE(0)
     case 3:
       return data.readInt16LE(0)
+    case 4:
+      return data.readUInt32LE(0)
     case 5:
-    case 11:
       return data.readInt32LE(0)
+    case 6:
+      return data.readFloatLE(0)
+    case 7:
+      return data.readUInt8(0)
     case 10:
       return Number(data.readBigUInt64LE(0))
-    case 6:
+    case 11:
+      return Number(data.readBigInt64LE(0))
     case 12:
-      return undefined
+      return data.readDoubleLE(0)
     default:
       return undefined
   }

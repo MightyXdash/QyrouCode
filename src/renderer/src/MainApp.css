@@ -253,6 +253,8 @@
   --surface-selected: light-dark(rgba(0, 0, 0, 0.065), rgba(255, 255, 255, 0.075));
   --surface-sidebar-hover: light-dark(rgba(0, 0, 0, 0.028), rgba(255, 255, 255, 0.04));
   --surface-sidebar-selected: light-dark(rgba(0, 0, 0, 0.045), rgba(255, 255, 255, 0.06));
+  --surface-sidebar-vibrancy: light-dark(rgba(225, 225, 225, 0.08), rgba(28, 28, 28, 0.5));
+  --filter-sidebar-vibrancy: saturate(1.32) contrast(1.04);
   --surface-scrim: light-dark(rgba(0, 0, 0, 0.36), rgba(0, 0, 0, 0.64));
   --surface-success: #12c905;
   --surface-warning: light-dark(#ffdc17, #fcd53a);
@@ -311,6 +313,15 @@
   overflow: hidden;
   background: var(--background-weak);
   color: var(--text-base);
+}
+
+body:has(.macos-window) {
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell.macos-window {
+  background: transparent;
 }
 
 .app-titlebar {
@@ -528,6 +539,8 @@
 
 .macos-window .app-sidebar {
   padding-top: var(--macos-sidebar-content-start);
+  background: var(--surface-sidebar-vibrancy);
+  backdrop-filter: var(--filter-sidebar-vibrancy);
 }
 
 .sidebar-nav { display: grid; gap: 2px; }

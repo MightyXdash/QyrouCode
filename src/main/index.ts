@@ -42,6 +42,7 @@ const MAIN_WINDOW_QUERY_VALUE = 'app'
 const MAIN_APP_WINDOW_WIDTH = 1440
 const MAIN_APP_WINDOW_HEIGHT = 900
 const MACOS_TRAFFIC_LIGHT_POSITION = { x: 16, y: 15 } as const
+const MACOS_WINDOW_BACKGROUND = '#00000000'
 const GGUF_FILE_EXTENSION = '.gguf'
 
 function applyTheme(value: unknown): ReturnType<typeof setTheme> {
@@ -421,6 +422,7 @@ function createMainAppWindow(): BrowserWindow {
     return mainAppWindow
   }
 
+  const isMacOS = process.platform === DESKTOP_PLATFORMS.macOS
   const targetWindow = new BrowserWindow({
     width: MAIN_APP_WINDOW_WIDTH,
     height: MAIN_APP_WINDOW_HEIGHT,
@@ -428,10 +430,13 @@ function createMainAppWindow(): BrowserWindow {
     maximizable: true,
     minimizable: true,
     frame: usesNativeWindowControls(process.platform),
-    titleBarStyle: process.platform === DESKTOP_PLATFORMS.macOS ? 'hidden' : 'default',
-    trafficLightPosition: process.platform === DESKTOP_PLATFORMS.macOS
+    titleBarStyle: isMacOS ? 'hidden' : 'default',
+    trafficLightPosition: isMacOS
       ? MACOS_TRAFFIC_LIGHT_POSITION
       : undefined,
+    backgroundColor: isMacOS ? MACOS_WINDOW_BACKGROUND : undefined,
+    vibrancy: isMacOS ? 'sidebar' : undefined,
+    visualEffectState: isMacOS ? 'active' : undefined,
     title: 'QyrouCode',
     show: false,
     icon: appIconPath(),
