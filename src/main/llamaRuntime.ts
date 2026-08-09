@@ -10,6 +10,7 @@ import {
   backendAppearsInDeviceList,
   buildLlamaServerArgs,
   llamaRuntimeProfileMatches,
+  resolveLlamaContextTokens,
   type LlamaBackend,
   type LlamaPlatform,
   type LlamaRuntimeStatus
@@ -182,8 +183,12 @@ export class LlamaRuntime {
   }
 
   async start(modelPath: string, contextTokens: number, mmprojPath?: string): Promise<LlamaRuntimeStatus> {
+    if (!existsSync(modelPath)) throw new Error('The selected GGUF model does not exist')
+    const modelContextLimit = await readGgufContextLimit(modelPath)
+    const effectiveContextTokens = resolveLlamaContextTokens(modelContextLimit, contextTokens)
+
     if (this.process && (this.status.state === 'starting' || this.status.state === 'ready')) {
-      if (llamaRuntimeProfileMatches(this.status, modelPath, contextTokens, mmprojPath)) return this.getStatus()
+      if (llamaRuntimeProfileMatches(this.status, modelPath, effectiveContextTokens, mmprojPath)) return this.getStatus()
       await this.stop()
     }
     const runtime = findRuntime()
@@ -192,11 +197,6 @@ export class LlamaRuntime {
       return this.getStatus()
     }
     const { backend, executablePath } = runtime
-    if (!existsSync(modelPath)) throw new Error('The selected GGUF model does not exist')
-
-    const modelContextLimit = await readGgufContextLimit(modelPath)
-    const effectiveContextTokens = modelContextLimit === undefined ? contextTokens : Math.min(contextTokens, modelContextLimit)
-
     const targetPlatform = currentPlatform()
     const args = buildLlamaServerArgs({
       platform: targetPlatform,

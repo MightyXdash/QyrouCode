@@ -56,6 +56,11 @@ export const llamaRuntimeProfileMatches = (
   status.contextTokens === contextTokens &&
   status.mmprojPath === mmprojPath
 
+export const resolveLlamaContextTokens = (
+  modelContextLimit: number | undefined,
+  fallbackContextTokens: number
+): number => modelContextLimit ?? fallbackContextTokens
+
 const boundedThreadCount = (logicalCpuCount: number, maximum: number): number =>
   Math.max(MINIMUM_THREAD_COUNT, Math.min(maximum, Math.floor(logicalCpuCount)))
 
