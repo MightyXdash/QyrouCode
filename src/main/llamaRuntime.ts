@@ -9,10 +9,12 @@ import {
   archSupportsVision,
   backendAppearsInDeviceList,
   buildLlamaServerArgs,
+  LlamaLoadProgressParser,
   llamaRuntimeProfileMatches,
   resolveLlamaContextTokens,
   type LlamaBackend,
   type LlamaPlatform,
+  type LlamaRuntimeLoadProgress,
   type LlamaRuntimeStatus
 } from '../shared/llama'
 import { INITIAL_RUNTIME_ARTIFACTS, getRuntimeArtifact, type RuntimeArchitecture } from '../shared/runtimeManifest'
@@ -182,13 +184,20 @@ export class LlamaRuntime {
     return completion.text
   }
 
-  async start(modelPath: string, contextTokens: number, mmprojPath?: string): Promise<LlamaRuntimeStatus> {
+  async start(modelPath: string, contextTokens: number, mmprojPath?: string, onProgress?: (progress: LlamaRuntimeLoadProgress) => void): Promise<LlamaRuntimeStatus> {
     if (!existsSync(modelPath)) throw new Error('The selected GGUF model does not exist')
     const modelContextLimit = await readGgufContextLimit(modelPath)
     const effectiveContextTokens = resolveLlamaContextTokens(modelContextLimit, contextTokens)
+    let progressStarted = false
+    const beginProgress = (): void => {
+      if (progressStarted) return
+      progressStarted = true
+      onProgress?.({ phase: 'preparing' })
+    }
 
     if (this.process && (this.status.state === 'starting' || this.status.state === 'ready')) {
       if (llamaRuntimeProfileMatches(this.status, modelPath, effectiveContextTokens, mmprojPath)) return this.getStatus()
+      beginProgress()
       await this.stop()
     }
     const runtime = findRuntime()
@@ -197,6 +206,7 @@ export class LlamaRuntime {
       return this.getStatus()
     }
     const { backend, executablePath } = runtime
+    beginProgress()
     const targetPlatform = currentPlatform()
     const args = buildLlamaServerArgs({
       platform: targetPlatform,
@@ -211,9 +221,17 @@ export class LlamaRuntime {
     })
 
     this.status = { state: 'starting', backend, executablePath, modelPath, mmprojPath, contextTokens: effectiveContextTokens }
-    const child = spawn(executablePath, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(executablePath, args, {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, LLAMA_SERVER_ROUTER_PORT: String(this.port) }
+    })
     this.process = child
     this.stderrTail = ''
+    const progressParser = new LlamaLoadProgressParser()
+    child.stdout.on('data', (chunk: Buffer) => {
+      for (const progress of progressParser.push(chunk.toString())) onProgress?.(progress)
+    })
     child.stderr.on('data', (chunk: Buffer) => {
       this.stderrTail = (this.stderrTail + chunk.toString()).slice(-STDERR_TAIL_LENGTH)
     })
@@ -222,6 +240,7 @@ export class LlamaRuntime {
       this.status = { ...this.status, state: 'error', message: error.message }
     })
     child.once('exit', (code) => {
+      for (const progress of progressParser.flush()) onProgress?.(progress)
       if (this.process !== child) return
       this.process = null
       if (this.status.state !== 'stopped') {

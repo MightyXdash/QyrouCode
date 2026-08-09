@@ -185,6 +185,7 @@
   --conversation-bottom-clearance: 180px;
   --conversation-terminal-clearance: 0px;
   --jump-to-latest-size: 30px;
+  --jump-to-latest-model-clearance: 0px;
   --activity-sweep-duration: 2.5s;
   --activity-sweep-easing: cubic-bezier(0.45, 0, 0.55, 1);
   --activity-sweep-start: -180%;
@@ -229,6 +230,22 @@
   --todo-dock-count-font-size: 11px;
   --todo-dock-count-padding-block: 1px;
   --todo-dock-count-padding-inline: 6px;
+  --model-load-panel-height: 52px;
+  --model-load-panel-padding-block: 9px;
+  --model-load-panel-padding-inline: var(--app-composer-padding-inline);
+  --model-load-header-gap: 12px;
+  --model-load-copy-gap: 7px;
+  --model-load-track-height: 3px;
+  --model-load-track-margin-top: 8px;
+  --model-load-font-size: 11px;
+  --model-load-line-height: 1.25;
+  --model-load-stage-font-weight: 500;
+  --model-load-indeterminate-width: 34%;
+  --model-load-indeterminate-start: -110%;
+  --model-load-indeterminate-end: 305%;
+  --model-load-indeterminate-rest: 33%;
+  --model-load-motion-duration: 160ms;
+  --model-load-indeterminate-duration: 1.25s;
   --todo-dock-expanded-clearance: calc(var(--todo-dock-header-height) + var(--todo-dock-list-max-height));
   --todo-dock-collapsed-clearance: var(--todo-dock-header-height);
   --jump-to-latest-todo-clearance: 0px;
@@ -699,11 +716,14 @@ body:has(.macos-window) {
 .conversation::-webkit-scrollbar-thumb { border-radius: var(--radius-md); background: transparent; }
 .conversation.scrollbar-visible::-webkit-scrollbar-thumb { background: var(--surface-selected); }
 .terminal-open .composer-stack { bottom: calc(var(--terminal-panel-height) + var(--app-composer-bottom)); }
-.terminal-open .jump-to-latest { bottom: calc(var(--terminal-panel-height) + var(--app-composer-bottom) + var(--app-composer-min-height) + var(--jump-to-latest-todo-clearance) + 12px); }
+.terminal-open .jump-to-latest { bottom: calc(var(--terminal-panel-height) + var(--app-composer-bottom) + var(--app-composer-min-height) + var(--jump-to-latest-todo-clearance) + var(--jump-to-latest-model-clearance) + 12px); }
 .terminal-open { --conversation-terminal-clearance: var(--terminal-panel-height); }
 .conversation-inner { width: min(calc(100% - (var(--app-page-padding) * 2)), var(--app-content-max-width)); min-height: 100%; margin: 0 auto; padding: 54px 0 calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance)); }
 .conversation-inner.with-todo-dock { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance) + var(--todo-dock-expanded-clearance)); }
 .conversation-inner.with-todo-dock.todo-dock-collapsed { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance) + var(--todo-dock-collapsed-clearance)); }
+.conversation-inner.with-model-load { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance) + var(--model-load-panel-height)); }
+.conversation-inner.with-todo-dock.with-model-load { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance) + var(--todo-dock-expanded-clearance) + var(--model-load-panel-height)); }
+.conversation-inner.with-todo-dock.todo-dock-collapsed.with-model-load { padding-bottom: calc(var(--conversation-bottom-clearance) + var(--conversation-terminal-clearance) + var(--todo-dock-collapsed-clearance) + var(--model-load-panel-height)); }
 .conversation h1 { margin: 0 0 34px; color: var(--text-strong); font-size: 18px; font-weight: 500; line-height: 1.2; }
 .composer-stack { position: absolute; z-index: 4; right: 0; bottom: var(--app-composer-bottom); left: 0; display: flex; flex-direction: column; align-items: center; width: var(--composer-stack-width); margin: auto; transition: bottom var(--terminal-panel-motion-duration) var(--terminal-panel-motion-ease-out); }
 .composer-stack:not(.new-thread)::after { position: absolute; z-index: 0; top: calc(100% - var(--app-composer-transcript-fade-overlap)); right: calc(var(--app-page-padding) * -1); bottom: calc(var(--app-composer-bottom) * -1); left: calc(var(--app-page-padding) * -1); background: linear-gradient(to bottom, transparent, var(--background-base)); content: ''; pointer-events: none; }
@@ -711,6 +731,7 @@ body:has(.macos-window) {
 .composer-stack.new-thread { display: contents; }
 .app-workspace:has(.todo-dock:not(.collapsed)) { --jump-to-latest-todo-clearance: var(--todo-dock-expanded-clearance); }
 .app-workspace:has(.todo-dock.collapsed) { --jump-to-latest-todo-clearance: var(--todo-dock-collapsed-clearance); }
+.app-workspace:has(.model-load-panel) { --jump-to-latest-model-clearance: var(--model-load-panel-height); }
 .todo-dock {
   position: relative;
   z-index: 1;
@@ -726,6 +747,33 @@ body:has(.macos-window) {
   background-clip: padding-box;
   backdrop-filter: var(--filter-backdrop-todo);
 }
+
+.model-load-panel {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  flex: 0 0 var(--model-load-panel-height);
+  width: 100%;
+  min-height: var(--model-load-panel-height);
+  padding: var(--model-load-panel-padding-block) var(--model-load-panel-padding-inline);
+  overflow: hidden;
+  border: var(--border-width-hairline) solid var(--border-base);
+  border-bottom: 0;
+  border-radius: var(--app-composer-corner-radius) var(--app-composer-corner-radius) 0 0;
+  background: var(--surface-todo-glass);
+  background-clip: padding-box;
+  backdrop-filter: var(--filter-backdrop-todo);
+}
+.composer-stack.with-todo-dock .model-load-panel { border-radius: 0; }
+.model-load-header { display: flex; align-items: center; justify-content: space-between; gap: var(--model-load-header-gap); min-width: 0; font-size: var(--model-load-font-size); line-height: var(--model-load-line-height); }
+.model-load-copy { display: flex; align-items: baseline; gap: var(--model-load-copy-gap); min-width: 0; }
+.model-load-stage { flex: 0 0 auto; color: var(--text-strong); font-weight: var(--model-load-stage-font-weight); }
+.model-load-name { min-width: 0; overflow: hidden; color: var(--text-weak); text-overflow: ellipsis; white-space: nowrap; }
+.model-load-value { flex: 0 0 auto; color: var(--text-weak); font-variant-numeric: tabular-nums; }
+.model-load-track { position: relative; height: var(--model-load-track-height); margin-top: var(--model-load-track-margin-top); overflow: hidden; border-radius: var(--radius-sm); background: var(--surface-selected); }
+.model-load-fill { position: absolute; inset: 0 auto 0 0; display: block; border-radius: inherit; background: var(--interactive); }
+.model-load-track.determinate .model-load-fill { width: var(--model-load-progress); transition: width var(--model-load-motion-duration) var(--motion-ease-out); }
+.model-load-track.indeterminate .model-load-fill { width: var(--model-load-indeterminate-width); animation: modelLoadIndeterminate var(--model-load-indeterminate-duration) var(--motion-ease-out) infinite; }
 
 .workspace-top-actions { position: absolute; z-index: 8; top: var(--workspace-actions-inset); right: var(--workspace-actions-inset); display: flex; gap: 2px; isolation: isolate; transition: right var(--app-sidebar-motion-duration) var(--app-sidebar-motion-ease-out); }
 .browser-open > .workspace-top-actions { right: calc(var(--browser-panel-width) + var(--workspace-actions-inset)); }
@@ -854,7 +902,7 @@ body:has(.macos-window) {
 .message-attachment-file { display: flex; align-items: center; gap: 6px; max-width: 260px; padding: 5px 9px; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--text-base); font-size: 11px; box-shadow: var(--shadow-composer-project-strip); }
 .message-attachment-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .completion-error { margin: -20px 0 30px; color: var(--surface-error); font-size: 12px; }
-.jump-to-latest { position: absolute; z-index: 3; right: 0; bottom: calc(var(--app-composer-bottom) + var(--app-composer-min-height) + var(--jump-to-latest-todo-clearance) + 12px); left: 0; display: grid; place-items: center; width: var(--jump-to-latest-size); height: var(--jump-to-latest-size); margin: auto; padding: 0; border: var(--border-width-hairline) solid var(--border-base); border-radius: 50%; background: var(--surface-raised); color: var(--text-base); box-shadow: var(--shadow-menu); cursor: pointer; animation: menuEnter 140ms var(--motion-ease-out); }
+.jump-to-latest { position: absolute; z-index: 3; right: 0; bottom: calc(var(--app-composer-bottom) + var(--app-composer-min-height) + var(--jump-to-latest-todo-clearance) + var(--jump-to-latest-model-clearance) + 12px); left: 0; display: grid; place-items: center; width: var(--jump-to-latest-size); height: var(--jump-to-latest-size); margin: auto; padding: 0; border: var(--border-width-hairline) solid var(--border-base); border-radius: 50%; background: var(--surface-raised); color: var(--text-base); box-shadow: var(--shadow-menu); cursor: pointer; animation: menuEnter 140ms var(--motion-ease-out); }
 .jump-to-latest:hover { color: var(--text-strong); }
 .jump-to-latest svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .chat-message > :first-child { margin-top: 0; }
@@ -971,12 +1019,12 @@ body:has(.macos-window) {
   pointer-events: none;
 }
 
-.composer-stack.with-todo-dock .composer-shape {
+.composer-stack:is(.with-todo-dock, .with-model-load) .composer-shape {
   border-radius: 0 0 var(--app-composer-corner-radius) var(--app-composer-corner-radius);
   filter: none;
 }
 
-.composer-stack.with-todo-dock .prompt-composer {
+.composer-stack:is(.with-todo-dock, .with-model-load) .prompt-composer {
   background: var(--background-base);
 }
 
@@ -1171,6 +1219,7 @@ body:has(.macos-window) {
 ::view-transition-group(project-flow-dialog), ::view-transition-old(project-flow-dialog), ::view-transition-new(project-flow-dialog) { animation-duration: var(--project-dialog-morph-duration); animation-timing-function: var(--motion-ease-out); }
 @keyframes activitySweep { 0% { -webkit-mask-position: var(--activity-sweep-start) 0; mask-position: var(--activity-sweep-start) 0; } 40%, 100% { -webkit-mask-position: var(--activity-sweep-end) 0; mask-position: var(--activity-sweep-end) 0; } }
 @keyframes assistantWordFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modelLoadIndeterminate { from { transform: translateX(var(--model-load-indeterminate-start)); } to { transform: translateX(var(--model-load-indeterminate-end)); } }
 @media (prefers-reduced-motion: reduce) {
   .app-workspace, .project-threads-shell, .project-thread, .project-show-more, .project-thread-rename-input { transition-duration: 0ms; transition-delay: 0ms; }
   .sidebar-collapsed .app-sidebar { transition-delay: 0ms; }
@@ -1178,6 +1227,7 @@ body:has(.macos-window) {
   .todo-dock-item.in_progress svg { animation: none; }
   .prompt-refinement-button.busy svg { animation: none; }
   .assistant-word-fade { animation: none; }
+  .model-load-track.indeterminate .model-load-fill { left: var(--model-load-indeterminate-rest); animation: none; }
   .composer-menu { animation: none; }
   .project-dialog { animation: none; }
   ::view-transition-group(project-flow-dialog), ::view-transition-old(project-flow-dialog), ::view-transition-new(project-flow-dialog) { animation: none; }

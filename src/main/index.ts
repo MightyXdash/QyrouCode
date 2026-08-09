@@ -6,10 +6,10 @@ import { writeFile } from 'fs/promises'
 import { homedir } from 'os'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getNativeLanguage, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setContextWindowTokens, setExpandedProjectPaths, setNativeLanguage, setPromptRefinementPreferences, setResponseStylePreference, setTheme } from './settings'
+import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getNativeLanguage, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getSpeedCounterEnabled, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setContextWindowTokens, setExpandedProjectPaths, setNativeLanguage, setPromptRefinementPreferences, setResponseStylePreference, setSpeedCounterEnabled, setTheme } from './settings'
 import { DEFAULT_NATIVE_LANGUAGE, validateNativeLanguage } from '../shared/settings'
 import { LlamaRuntime } from './llamaRuntime'
-import { LLAMA_TITLE_SERVER_PORT } from '../shared/llama'
+import { LLAMA_TITLE_SERVER_PORT, type LlamaModelLoadProgress } from '../shared/llama'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
 import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManifest'
@@ -658,6 +658,8 @@ app.whenReady().then(() => {
   ipcMain.handle('set-context-window-tokens', (_event, tokens: unknown) => setContextWindowTokens(tokens))
   ipcMain.handle('get-native-language', () => getNativeLanguage())
   ipcMain.handle('set-native-language', (_event, nativeLanguage: unknown) => setNativeLanguage(nativeLanguage))
+  ipcMain.handle('get-speed-counter-enabled', () => getSpeedCounterEnabled())
+  ipcMain.handle('set-speed-counter-enabled', (_event, enabled: unknown) => setSpeedCounterEnabled(enabled))
   ipcMain.handle('get-prompt-refinement-preferences', () => getPromptRefinementPreferences())
   ipcMain.handle('set-prompt-refinement-preferences', (_event, preference: unknown) => setPromptRefinementPreferences(preference))
   ipcMain.handle('set-theme', (_event, theme: unknown) => applyTheme(theme))
@@ -858,16 +860,24 @@ app.whenReady().then(() => {
     const resolved = await resolveModelArtifact(huggingFaceHubPath(), artifact)
     return llamaRuntime.start(resolved.path, getSelectedContextWindowTokens(), resolved.mmprojPath ?? findProjector(resolved.path))
   })
-  ipcMain.handle('start-downloaded-model', async (_event, repoId: unknown, filename: unknown, requireVision: unknown = false) => {
+  ipcMain.handle('start-downloaded-model', async (event, repoId: unknown, filename: unknown, loadId: unknown, requireVision: unknown = false) => {
     if (!llamaRuntime) throw new Error('llama-server is not available')
     if ([...activeCompletionRequests.values()].some((request) => request.source === 'local')) {
       throw new Error('A local model is already running in another thread')
     }
+    if (typeof loadId !== 'string' || !loadId || loadId.length > 128) throw new Error('Invalid local model load request')
     if (typeof requireVision !== 'boolean') throw new Error('Invalid vision mode')
     const modelPath = resolveDownloadedModel(repoId, filename)
     const projectorPath = await ensureModelProjector(repoId as string, modelPath)
     if (requireVision && !projectorPath) throw new Error('This model is missing the vision projector required for image input')
-    return llamaRuntime.start(modelPath, getSelectedContextWindowTokens(), projectorPath)
+    return llamaRuntime.start(modelPath, getSelectedContextWindowTokens(), projectorPath, (progress) => {
+      if (event.sender.isDestroyed()) return
+      event.sender.send('local-model-load-progress', {
+        ...progress,
+        loadId,
+        modelName: repoId as string
+      } satisfies LlamaModelLoadProgress)
+    })
   })
   ipcMain.handle('generate-chat-title', async (_event, userMessage: unknown) => {
     if (typeof userMessage !== 'string' || !userMessage.trim()) throw new Error('A user message is required for title generation')

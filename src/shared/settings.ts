@@ -1,6 +1,7 @@
 import type { PromptRefinementPreferences } from './promptRefinement'
 
-export const SETTINGS_VERSION = 5
+export const SETTINGS_VERSION = 6
+export const DEFAULT_SPEED_COUNTER_ENABLED = false
 export const MAX_CUSTOM_RESPONSE_STYLE_LENGTH = 600
 
 export const CONTEXT_WINDOW_MIN_TOKENS = 32000
@@ -237,6 +238,7 @@ export interface SettingsStoreData {
   browserState?: import('./browser').PersistedBrowserState
   promptRefinementPreferences?: PromptRefinementPreferences
   nativeLanguage?: NativeLanguage
+  speedCounterEnabled?: boolean
 }
 
 export interface OnboardingState {
@@ -250,6 +252,11 @@ export interface ResponseStylePreference {
 
 export const validateThemePreference = (value: unknown): ThemePreference => {
   if (!includes(THEMES, value)) throw new Error('Invalid theme preference')
+  return value
+}
+
+export const validateSpeedCounterEnabled = (value: unknown): boolean => {
+  if (typeof value !== 'boolean') throw new Error('Invalid speed counter preference')
   return value
 }
 

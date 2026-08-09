@@ -17,6 +17,84 @@ export interface LlamaRuntimeStatus {
   message?: string
 }
 
+export interface LlamaRuntimeLoadProgress {
+  phase: 'preparing' | 'loading'
+  stages?: string[]
+  current?: string
+  value?: number
+}
+
+export interface LlamaModelLoadProgress extends LlamaRuntimeLoadProgress {
+  loadId: string
+  modelName: string
+}
+
+interface LlamaChildStateMessage {
+  state?: unknown
+  payload?: {
+    stages?: unknown
+    current?: unknown
+    value?: unknown
+  }
+}
+
+const LLAMA_CHILD_STATE_PREFIX = 'cmd_child_to_router:state:'
+const LLAMA_PROGRESS_BUFFER_LIMIT = 64 * 1024
+const LLAMA_LOAD_STAGE_LABELS: Readonly<Record<string, string>> = {
+  text_model: 'Loading model weights',
+  spec_model: 'Loading draft model',
+  mmproj_model: 'Loading vision projector'
+}
+
+export const llamaLoadStageLabel = (stage: string | undefined): string =>
+  stage ? LLAMA_LOAD_STAGE_LABELS[stage] ?? 'Loading local model' : 'Preparing local model'
+
+export const parseLlamaLoadProgressLine = (line: string): LlamaRuntimeLoadProgress | undefined => {
+  const prefixIndex = line.indexOf(LLAMA_CHILD_STATE_PREFIX)
+  if (prefixIndex === -1) return undefined
+  const serialized = line.slice(prefixIndex + LLAMA_CHILD_STATE_PREFIX.length).trim()
+  if (!serialized) return undefined
+
+  let message: LlamaChildStateMessage
+  try {
+    message = JSON.parse(serialized) as LlamaChildStateMessage
+  } catch {
+    return undefined
+  }
+
+  if (message.state !== 'loading' || !message.payload) return undefined
+  const stages = Array.isArray(message.payload.stages)
+    ? message.payload.stages.filter((stage): stage is string => typeof stage === 'string' && stage.length > 0)
+    : undefined
+  const current = typeof message.payload.current === 'string' && message.payload.current.length > 0
+    ? message.payload.current
+    : undefined
+  const value = typeof message.payload.value === 'number' && Number.isFinite(message.payload.value)
+    ? Math.max(0, Math.min(1, message.payload.value))
+    : undefined
+  return { phase: 'loading', stages, current, value }
+}
+
+export class LlamaLoadProgressParser {
+  private buffer = ''
+
+  push(chunk: string): LlamaRuntimeLoadProgress[] {
+    this.buffer = (this.buffer + chunk).slice(-LLAMA_PROGRESS_BUFFER_LIMIT)
+    const lines = this.buffer.split(/\r?\n/)
+    this.buffer = lines.pop() ?? ''
+    return lines.flatMap((line) => {
+      const progress = parseLlamaLoadProgressLine(line)
+      return progress ? [progress] : []
+    })
+  }
+
+  flush(): LlamaRuntimeLoadProgress[] {
+    const progress = parseLlamaLoadProgressLine(this.buffer)
+    this.buffer = ''
+    return progress ? [progress] : []
+  }
+}
+
 const VISION_ARCH_MARKERS = ['clip', 'llava', 'vl', 'minicpm', 'moondream', 'florence', 'siglip', 'pixtral', 'mllama', 'gemma3'] as const
 
 export const archSupportsVision = (modelArchs: readonly string[] | undefined): boolean =>

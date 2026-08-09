@@ -11,12 +11,14 @@ interface GeneralSettingsProps {
   responseStyle: ResponseStylePreference
   nativeLanguage: NativeLanguage
   contextWindowTokens: number
+  speedCounterEnabled: boolean
   promptRefinementPreferences: PromptRefinementPreferences
   promptRefinementModels: readonly PromptRefinementModelOption[]
   onReasoningEffortChange: (effort: ReasoningEffort) => void
   onResponseStyleChange: (preference: ResponseStylePreference) => Promise<void> | void
   onNativeLanguageChange: (nativeLanguage: NativeLanguage) => Promise<void> | void
   onContextWindowTokensChange: (tokens: number) => Promise<void> | void
+  onSpeedCounterEnabledChange: (enabled: boolean) => Promise<void> | void
   onPromptRefinementPreferencesChange: (preference: PromptRefinementPreferences) => Promise<void> | void
 }
 
@@ -28,12 +30,14 @@ export default function GeneralSettings({
   responseStyle,
   nativeLanguage,
   contextWindowTokens,
+  speedCounterEnabled,
   promptRefinementPreferences,
   promptRefinementModels,
   onReasoningEffortChange,
   onResponseStyleChange,
   onNativeLanguageChange,
   onContextWindowTokensChange,
+  onSpeedCounterEnabledChange,
   onPromptRefinementPreferencesChange
 }: GeneralSettingsProps): JSX.Element {
   const [style, setStyle] = useState(responseStyle.style)
@@ -119,6 +123,13 @@ export default function GeneralSettings({
               label="Context window size"
               options={contextWindowOptions}
               onChange={(tokens) => void onContextWindowTokensChange(Number(tokens))}
+            />
+          </SettingsRow>
+          <SettingsRow title="Speed counter" description="Show the average response generation speed in the prompt box.">
+            <SettingsSwitch
+              checked={speedCounterEnabled}
+              label="Show average response speed"
+              onChange={(enabled) => void onSpeedCounterEnabledChange(enabled)}
             />
           </SettingsRow>
           {style === 'custom' && (

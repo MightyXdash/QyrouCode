@@ -22,6 +22,7 @@ import type { ConnectionSummary } from '../../shared/connections'
 import { shouldRetainRemoteReasoning, type RemoteModel } from '../../shared/remoteModels'
 import type { ConversationExportRequest } from '../../shared/conversationExport'
 import { DESKTOP_PLATFORMS, usesNativeWindowControls } from '../../shared/platform'
+import { llamaLoadStageLabel, type LlamaModelLoadProgress } from '../../shared/llama'
 import SettingsDialog, {
   type LocalModelDownloadState,
   type RemoteCatalogState,
@@ -93,6 +94,10 @@ type ProjectThreadAnimationStyle = CSSProperties & {
 type WorkspaceStyle = CSSProperties & {
   '--terminal-panel-height': string
   '--browser-panel-width': string
+}
+
+type ModelLoadProgressStyle = CSSProperties & {
+  '--model-load-progress': string
 }
 
 const DEFAULT_BROWSER_PANEL_STATE: BrowserPanelState = {
@@ -168,6 +173,10 @@ type TitlebarAction = 'new-thread' | 'close-window' | 'undo' | 'redo' | 'cut' | 
 
 interface ThreadRun {
   requestId?: string
+  loadId?: string
+  modelName?: string
+  loadProgress?: LlamaModelLoadProgress
+  modelStartupPending?: boolean
   source: AgentModelProvenance['source']
   startedAt: number
   state: 'starting' | 'streaming'
@@ -524,6 +533,7 @@ export default function MainApp(): JSX.Element {
   const [responseStylePreference, setResponseStylePreference] = useState<ResponseStylePreference>({ style: DEFAULT_RESPONSE_STYLE, customInstruction: '' })
   const [nativeLanguage, setNativeLanguage] = useState<NativeLanguage>(DEFAULT_NATIVE_LANGUAGE)
   const [contextWindowTokens, setContextWindowTokens] = useState<number>(DEFAULT_CONTEXT_WINDOW_TOKENS)
+  const [speedCounterEnabled, setSpeedCounterEnabled] = useState(false)
   const [promptRefinementPreferences, setPromptRefinementPreferences] = useState<PromptRefinementPreferences>(DEFAULT_PROMPT_REFINEMENT_PREFERENCES)
   const [promptRefinementBusy, setPromptRefinementBusy] = useState(false)
   const [promptRefinementError, setPromptRefinementError] = useState('')
@@ -667,6 +677,20 @@ export default function MainApp(): JSX.Element {
     : 'idle'
   const completionError = activeThread ? threadErrors[activeThread.id] ?? '' : ''
   const activeTokensPerSecond = activeThread ? threadRuns[activeThread.id]?.tokensPerSecond ?? 0 : 0
+  const activeRun = activeThread ? threadRuns[activeThread.id] : undefined
+  const activeModelLoad = activeRun?.source === 'local' && activeRun.state === 'starting' && activeRun.modelStartupPending && activeRun.loadProgress
+    ? activeRun
+    : undefined
+  const hasActiveTodos = (activeThread?.todos?.length ?? 0) > 0
+  const conversationInnerClass = [
+    'conversation-inner',
+    hasActiveTodos ? 'with-todo-dock' : '',
+    hasActiveTodos && todoCollapsed ? 'todo-dock-collapsed' : '',
+    activeModelLoad ? 'with-model-load' : ''
+  ].filter(Boolean).join(' ')
+  const composerStackClass = activeThread
+    ? ['composer-stack', hasActiveTodos ? 'with-todo-dock' : '', activeModelLoad ? 'with-model-load' : ''].filter(Boolean).join(' ')
+    : 'composer-stack new-thread'
 
   const setThreadRun = (threadId: string, run: ThreadRun | undefined): void => {
     const next = { ...threadRunsRef.current }
@@ -842,6 +866,7 @@ export default function MainApp(): JSX.Element {
     void window.api.getResponseStylePreference().then(setResponseStylePreference)
     void window.api.getNativeLanguage().then(setNativeLanguage)
     void window.api.getContextWindowTokens().then(setContextWindowTokens)
+    void window.api.getSpeedCounterEnabled().then(setSpeedCounterEnabled)
     void window.api.getPromptRefinementPreferences().then(setPromptRefinementPreferences)
     void window.api.getConnections().then(setConnections).catch(() => setConnections([]))
     void Promise.all([window.api.getProjects(), window.api.getExpandedProjectPaths(), window.api.getChatThreads(), window.api.getWorkspaceViewState()]).then(async ([storedProjects, storedExpandedPaths, storedThreads, storedViewState]) => {
@@ -999,6 +1024,18 @@ export default function MainApp(): JSX.Element {
       ...current,
       [progress.repoId]: { downloaded: progress.downloaded, total: progress.total }
     }))
+  }), [])
+
+  useEffect(() => window.api.onLocalModelLoadProgress((progress) => {
+    const entry = Object.entries(threadRunsRef.current).find(([, run]) => run.loadId === progress.loadId)
+    if (!entry) return
+    const [threadId, run] = entry
+    if (run.source !== 'local' || run.state !== 'starting' || !run.modelStartupPending) return
+    setThreadRun(threadId, {
+      ...run,
+      modelName: run.modelName ?? progress.modelName,
+      loadProgress: progress
+    })
   }), [])
 
   useEffect(() => {
@@ -1769,6 +1806,16 @@ export default function MainApp(): JSX.Element {
     }
   }
 
+  const changeSpeedCounterEnabled = async (enabled: boolean): Promise<void> => {
+    const previous = speedCounterEnabled
+    setSpeedCounterEnabled(enabled)
+    try {
+      setSpeedCounterEnabled(await window.api.setSpeedCounterEnabled(enabled))
+    } catch {
+      setSpeedCounterEnabled(previous)
+    }
+  }
+
   const changePromptRefinementPreferences = async (preferences: PromptRefinementPreferences): Promise<void> => {
     const previous = promptRefinementPreferences
     setPromptRefinementPreferences(preferences)
@@ -1903,7 +1950,20 @@ export default function MainApp(): JSX.Element {
     setPendingAttachments([])
     setAttachmentError('')
     setThreadError(threadId, undefined)
-    setThreadRun(threadId, { source: modelProvenance.source, startedAt: now, state: 'starting', outputCharacters: 0, tokensPerSecond: 0 })
+    const loadId = modelProvenance.source === 'local' ? crypto.randomUUID() : undefined
+    setThreadRun(threadId, {
+      source: modelProvenance.source,
+      startedAt: now,
+      state: 'starting',
+      outputCharacters: 0,
+      tokensPerSecond: 0,
+      loadId,
+      modelName: modelProvenance.source === 'local' ? selectedModel.displayName : undefined,
+      modelStartupPending: modelProvenance.source === 'local',
+      loadProgress: loadId
+        ? { phase: 'preparing', loadId, modelName: selectedModel.displayName }
+        : undefined
+    })
     setAutoScrollEnabled(true)
     void window.api.saveChatThread(thread)
     if (isNewThread && content) void updateThreadTitle(threadId, content)
@@ -1911,9 +1971,14 @@ export default function MainApp(): JSX.Element {
       if (selectedModel.source === 'local') {
         const localModel = selectedModel.localModel
         if (!localModel) throw new Error('The selected local model is unavailable')
-        const status = await window.api.startDownloadedModel(localModel.hf_repo, localModel.gguf_file, imageAttachments.length > 0)
+        if (!loadId) throw new Error('The local model load request is unavailable')
+        const status = await window.api.startDownloadedModel(localModel.hf_repo, localModel.gguf_file, loadId, imageAttachments.length > 0)
         if (cancelledThreadIdsRef.current.has(threadId)) return
         if (status.state !== 'ready') throw new Error(status.message ?? 'The local model could not start')
+        const run = threadRunsRef.current[threadId]
+        if (run?.loadId === loadId && run.state === 'starting') {
+          setThreadRun(threadId, { ...run, modelStartupPending: false, loadProgress: undefined })
+        }
       }
       const messages = thread.messages.flatMap((message) => {
         if (message.role === 'tool' || (message.role === 'assistant' && !message.content)) return []
@@ -2158,7 +2223,7 @@ export default function MainApp(): JSX.Element {
               setAutoScrollEnabled(distanceFromBottom <= AUTO_SCROLL_THRESHOLD)
             }}
           >
-            <div className={(activeThread.todos?.length ?? 0) > 0 ? `conversation-inner with-todo-dock${todoCollapsed ? ' todo-dock-collapsed' : ''}` : 'conversation-inner'}>
+            <div className={conversationInnerClass}>
               {activeThread.messages.map((message, messageIndex) => {
                 if (message.role === 'user') {
                   return (
@@ -2346,7 +2411,7 @@ export default function MainApp(): JSX.Element {
           </button>
         )}
 
-        <div className={activeThread ? `composer-stack${(activeThread.todos?.length ?? 0) > 0 ? ' with-todo-dock' : ''}` : 'composer-stack new-thread'}>
+        <div className={composerStackClass}>
           {activeThread && (activeThread.todos?.length ?? 0) > 0 && (() => {
             const todos = activeThread.todos ?? []
             const completed = todos.filter((todo) => todo.status === 'completed').length
@@ -2370,6 +2435,39 @@ export default function MainApp(): JSX.Element {
               </section>
             )
           })()}
+        {activeModelLoad && (() => {
+          const progress = activeModelLoad.loadProgress
+          const value = progress?.value
+          const determinate = value !== undefined
+          const percentage = determinate ? Math.round(value * 100) : undefined
+          const stageIndex = progress?.current ? progress.stages?.indexOf(progress.current) ?? -1 : -1
+          const stageCount = progress?.stages?.length ?? 0
+          const stagePosition = stageIndex >= 0 && stageCount > 1 ? `${stageIndex + 1} of ${stageCount}` : ''
+          return (
+            <section className="model-load-panel" aria-label={`Loading ${activeModelLoad.modelName ?? 'local model'}`}>
+              <div className="model-load-header">
+                <span className="model-load-copy">
+                  <span className="model-load-stage">{llamaLoadStageLabel(progress?.current)}</span>
+                  <span className="model-load-name">{activeModelLoad.modelName}</span>
+                </span>
+                <span className="model-load-value">{stagePosition}{stagePosition && percentage !== undefined ? ' · ' : ''}{percentage !== undefined ? `${percentage}%` : !stagePosition ? 'Starting…' : ''}</span>
+              </div>
+              <div
+                className={determinate ? 'model-load-track determinate' : 'model-load-track indeterminate'}
+                role="progressbar"
+                aria-label={llamaLoadStageLabel(progress?.current)}
+                aria-valuemin={determinate ? 0 : undefined}
+                aria-valuemax={determinate ? 100 : undefined}
+                aria-valuenow={percentage}
+              >
+                <span
+                  className="model-load-fill"
+                  style={determinate ? { '--model-load-progress': `${percentage}%` } as ModelLoadProgressStyle : undefined}
+                />
+              </div>
+            </section>
+          )
+        })()}
         <form className={activeThread ? 'prompt-composer' : 'prompt-composer new-thread-composer'} ref={promptComposerRef} onSubmit={(event) => void submitPrompt(event)}>
           <div className="composer-shape" aria-hidden="true" />
           {pendingAttachments.length > 0 && (
@@ -2446,9 +2544,9 @@ export default function MainApp(): JSX.Element {
               </button>
             </div>
             <div className="composer-controls">
-              {completionState === 'streaming' && activeTokensPerSecond > 0 && (
-                <output className="composer-tps" aria-label={`${activeTokensPerSecond.toFixed(1)} tokens per second`}>
-                  {activeTokensPerSecond.toFixed(1)} TPS
+              {speedCounterEnabled && activeTokensPerSecond > 0 && (
+                <output className="composer-tps" aria-label={`Average speed: ${activeTokensPerSecond.toFixed(1)} tokens per second`}>
+                  Avg {activeTokensPerSecond.toFixed(1)} TPS
                 </output>
               )}
               <div className="composer-menu-wrap">
@@ -2637,6 +2735,7 @@ export default function MainApp(): JSX.Element {
           responseStyle={responseStylePreference}
           nativeLanguage={nativeLanguage}
           contextWindowTokens={contextWindowTokens}
+          speedCounterEnabled={speedCounterEnabled}
           promptRefinementPreferences={promptRefinementPreferences}
           promptRefinementModels={promptRefinementModels}
           exportOptions={exportRequest(exportOptions)}
@@ -2646,6 +2745,7 @@ export default function MainApp(): JSX.Element {
           onResponseStyleChange={changeResponseStyle}
           onNativeLanguageChange={changeNativeLanguage}
           onContextWindowTokensChange={changeContextWindowTokens}
+          onSpeedCounterEnabledChange={changeSpeedCounterEnabled}
           onPromptRefinementPreferencesChange={changePromptRefinementPreferences}
           onSaveConnection={saveProviderConnection}
           onTestConnection={testProviderConnection}

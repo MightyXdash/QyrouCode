@@ -1,6 +1,7 @@
 import Store from 'electron-store'
 import {
   SETTINGS_VERSION,
+  DEFAULT_SPEED_COUNTER_ENABLED,
   DEFAULT_RESPONSE_STYLE,
   DEFAULT_NATIVE_LANGUAGE,
   type NativeLanguage,
@@ -12,6 +13,7 @@ import {
   validateOnboardingPreferences,
   validateNativeLanguage,
   validateResponseStylePreference,
+  validateSpeedCounterEnabled,
   validateThemePreference
 } from '../shared/settings'
 import type { Project } from '../shared/projects'
@@ -99,6 +101,15 @@ export const setNativeLanguage = (value: unknown): NativeLanguage => {
   const nativeLanguage = validateNativeLanguage(value)
   settingsStore.set('nativeLanguage', nativeLanguage)
   return nativeLanguage
+}
+
+export const getSpeedCounterEnabled = (): boolean =>
+  settingsStore.get('speedCounterEnabled') ?? DEFAULT_SPEED_COUNTER_ENABLED
+
+export const setSpeedCounterEnabled = (value: unknown): boolean => {
+  const enabled = validateSpeedCounterEnabled(value)
+  settingsStore.set('speedCounterEnabled', enabled)
+  return enabled
 }
 
 export const getPromptRefinementPreferences = (): PromptRefinementPreferences =>

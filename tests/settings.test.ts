@@ -11,6 +11,7 @@ import {
   validateNativeLanguage,
   validateOnboardingPreferences,
   validateResponseStylePreference,
+  validateSpeedCounterEnabled,
   validateThemePreference
 } from '../src/shared/settings.js'
 import {
@@ -71,6 +72,12 @@ test('rejects unsupported preference values and oversized custom instructions', 
 test('validates supported standalone theme preferences', () => {
   assert.equal(validateThemePreference('dark'), 'dark')
   assert.throws(() => validateThemePreference('midnight'), /Invalid theme preference/)
+})
+
+test('validates speed counter preferences', () => {
+  assert.equal(validateSpeedCounterEnabled(true), true)
+  assert.equal(validateSpeedCounterEnabled(false), false)
+  assert.throws(() => validateSpeedCounterEnabled('true'), /Invalid speed counter preference/)
 })
 
 test('validates response style updates from settings', () => {

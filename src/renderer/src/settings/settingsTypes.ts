@@ -57,6 +57,7 @@ export interface SettingsDialogProps {
   responseStyle: ResponseStylePreference
   nativeLanguage: NativeLanguage
   contextWindowTokens: number
+  speedCounterEnabled: boolean
   promptRefinementPreferences: PromptRefinementPreferences
   promptRefinementModels: readonly PromptRefinementModelOption[]
   exportOptions: SettingsExportOptions
@@ -66,6 +67,7 @@ export interface SettingsDialogProps {
   onResponseStyleChange: (preference: ResponseStylePreference) => Promise<void> | void
   onNativeLanguageChange: (nativeLanguage: NativeLanguage) => Promise<void> | void
   onContextWindowTokensChange: (tokens: number) => Promise<void> | void
+  onSpeedCounterEnabledChange: (enabled: boolean) => Promise<void> | void
   onPromptRefinementPreferencesChange: (preference: PromptRefinementPreferences) => Promise<void> | void
   onSaveConnection: (request: SettingsConnectionRequest) => Promise<void>
   onTestConnection: (request: SettingsConnectionRequest) => Promise<SettingsConnectionTestResult>

@@ -1,7 +1,7 @@
 import './WindowControls.css'
 import { Minus, Square, X } from 'lucide-react'
 import type { OnboardingPreferences, OnboardingState, ResponseStylePreference, ThemePreference } from '../../shared/settings'
-import type { LlamaRuntimeStatus } from '../../shared/llama'
+import type { LlamaModelLoadProgress, LlamaRuntimeStatus } from '../../shared/llama'
 import type { WindowCommand } from '../../shared/windowCommands'
 import type { LocalCompletionEvent, LocalCompletionStart } from '../../main/localCompletionClient'
 import type { AgentRunRequest } from '../../main/agentRuntime'
@@ -80,7 +80,8 @@ declare global {
       getAgentSession: (threadId: string, projectPath: string) => Promise<PersistedAgentSession | null>
       getWorkspaceViewState: () => Promise<WorkspaceViewState>
       saveWorkspaceViewState: (state: WorkspaceViewState) => Promise<WorkspaceViewState>
-      startDownloadedModel: (repoId: string, filename: string, requireVision?: boolean) => Promise<LlamaRuntimeStatus>
+      startDownloadedModel: (repoId: string, filename: string, loadId: string, requireVision?: boolean) => Promise<LlamaRuntimeStatus>
+      onLocalModelLoadProgress: (callback: (progress: LlamaModelLoadProgress) => void) => () => void
       generateChatTitle: (userMessage: string) => Promise<string>
       checkModelCache: (modelId: string) => Promise<boolean>
       getDownloadedModels: (repos: string[]) => Promise<string[]>

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { archSupportsVision, backendAppearsInDeviceList, buildLlamaServerArgs, llamaRuntimeProfileMatches, resolveLlamaContextTokens, type LlamaLaunchProfile } from '../src/shared/llama.js'
+import { LlamaLoadProgressParser, archSupportsVision, backendAppearsInDeviceList, buildLlamaServerArgs, llamaLoadStageLabel, llamaRuntimeProfileMatches, parseLlamaLoadProgressLine, resolveLlamaContextTokens, type LlamaLaunchProfile } from '../src/shared/llama.js'
 import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '../src/shared/settings.js'
 
 const baseProfile: LlamaLaunchProfile = {
@@ -78,4 +78,46 @@ test('detects vision-capable architectures from server probes', () => {
   assert.equal(archSupportsVision(['qwen2.5']), false)
   assert.equal(archSupportsVision(undefined), false)
   assert.equal(archSupportsVision(['llava', 'clip']), true)
+})
+
+test('parses and clamps structured llama.cpp model loading progress', () => {
+  assert.deepEqual(parseLlamaLoadProgressLine('cmd_child_to_router:state:{"state":"loading","payload":{"stages":["text_model","mmproj_model"],"current":"text_model","value":1.4}}'), {
+    phase: 'loading',
+    stages: ['text_model', 'mmproj_model'],
+    current: 'text_model',
+    value: 1
+  })
+  assert.deepEqual(parseLlamaLoadProgressLine('[39281] cmd_child_to_router:state:{"state":"loading","payload":{"current":"text_model","value":-0.2}}'), {
+    phase: 'loading',
+    stages: undefined,
+    current: 'text_model',
+    value: 0
+  })
+})
+
+test('assembles chunked progress messages and ignores unrelated or malformed output', () => {
+  const parser = new LlamaLoadProgressParser()
+  assert.deepEqual(parser.push('ordinary llama log\ncmd_child_to_router:state:{"state":"load'), [])
+  assert.deepEqual(parser.push('ing","payload":{"stages":["text_model"],"current":"text_model","value":0.42}}\r\ninvalid\n'), [{
+    phase: 'loading',
+    stages: ['text_model'],
+    current: 'text_model',
+    value: 0.42
+  }])
+  assert.deepEqual(parser.push('cmd_child_to_router:state:{not-json}\n'), [])
+  assert.deepEqual(parser.push('cmd_child_to_router:state:{"state":"ready","payload":{"value":1}}'), [])
+  assert.deepEqual(parser.flush(), [])
+})
+
+test('keeps unknown progress stages truthful and labels known loading stages', () => {
+  assert.deepEqual(parseLlamaLoadProgressLine('cmd_child_to_router:state:{"state":"loading","payload":{"stages":["future_model"],"current":"future_model"}}'), {
+    phase: 'loading',
+    stages: ['future_model'],
+    current: 'future_model',
+    value: undefined
+  })
+  assert.equal(llamaLoadStageLabel('text_model'), 'Loading model weights')
+  assert.equal(llamaLoadStageLabel('mmproj_model'), 'Loading vision projector')
+  assert.equal(llamaLoadStageLabel('future_model'), 'Loading local model')
+  assert.equal(llamaLoadStageLabel(undefined), 'Preparing local model')
 })

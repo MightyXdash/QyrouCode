@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { NativeLanguage, OnboardingPreferences, OnboardingState, ResponseStylePreference, ThemePreference } from '../shared/settings'
-import type { LlamaRuntimeStatus } from '../shared/llama'
+import type { LlamaModelLoadProgress, LlamaRuntimeStatus } from '../shared/llama'
 import type { WindowCommand } from '../shared/windowCommands'
 import type { LocalCompletionEvent, LocalCompletionStart } from '../main/localCompletionClient'
 import type { AgentRunRequest } from '../main/agentRuntime'
@@ -66,6 +66,8 @@ const api = {
   setContextWindowTokens: (tokens: number): Promise<number> => ipcRenderer.invoke('set-context-window-tokens', tokens),
   getNativeLanguage: (): Promise<NativeLanguage> => ipcRenderer.invoke('get-native-language'),
   setNativeLanguage: (nativeLanguage: NativeLanguage): Promise<NativeLanguage> => ipcRenderer.invoke('set-native-language', nativeLanguage),
+  getSpeedCounterEnabled: (): Promise<boolean> => ipcRenderer.invoke('get-speed-counter-enabled'),
+  setSpeedCounterEnabled: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('set-speed-counter-enabled', enabled),
   setTheme: (theme: ThemePreference): Promise<ThemePreference> => ipcRenderer.invoke('set-theme', theme),
   getPromptRefinementPreferences: (): Promise<PromptRefinementPreferences> => ipcRenderer.invoke('get-prompt-refinement-preferences'),
   setPromptRefinementPreferences: (preference: PromptRefinementPreferences): Promise<PromptRefinementPreferences> => ipcRenderer.invoke('set-prompt-refinement-preferences', preference),
@@ -97,7 +99,12 @@ const api = {
   getAgentSession: (threadId: string, projectPath: string): Promise<PersistedAgentSession | null> => ipcRenderer.invoke('get-agent-session', threadId, projectPath),
   getWorkspaceViewState: (): Promise<WorkspaceViewState> => ipcRenderer.invoke('get-workspace-view-state'),
   saveWorkspaceViewState: (state: WorkspaceViewState): Promise<WorkspaceViewState> => ipcRenderer.invoke('save-workspace-view-state', state),
-  startDownloadedModel: (repoId: string, filename: string, requireVision = false): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('start-downloaded-model', repoId, filename, requireVision),
+  startDownloadedModel: (repoId: string, filename: string, loadId: string, requireVision = false): Promise<LlamaRuntimeStatus> => ipcRenderer.invoke('start-downloaded-model', repoId, filename, loadId, requireVision),
+  onLocalModelLoadProgress: (callback: (progress: LlamaModelLoadProgress) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: LlamaModelLoadProgress) => callback(progress)
+    ipcRenderer.on('local-model-load-progress', handler)
+    return () => { ipcRenderer.removeListener('local-model-load-progress', handler) }
+  },
   generateChatTitle: (userMessage: string): Promise<string> => ipcRenderer.invoke('generate-chat-title', userMessage),
   checkModelCache: (modelId: string): Promise<boolean> =>
     ipcRenderer.invoke('check-model-cache', modelId),
