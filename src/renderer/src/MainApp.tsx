@@ -176,7 +176,6 @@ interface ThreadRun {
   loadId?: string
   modelName?: string
   loadProgress?: LlamaModelLoadProgress
-  modelStartupPending?: boolean
   source: AgentModelProvenance['source']
   startedAt: number
   state: 'starting' | 'streaming'
@@ -678,7 +677,7 @@ export default function MainApp(): JSX.Element {
   const completionError = activeThread ? threadErrors[activeThread.id] ?? '' : ''
   const activeTokensPerSecond = activeThread ? threadRuns[activeThread.id]?.tokensPerSecond ?? 0 : 0
   const activeRun = activeThread ? threadRuns[activeThread.id] : undefined
-  const activeModelLoad = activeRun?.source === 'local' && activeRun.state === 'starting' && activeRun.modelStartupPending && activeRun.loadProgress
+  const activeModelLoad = activeRun?.source === 'local' && activeRun.state === 'starting' && activeRun.loadProgress
     ? activeRun
     : undefined
   const hasActiveTodos = (activeThread?.todos?.length ?? 0) > 0
@@ -1030,7 +1029,7 @@ export default function MainApp(): JSX.Element {
     const entry = Object.entries(threadRunsRef.current).find(([, run]) => run.loadId === progress.loadId)
     if (!entry) return
     const [threadId, run] = entry
-    if (run.source !== 'local' || run.state !== 'starting' || !run.modelStartupPending) return
+    if (run.source !== 'local' || run.state !== 'starting') return
     setThreadRun(threadId, {
       ...run,
       modelName: run.modelName ?? progress.modelName,
@@ -1958,11 +1957,7 @@ export default function MainApp(): JSX.Element {
       outputCharacters: 0,
       tokensPerSecond: 0,
       loadId,
-      modelName: modelProvenance.source === 'local' ? selectedModel.displayName : undefined,
-      modelStartupPending: modelProvenance.source === 'local',
-      loadProgress: loadId
-        ? { phase: 'preparing', loadId, modelName: selectedModel.displayName }
-        : undefined
+      modelName: modelProvenance.source === 'local' ? selectedModel.displayName : undefined
     })
     setAutoScrollEnabled(true)
     void window.api.saveChatThread(thread)
@@ -1975,10 +1970,6 @@ export default function MainApp(): JSX.Element {
         const status = await window.api.startDownloadedModel(localModel.hf_repo, localModel.gguf_file, loadId, imageAttachments.length > 0)
         if (cancelledThreadIdsRef.current.has(threadId)) return
         if (status.state !== 'ready') throw new Error(status.message ?? 'The local model could not start')
-        const run = threadRunsRef.current[threadId]
-        if (run?.loadId === loadId && run.state === 'starting') {
-          setThreadRun(threadId, { ...run, modelStartupPending: false, loadProgress: undefined })
-        }
       }
       const messages = thread.messages.flatMap((message) => {
         if (message.role === 'tool' || (message.role === 'assistant' && !message.content)) return []
