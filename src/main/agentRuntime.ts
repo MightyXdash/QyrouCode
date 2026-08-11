@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { isAbsolute, relative, resolve } from 'path'
-import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall } from './localCompletionClient'
+import type { GenerationMetrics, LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall } from './localCompletionClient'
 import type { FileChangeDisplay, TodoDisplay, ToolUiMessage } from '../shared/chat'
 import type { AgentModelProvenance } from '../shared/agent'
 import { DEFAULT_NATIVE_LANGUAGE, type NativeLanguage } from '../shared/settings'
@@ -13,7 +13,7 @@ import { parseHealedToolCalls, stripToolCallMarkup } from './toolCallParser'
 
 export interface AgentCompletionProvider {
   complete(request: LocalCompletionRequest): Promise<LocalCompletion>
-  stream?(request: LocalCompletionRequest, onDelta: (delta: string) => void, onGeneratedCharacters?: (characters: number) => void): Promise<LocalCompletion>
+  stream?(request: LocalCompletionRequest, onDelta: (delta: string) => void, onGenerationMetrics?: (metrics: GenerationMetrics) => void): Promise<LocalCompletion>
 }
 
 export interface AgentRunRequest extends Omit<LocalCompletionRequest, 'signal' | 'tools' | 'toolChoice'> {
@@ -275,7 +275,7 @@ export class AgentRuntime {
     return truncateTitle(title || fallbackTitle(firstUserMessage))
   }
 
-  async run(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, onGeneratedCharacters?: (characters: number) => void): Promise<void> {
+  async run(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, onGenerationMetrics?: (metrics: GenerationMetrics) => void): Promise<void> {
     const startedAt = Date.now()
     const modifiedFiles = new Set<string>()
     const originalFiles = new Map<string, string | null>()
@@ -292,7 +292,7 @@ export class AgentRuntime {
       final = await this.runInternal(request, 0, false, onState, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates, (delta) => {
         emitFiles()
         onDelta(delta)
-      }, onGeneratedCharacters)
+      }, onGenerationMetrics)
     } finally {
       emitFiles()
       if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] run', { durationMs: Date.now() - startedAt, modifiedFiles: modifiedFiles.size })
@@ -300,7 +300,7 @@ export class AgentRuntime {
     if (final && !final.streamed && final.text) onDelta(final.text)
   }
 
-  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, visibleTaskStates: string[] = [], onFinalDelta?: (delta: string) => void, onGeneratedCharacters?: (characters: number) => void): Promise<{ text: string; streamed: boolean }> {
+  private async runInternal(request: AgentRunRequest, depth: number, readOnly: boolean, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, visibleTaskStates: string[] = [], onFinalDelta?: (delta: string) => void, onGenerationMetrics?: (metrics: GenerationMetrics) => void): Promise<{ text: string; streamed: boolean }> {
     request.signal?.throwIfAborted()
     const systemPrompt = buildAgentSystemPrompt({
       projectPath: request.projectPath,
@@ -321,7 +321,7 @@ export class AgentRuntime {
       readOnly,
       captureScreenshot: request.captureScreenshot,
       terminalController: depth === 0 && !readOnly ? request.terminalController : undefined,
-      runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, originalFiles, onToolEvent, visibleTaskStates, onGeneratedCharacters) : undefined,
+      runTask: !readOnly && depth < MAX_SUBAGENT_DEPTH ? (task) => this.runSubagent(request, task, depth + 1, modifiedFiles, originalFiles, onToolEvent, visibleTaskStates, onGenerationMetrics) : undefined,
       onTodosChanged: (todos) => onToolEvent?.({ type: 'todos-updated', todos })
     })
     const allowedNames = new Set(toolbox.definitions.map((tool) => tool.name))
@@ -376,7 +376,7 @@ export class AgentRuntime {
     for (let step = 0; step < MAX_AGENT_STEPS; step += 1) {
       request.signal?.throwIfAborted()
       if (contentCharacters(messages) > COMPACTION_CHARACTER_THRESHOLD) {
-        messages = await this.compact(request, messages, onToolEvent, onGeneratedCharacters)
+        messages = await this.compact(request, messages, onToolEvent, onGenerationMetrics)
         onState?.(persistedMessages(messages))
       }
       let streamedText = ''
@@ -400,7 +400,7 @@ export class AgentRuntime {
         tools: toolbox.definitions,
         toolChoice: 'auto',
         signal: request.signal
-      }, onToolEvent, liveDelta, onGeneratedCharacters)
+      }, onToolEvent, liveDelta, onGenerationMetrics)
       const contentCalls = parseHealedToolCalls(completion.text, allowedNames)
       const reasoningCalls = parseHealedToolCalls(completion.reasoningText ?? '', allowedNames)
       const availableCalls = completion.toolCalls.length ? completion.toolCalls : contentCalls.length ? contentCalls : reasoningCalls
@@ -537,7 +537,7 @@ export class AgentRuntime {
     }, onToolEvent, depth === 0 && onFinalDelta ? (delta) => {
       streamedText += delta
       onFinalDelta(delta)
-    } : undefined, onGeneratedCharacters)
+    } : undefined, onGenerationMetrics)
     const finalText = stripToolCallMarkup(completion.text)
     if (!finalText.trim()) throw new Error('The local model completed the final turn without a visible answer')
     messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
@@ -552,7 +552,7 @@ export class AgentRuntime {
     return { text: finalText, streamed: false }
   }
 
-  private async compact(request: AgentRunRequest, messages: LocalChatMessage[], onToolEvent?: (event: AgentToolEvent) => void, onGeneratedCharacters?: (characters: number) => void): Promise<LocalChatMessage[]> {
+  private async compact(request: AgentRunRequest, messages: LocalChatMessage[], onToolEvent?: (event: AgentToolEvent) => void, onGenerationMetrics?: (metrics: GenerationMetrics) => void): Promise<LocalChatMessage[]> {
     const boundary = Math.max(1, messages.length - COMPACTION_RECENT_MESSAGES)
     const older = messages.slice(0, boundary)
     const recent = messages.slice(boundary)
@@ -565,14 +565,14 @@ export class AgentRuntime {
       maxTokens: COMPACTION_MAX_TOKENS,
       temperature: 0,
       signal: request.signal
-    }, onToolEvent, undefined, onGeneratedCharacters)
+    }, onToolEvent, undefined, onGenerationMetrics)
     return [
       { role: 'user', content: `<previous-context-summary>\n${completion.text}\n</previous-context-summary>` },
       ...recent
     ]
   }
 
-  private async completeWithRetries(request: LocalCompletionRequest, onToolEvent?: (event: AgentToolEvent) => void, onDelta?: (delta: string) => void, onGeneratedCharacters?: (characters: number) => void): Promise<LocalCompletion> {
+  private async completeWithRetries(request: LocalCompletionRequest, onToolEvent?: (event: AgentToolEvent) => void, onDelta?: (delta: string) => void, onGenerationMetrics?: (metrics: GenerationMetrics) => void): Promise<LocalCompletion> {
     for (let attempt = 0; attempt <= MAX_PROVIDER_RETRIES; attempt += 1) {
       request.signal?.throwIfAborted()
       const startedAt = Date.now()
@@ -584,7 +584,7 @@ export class AgentRuntime {
               emitted = true
               firstDeltaAt ??= Date.now()
               onDelta?.(delta)
-            }, onGeneratedCharacters)
+            }, onGenerationMetrics)
           : await this.provider.complete(request)
         if (process.env.NODE_ENV === 'development') {
           console.debug('[AgentRuntime] provider', {
@@ -605,14 +605,14 @@ export class AgentRuntime {
     throw new Error('Provider retry limit was reached')
   }
 
-  private runSubagent(parent: AgentRunRequest, task: AgentTaskRequest, depth: number, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, onToolEvent?: (event: AgentToolEvent) => void, visibleTaskStates: string[] = [], onGeneratedCharacters?: (characters: number) => void): Promise<string> {
+  private runSubagent(parent: AgentRunRequest, task: AgentTaskRequest, depth: number, modifiedFiles?: Set<string>, originalFiles?: Map<string, string | null>, onToolEvent?: (event: AgentToolEvent) => void, visibleTaskStates: string[] = [], onGenerationMetrics?: (metrics: GenerationMetrics) => void): Promise<string> {
     return this.runInternal({
       ...parent,
       messages: [
         { role: 'system', content: `Subagent task: ${task.description}. Return a single concise result to the parent agent. Include exact paths and evidence. Complete the requested work autonomously.` },
         { role: 'user', content: task.prompt }
       ]
-    }, depth, task.subagentType === 'explore', undefined, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates, undefined, onGeneratedCharacters).then((result) => result.text)
+    }, depth, task.subagentType === 'explore', undefined, onToolEvent, modifiedFiles, originalFiles, visibleTaskStates, undefined, onGenerationMetrics).then((result) => result.text)
   }
 }
 

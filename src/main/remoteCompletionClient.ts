@@ -1,5 +1,5 @@
 import type { ConnectionKind } from '../shared/connections'
-import type { LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall } from './localCompletionClient'
+import type { GenerationMetrics, LocalChatMessage, LocalCompletion, LocalCompletionRequest, LocalToolCall } from './localCompletionClient'
 import type { AgentCompletionProvider } from './agentRuntime'
 import { consumeOpenAiCompletionStream } from './openAiCompletionStream'
 
@@ -121,6 +121,7 @@ function completionBody(request: LocalCompletionRequest, configuration: RemoteCo
     model: configuration.modelId,
     messages: messages.map(serializeMessage),
     stream,
+    stream_options: stream ? { include_usage: true } : undefined,
     max_tokens: request.maxTokens,
     temperature: usesNativeReasoning ? undefined : request.temperature,
     top_p: usesNativeReasoning ? undefined : request.topP,
@@ -205,7 +206,7 @@ export class RemoteCompletionClient implements AgentCompletionProvider {
     }
   }
 
-  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void, onGeneratedCharacters?: (characters: number) => void): Promise<LocalCompletion> {
+  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void, onGenerationMetrics?: (metrics: GenerationMetrics) => void): Promise<LocalCompletion> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(new Error('Remote completion timed out')), this.timeoutMs)
     const abort = (): void => controller.abort(request.signal?.reason)
@@ -225,7 +226,7 @@ export class RemoteCompletionClient implements AgentCompletionProvider {
         throw new Error(`Remote completion request failed with ${response.status}${detail ? `: ${detail}` : ''}`)
       }
       if (!response.body) throw new Error('Remote completion did not return a response stream')
-      const completion = await consumeOpenAiCompletionStream(response.body, onDelta, onGeneratedCharacters)
+      const completion = await consumeOpenAiCompletionStream(response.body, onDelta, onGenerationMetrics)
       return this.configuration.retainReasoning ? completion : { ...completion, reasoningText: undefined }
     } catch (error) {
       if (controller.signal.aborted) {

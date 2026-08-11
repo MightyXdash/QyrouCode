@@ -61,6 +61,11 @@ export interface LocalCompletion {
   finishReason?: string
 }
 
+export interface GenerationMetrics {
+  tokens: number
+  durationMs: number
+}
+
 export interface LocalCompletionStart {
   requestId: string
 }
@@ -68,7 +73,7 @@ export interface LocalCompletionStart {
 export type LocalCompletionEvent =
   | { requestId: string; threadId?: string; type: 'title'; title: string }
   | { requestId: string; threadId?: string; type: 'delta'; delta: string }
-  | { requestId: string; threadId?: string; type: 'generation-delta'; characters: number }
+  | { requestId: string; threadId?: string; type: 'generation-metrics'; tokens: number; durationMs: number }
   | { requestId: string; threadId?: string; type: 'response-reset' }
   | { requestId: string; threadId?: string; type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: import('../shared/chat').ToolUiMessage }
   | { requestId: string; threadId?: string; type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
@@ -195,6 +200,7 @@ const serializeMessage = (message: LocalChatMessage): Record<string, unknown> =>
 const completionBody = (request: LocalCompletionRequest, settings: CompletionSettings, stream: boolean): Record<string, unknown> => ({
   messages: request.messages.map(serializeMessage),
   stream,
+  stream_options: stream ? { include_usage: true } : undefined,
   max_tokens: settings.maxTokens,
   temperature: settings.temperature,
   top_p: settings.topP,
@@ -295,7 +301,7 @@ export class LocalCompletionClient {
     }
   }
 
-  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void, onGeneratedCharacters?: (characters: number) => void): Promise<LocalCompletion> {
+  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void, onGenerationMetrics?: (metrics: GenerationMetrics) => void): Promise<LocalCompletion> {
     const settings = validateRequest(request)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(new Error('Local completion timed out')), this.timeoutMs)
@@ -314,7 +320,7 @@ export class LocalCompletionClient {
         throw new Error(`Local completion request failed with ${response.status}${detail ? `: ${detail}` : ''}`)
       }
       if (!response.body) throw new Error('Local completion did not return a response stream')
-      const completion = await consumeOpenAiCompletionStream(response.body, onDelta, onGeneratedCharacters)
+      const completion = await consumeOpenAiCompletionStream(response.body, onDelta, onGenerationMetrics)
       if (settings.enableThinking) return completion
       if (!completion.text && completion.toolCalls.length === 0) throw new Error('Local completion returned only reasoning while thinking was disabled')
       return { ...completion, reasoningText: undefined }

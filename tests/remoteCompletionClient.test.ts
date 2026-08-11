@@ -135,6 +135,7 @@ test('streams remote text and reconstructs fragmented tool calls', async () => {
     requestCount += 1
     const body = await requestBody(request)
     assert.equal(body.stream, true)
+    assert.deepEqual(body.stream_options, { include_usage: true })
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     response.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_","function":{"name":"re","arguments":"{\\"file"}}]}}]}\n\n')
     response.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"1","function":{"name":"ad","arguments":"Path\\":\\"src/index.ts\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n')

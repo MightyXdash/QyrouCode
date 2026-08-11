@@ -1,4 +1,4 @@
-import type { LocalCompletion, LocalToolCall } from './localCompletionClient'
+import type { GenerationMetrics, LocalCompletion, LocalToolCall } from './localCompletionClient'
 
 interface StreamToolCallDelta {
   index?: unknown
@@ -27,6 +27,13 @@ interface StreamChoice {
 
 interface StreamChunk {
   choices?: StreamChoice[]
+  usage?: {
+    completion_tokens?: unknown
+  }
+  timings?: {
+    predicted_n?: unknown
+    predicted_ms?: unknown
+  }
 }
 
 interface PendingToolCall {
@@ -45,9 +52,9 @@ function textValue(value: unknown): string {
   }).join('')
 }
 
-function appendToolDeltas(value: unknown, pending: Map<number, PendingToolCall>): number {
-  if (!Array.isArray(value)) return 0
-  let generatedCharacters = 0
+function appendToolDeltas(value: unknown, pending: Map<number, PendingToolCall>): boolean {
+  if (!Array.isArray(value)) return false
+  let generated = false
   for (const [position, raw] of value.entries()) {
     if (!raw || typeof raw !== 'object') continue
     const delta = raw as StreamToolCallDelta
@@ -56,15 +63,15 @@ function appendToolDeltas(value: unknown, pending: Map<number, PendingToolCall>)
     if (typeof delta.id === 'string') current.id += delta.id
     if (typeof delta.function?.name === 'string') {
       current.name += delta.function.name
-      generatedCharacters += delta.function.name.length
+      generated ||= delta.function.name.length > 0
     }
     if (typeof delta.function?.arguments === 'string') {
       current.argumentsText += delta.function.arguments
-      generatedCharacters += delta.function.arguments.length
+      generated ||= delta.function.arguments.length > 0
     }
     pending.set(index, current)
   }
-  return generatedCharacters
+  return generated
 }
 
 function completedToolCalls(pending: ReadonlyMap<number, PendingToolCall>): LocalToolCall[] {
@@ -90,7 +97,7 @@ function completedToolCalls(pending: ReadonlyMap<number, PendingToolCall>): Loca
 export async function consumeOpenAiCompletionStream(
   body: ReadableStream<Uint8Array>,
   onDelta: (delta: string) => void,
-  onGeneratedCharacters?: (characters: number) => void
+  onGenerationMetrics?: (metrics: GenerationMetrics) => void
 ): Promise<LocalCompletion> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
@@ -100,6 +107,9 @@ export async function consumeOpenAiCompletionStream(
   let reasoningText = ''
   let finishReason: string | undefined
   let doneEvent = false
+  let firstGeneratedAt: number | undefined
+  let completionTokens: number | undefined
+  let generationDurationMs: number | undefined
 
   const processEvent = (event: string): void => {
     const data = event.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n')
@@ -114,21 +124,27 @@ export async function consumeOpenAiCompletionStream(
     } catch {
       throw new Error('Completion provider returned malformed stream data')
     }
+    const usageTokens = parsed.usage?.completion_tokens
+    const predictedTokens = parsed.timings?.predicted_n
+    const predictedDuration = parsed.timings?.predicted_ms
+    if (typeof usageTokens === 'number' && Number.isFinite(usageTokens) && usageTokens >= 0) completionTokens = usageTokens
+    else if (typeof predictedTokens === 'number' && Number.isFinite(predictedTokens) && predictedTokens >= 0) completionTokens = predictedTokens
+    if (typeof predictedDuration === 'number' && Number.isFinite(predictedDuration) && predictedDuration > 0) generationDurationMs = predictedDuration
     const choice = parsed.choices?.[0]
     if (!choice) return
     const contentDelta = textValue(choice.delta?.content ?? choice.message?.content)
     if (contentDelta) {
+      firstGeneratedAt ??= Date.now()
       text += contentDelta
-      onGeneratedCharacters?.(contentDelta.length)
       onDelta(contentDelta)
     }
     const reasoningDelta = textValue(choice.delta?.reasoning_content ?? choice.delta?.reasoning ?? choice.message?.reasoning_content ?? choice.message?.reasoning)
     if (reasoningDelta) {
+      firstGeneratedAt ??= Date.now()
       reasoningText += reasoningDelta
-      onGeneratedCharacters?.(reasoningDelta.length)
     }
-    const toolCharacters = appendToolDeltas(choice.delta?.tool_calls ?? choice.message?.tool_calls, pendingTools)
-    if (toolCharacters) onGeneratedCharacters?.(toolCharacters)
+    const generatedToolDelta = appendToolDeltas(choice.delta?.tool_calls ?? choice.message?.tool_calls, pendingTools)
+    if (generatedToolDelta) firstGeneratedAt ??= Date.now()
     if (typeof choice.finish_reason === 'string') finishReason = choice.finish_reason
   }
 
@@ -146,5 +162,11 @@ export async function consumeOpenAiCompletionStream(
 
   const toolCalls = completedToolCalls(pendingTools)
   if (!text && !reasoningText && toolCalls.length === 0) throw new Error('Completion stream did not contain assistant text, reasoning, or tool calls')
+  if (completionTokens !== undefined && completionTokens > 0 && firstGeneratedAt !== undefined) {
+    onGenerationMetrics?.({
+      tokens: completionTokens,
+      durationMs: generationDurationMs ?? Math.max(1, Date.now() - firstGeneratedAt)
+    })
+  }
   return { text, toolCalls, reasoningText: reasoningText || undefined, finishReason }
 }

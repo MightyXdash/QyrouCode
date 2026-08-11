@@ -18,7 +18,7 @@ import {
   type LlamaRuntimeStatus
 } from '../shared/llama'
 import { INITIAL_RUNTIME_ARTIFACTS, getRuntimeArtifact, type RuntimeArchitecture } from '../shared/runtimeManifest'
-import { LocalCompletionClient, type LocalCompletion, type LocalCompletionRequest } from './localCompletionClient'
+import { LocalCompletionClient, type GenerationMetrics, type LocalCompletion, type LocalCompletionRequest } from './localCompletionClient'
 import { AgentRuntime, type AgentRunRequest, type AgentStateListener, type AgentToolEvent } from './agentRuntime'
 import { developmentRuntimeDirectory, packagedRuntimeExecutable } from './runtimePaths'
 import { readGgufContextLimit } from './gguf'
@@ -165,10 +165,10 @@ export class LlamaRuntime {
     return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).complete(request)
   }
 
-  async runAgent(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, onGeneratedCharacters?: (characters: number) => void): Promise<void> {
+  async runAgent(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, onGenerationMetrics?: (metrics: GenerationMetrics) => void): Promise<void> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
     const client = new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`)
-    await new AgentRuntime(client).run(request, onDelta, onState, onToolEvent, onGeneratedCharacters)
+    await new AgentRuntime(client).run(request, onDelta, onState, onToolEvent, onGenerationMetrics)
   }
 
   async generateTitle(request: AgentRunRequest): Promise<string> {

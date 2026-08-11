@@ -52,6 +52,7 @@ const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 128_000
 const DEFAULT_AGENT_MAX_TOKENS = 8_192
 const ESTIMATED_CHARACTERS_PER_TOKEN = 4
+const MILLISECONDS_PER_SECOND = 1_000
 const USER_MESSAGE_LINE_LIMITS = [20, 40] as const
 const PROMPT_REFINEMENT_SHORTCUT = 'Ctrl/Cmd+Shift+Enter'
 const MODEL_SUBMENU_OPEN_DELAY_MS = 75
@@ -180,8 +181,8 @@ interface ThreadRun {
   source: AgentModelProvenance['source']
   startedAt: number
   state: 'starting' | 'streaming'
-  generationStartedAt?: number
-  generatedCharacters: number
+  generatedTokens: number
+  generationDurationMs: number
   tokensPerSecond: number
 }
 
@@ -1142,20 +1143,18 @@ export default function MainApp(): JSX.Element {
       saveThreadImmediate(updated)
       return
     }
-    if (event.type === 'generation-delta') {
+    if (event.type === 'generation-metrics') {
       const run = threadRunsRef.current[requestThreadId]
       if (!run) return
-      const now = Date.now()
-      const generationStartedAt = run.generationStartedAt ?? now
-      const generatedCharacters = run.generatedCharacters + event.characters
-      const elapsedSeconds = (now - generationStartedAt) / 1_000
-      const tokensPerSecond = elapsedSeconds > 0
-        ? generatedCharacters / ESTIMATED_CHARACTERS_PER_TOKEN / elapsedSeconds
+      const generatedTokens = run.generatedTokens + event.tokens
+      const generationDurationMs = run.generationDurationMs + event.durationMs
+      const tokensPerSecond = generationDurationMs > 0
+        ? generatedTokens / (generationDurationMs / MILLISECONDS_PER_SECOND)
         : 0
       setThreadRun(requestThreadId, {
         ...run,
-        generationStartedAt,
-        generatedCharacters,
+        generatedTokens,
+        generationDurationMs,
         tokensPerSecond
       })
       if (tokensPerSecond > 0) setThreadTokensPerSecond((current) => ({
@@ -1180,13 +1179,6 @@ export default function MainApp(): JSX.Element {
       clearCompletionSettleTimer(event.requestId)
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
-      const run = threadRunsRef.current[requestThreadId]
-      if (run) setThreadRun(requestThreadId, {
-        ...run,
-        generationStartedAt: undefined,
-        generatedCharacters: 0,
-        tokensPerSecond: 0
-      })
       const messages = current.messages.map((message, index) => index === current.messages.length - 1 && message.role === 'assistant'
         ? { ...message, content: '' }
         : message)
@@ -2012,7 +2004,8 @@ export default function MainApp(): JSX.Element {
       source: modelProvenance.source,
       startedAt: now,
       state: 'starting',
-      generatedCharacters: 0,
+      generatedTokens: 0,
+      generationDurationMs: 0,
       tokensPerSecond: 0,
       loadId,
       modelName: modelProvenance.source === 'local' ? selectedModel.displayName : undefined
@@ -2082,7 +2075,7 @@ export default function MainApp(): JSX.Element {
       const current = threadsRef.current.find((item) => item.id === threadId)
       if (current?.messages.find((message) => message.id === assistantMessage.id)?.status !== 'pending') return
       requestThreadIdsRef.current.set(start.requestId, threadId)
-      setThreadRun(threadId, { requestId: start.requestId, source: modelProvenance.source, startedAt: now, state: 'streaming', generatedCharacters: 0, tokensPerSecond: 0 })
+      setThreadRun(threadId, { requestId: start.requestId, source: modelProvenance.source, startedAt: now, state: 'streaming', generatedTokens: 0, generationDurationMs: 0, tokensPerSecond: 0 })
     } catch (error) {
       setThreadError(threadId, error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'The selected model could not start')
       const current = threadsRef.current.find((item) => item.id === threadId)
@@ -2613,7 +2606,7 @@ export default function MainApp(): JSX.Element {
                     </div>
                   </div>
                 )}
-                <button className="composer-select model-select" type="button" disabled={completionState !== 'idle'} onClick={() => setOpenMenu(openMenu === null ? 'advanced' : null)}>
+                <button className="composer-select model-select" type="button" onClick={() => setOpenMenu(openMenu === null ? 'advanced' : null)}>
                   <span>{selectedModel?.displayName ?? (downloadedModelIds === null ? 'Checking models…' : 'No models')}</span>
                   <span className="combined-effort">{reasoningEffort}</span>
                   <ChevronDown size={12} />
@@ -2808,7 +2801,7 @@ export default function MainApp(): JSX.Element {
       )}
       {renamingProject && (
         <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectSaving) setRenamingProject(null) }}>
-          <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-project-dialog-title">
+          <section className="project-dialog project-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-project-dialog-title">
             <h2 id="rename-project-dialog-title">Rename project</h2>
             <p>This changes the project name shown in QyrouCode. Its folder stays unchanged.</p>
             <form onSubmit={(event) => void renameProject(event)}>
@@ -2824,7 +2817,7 @@ export default function MainApp(): JSX.Element {
       )}
       {deleteConfirmProject && (
         <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !projectRemoving) setDeleteConfirmProject(null) }}>
-          <section className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-project-dialog-title">
+          <section className="project-dialog project-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-project-dialog-title">
             <h2 id="delete-project-dialog-title">QyrouCode will delete this project</h2>
             <p>Deleting “<strong>{deleteConfirmProject.name}</strong>” won’t delete its project folder from your computer. To completely get rid of it, please delete the folder manually.</p>
             {projectRemovalError && <div className="project-dialog-error" role="alert">{projectRemovalError}</div>}

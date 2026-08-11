@@ -123,23 +123,21 @@ test('reconstructs fragmented streamed reasoning and tool calls', async () => {
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     response.write('data: {"choices":[{"delta":{"reasoning_content":"checking ","tool_calls":[{"index":0,"id":"call_","function":{"name":"re","arguments":"{\\"file"}}]}}]}\n\n')
     response.write('data: {"choices":[{"delta":{"reasoning_content":"files","tool_calls":[{"index":0,"id":"1","function":{"name":"ad","arguments":"Path\\":\\"src/app.ts\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n')
+    response.write('data: {"choices":[],"usage":{"completion_tokens":12},"timings":{"predicted_n":12,"predicted_ms":240}}\n\n')
     response.end('data: [DONE]\n\n')
   })
 
   try {
-    const generatedCharacters: number[] = []
+    const generationMetrics: Array<{ tokens: number; durationMs: number }> = []
     const completion = await new LocalCompletionClient(server.url).stream(
       { messages: [{ role: 'user', content: 'Inspect the app.' }], enableThinking: true },
       () => {},
-      (characters) => generatedCharacters.push(characters)
+      (metrics) => generationMetrics.push(metrics)
     )
     assert.equal(completion.reasoningText, 'checking files')
     assert.equal(completion.finishReason, 'tool_calls')
     assert.deepEqual(completion.toolCalls, [{ id: 'call_1', name: 'read', arguments: { filePath: 'src/app.ts' } }])
-    assert.equal(
-      generatedCharacters.reduce((total, characters) => total + characters, 0),
-      'checking files'.length + 'read'.length + '{"filePath":"src/app.ts"}'.length
-    )
+    assert.deepEqual(generationMetrics, [{ tokens: 12, durationMs: 240 }])
   } finally {
     await server.close()
   }

@@ -905,7 +905,7 @@ app.whenReady().then(() => {
     onDelta: (delta: string) => void,
     onState?: AgentStateListener,
     onToolEvent?: (event: AgentToolEvent) => void,
-    onGeneratedCharacters?: (characters: number) => void
+    onGenerationMetrics?: (metrics: import('./localCompletionClient').GenerationMetrics) => void
   ) => Promise<void>
   type TitleGenerator = (request: AgentRunRequest) => Promise<string>
 
@@ -983,7 +983,7 @@ app.whenReady().then(() => {
           updatedAt: Date.now()
         }),
         (toolEvent) => sendToolEvent(send, requestId, toolEvent),
-        (characters) => send({ requestId, type: 'generation-delta', characters })
+        (metrics) => send({ requestId, type: 'generation-metrics', ...metrics })
       )
     })()
       .then(() => send({ requestId, type: controller.signal.aborted ? 'cancelled' : 'complete' }))
