@@ -558,6 +558,7 @@ export default function MainApp(): JSX.Element {
   const [selectedProjectPath, setSelectedProjectPath] = useState('')
   const [composerProjectMenuOpen, setComposerProjectMenuOpen] = useState(false)
   const [threadRuns, setThreadRuns] = useState<Record<string, ThreadRun>>({})
+  const [threadTokensPerSecond, setThreadTokensPerSecond] = useState<Record<string, number>>({})
   const [threadErrors, setThreadErrors] = useState<Record<string, string>>({})
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true)
   const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set())
@@ -675,7 +676,9 @@ export default function MainApp(): JSX.Element {
     ? threadRuns[activeThread.id]?.state ?? 'starting'
     : 'idle'
   const completionError = activeThread ? threadErrors[activeThread.id] ?? '' : ''
-  const activeTokensPerSecond = activeThread ? threadRuns[activeThread.id]?.tokensPerSecond ?? 0 : 0
+  const activeTokensPerSecond = activeThread
+    ? threadRuns[activeThread.id]?.tokensPerSecond || threadTokensPerSecond[activeThread.id] || 0
+    : 0
   const activeRun = activeThread ? threadRuns[activeThread.id] : undefined
   const activeModelLoad = activeRun?.source === 'local' && activeRun.state === 'starting' && activeRun.loadProgress
     ? activeRun
@@ -1104,14 +1107,19 @@ export default function MainApp(): JSX.Element {
       const generationStartedAt = run.generationStartedAt ?? now
       const generatedCharacters = run.generatedCharacters + event.characters
       const elapsedSeconds = (now - generationStartedAt) / 1_000
+      const tokensPerSecond = elapsedSeconds > 0
+        ? generatedCharacters / ESTIMATED_CHARACTERS_PER_TOKEN / elapsedSeconds
+        : 0
       setThreadRun(requestThreadId, {
         ...run,
         generationStartedAt,
         generatedCharacters,
-        tokensPerSecond: elapsedSeconds > 0
-          ? generatedCharacters / ESTIMATED_CHARACTERS_PER_TOKEN / elapsedSeconds
-          : 0
+        tokensPerSecond
       })
+      if (tokensPerSecond > 0) setThreadTokensPerSecond((current) => ({
+        ...current,
+        [requestThreadId]: tokensPerSecond
+      }))
       return
     }
     if (event.type === 'delta') {
@@ -1970,6 +1978,7 @@ export default function MainApp(): JSX.Element {
     setPendingAttachments([])
     setAttachmentError('')
     setThreadError(threadId, undefined)
+    setThreadTokensPerSecond((current) => ({ ...current, [threadId]: 0 }))
     const loadId = modelProvenance.source === 'local' ? crypto.randomUUID() : undefined
     setThreadRun(threadId, {
       source: modelProvenance.source,
@@ -2557,8 +2566,10 @@ export default function MainApp(): JSX.Element {
             </div>
             <div className="composer-controls">
               {speedCounterEnabled && activeTokensPerSecond > 0 && (
-                <output className="composer-tps" aria-label={`Average speed: ${activeTokensPerSecond.toFixed(1)} tokens per second`}>
-                  Avg {activeTokensPerSecond.toFixed(1)} TPS
+                <output className="composer-tps" aria-label={`Generation speed: ${activeTokensPerSecond.toFixed(1)} tokens per second`} title="Generation speed">
+                  <span className="composer-tps-value">{activeTokensPerSecond.toFixed(1)}</span>
+                  {' '}
+                  <span className="composer-tps-unit">TPS</span>
                 </output>
               )}
               <div className="composer-menu-wrap">

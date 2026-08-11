@@ -20,7 +20,8 @@
   --app-composer-padding-inline: 14px;
   --app-composer-assistant-overlap: 14px;
   --app-composer-toolbar-gap: 8px;
-  --app-composer-tps-padding-inline: 5px;
+  --app-composer-tps-padding-inline: 4px;
+  --app-composer-tps-font-size: 10px;
   --app-composer-action-gap: 2px;
   --app-prompt-refinement-spin-duration: 1.2s;
   --app-composer-project-strip-height: 38px;
@@ -1045,7 +1046,9 @@ body:has(.macos-window) {
 .composer-toolbar { position: relative; z-index: 1; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: var(--app-composer-toolbar-gap); }
 .composer-actions { display: flex; align-items: center; gap: var(--app-composer-action-gap); }
 .composer-controls { display: flex; align-items: center; gap: 3px; min-width: 0; }
-.composer-tps { flex: 0 0 auto; padding: 0 var(--app-composer-tps-padding-inline); color: var(--text-weak); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.composer-tps { flex: 0 0 auto; padding: 0 var(--app-composer-tps-padding-inline); color: var(--text-weak); font-size: var(--app-composer-tps-font-size); line-height: 1; white-space: nowrap; }
+.composer-tps-value { font-family: var(--font-code); font-variant-numeric: tabular-nums; font-weight: 500; letter-spacing: -0.02em; }
+.composer-tps-unit { color: var(--text-weaker); font-weight: 500; letter-spacing: 0.02em; }
 .composer-icon-button, .composer-select, .send-button { height: var(--app-control-height); border: 0; font: inherit; cursor: pointer; }
 .composer-icon-button { display: grid; place-items: center; width: var(--app-control-height); border-radius: var(--app-icon-button-corner-radius); background: transparent; color: var(--text-weak); }
 .composer-icon-button:hover, .composer-select:hover { background: var(--surface-hover); color: var(--text-strong); }
