@@ -920,7 +920,8 @@ app.whenReady().then(() => {
     request: AgentRunRequest,
     onDelta: (delta: string) => void,
     onState?: AgentStateListener,
-    onToolEvent?: (event: AgentToolEvent) => void
+    onToolEvent?: (event: AgentToolEvent) => void,
+    onGeneratedCharacters?: (characters: number) => void
   ) => Promise<void>
 
   const startAgentRun = (
@@ -984,7 +985,8 @@ app.whenReady().then(() => {
         messages: messages.filter((message) => message.role !== 'system'),
         updatedAt: Date.now()
       }),
-      (toolEvent) => sendToolEvent(send, requestId, toolEvent)
+      (toolEvent) => sendToolEvent(send, requestId, toolEvent),
+      (characters) => send({ requestId, type: 'generation-delta', characters })
     )
       .then(() => send({ requestId, type: controller.signal.aborted ? 'cancelled' : 'complete' }))
       .catch((error) => send(controller.signal.aborted

@@ -165,10 +165,10 @@ export class LlamaRuntime {
     return new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).complete(request)
   }
 
-  async runAgent(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void): Promise<void> {
+  async runAgent(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, onGeneratedCharacters?: (characters: number) => void): Promise<void> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
     const client = new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`)
-    await new AgentRuntime(client).run(request, onDelta, onState, onToolEvent)
+    await new AgentRuntime(client).run(request, onDelta, onState, onToolEvent, onGeneratedCharacters)
   }
 
   async completePrompt(prompt: string): Promise<string> {

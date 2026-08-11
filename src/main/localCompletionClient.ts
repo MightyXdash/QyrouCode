@@ -74,6 +74,7 @@ export interface LocalCompletionStart {
 
 export type LocalCompletionEvent =
   | { requestId: string; threadId?: string; type: 'delta'; delta: string }
+  | { requestId: string; threadId?: string; type: 'generation-delta'; characters: number }
   | { requestId: string; threadId?: string; type: 'response-reset' }
   | { requestId: string; threadId?: string; type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: import('../shared/chat').ToolUiMessage }
   | { requestId: string; threadId?: string; type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
@@ -326,7 +327,7 @@ export class LocalCompletionClient {
     return { text: parsed.content.trim(), toolCalls: [] }
   }
 
-  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<LocalCompletion> {
+  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void, onGeneratedCharacters?: (characters: number) => void): Promise<LocalCompletion> {
     const settings = validateRequest(request)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(new Error('Local completion timed out')), this.timeoutMs)
@@ -345,7 +346,7 @@ export class LocalCompletionClient {
         throw new Error(`Local completion request failed with ${response.status}${detail ? `: ${detail}` : ''}`)
       }
       if (!response.body) throw new Error('Local completion did not return a response stream')
-      const completion = await consumeOpenAiCompletionStream(response.body, onDelta)
+      const completion = await consumeOpenAiCompletionStream(response.body, onDelta, onGeneratedCharacters)
       if (settings.enableThinking) return completion
       if (!completion.text && completion.toolCalls.length === 0) throw new Error('Local completion returned only reasoning while thinking was disabled')
       return { ...completion, reasoningText: undefined }

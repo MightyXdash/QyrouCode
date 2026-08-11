@@ -204,7 +204,7 @@ export class RemoteCompletionClient implements AgentCompletionProvider {
     }
   }
 
-  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void): Promise<LocalCompletion> {
+  async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void, onGeneratedCharacters?: (characters: number) => void): Promise<LocalCompletion> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(new Error('Remote completion timed out')), this.timeoutMs)
     const abort = (): void => controller.abort(request.signal?.reason)
@@ -224,7 +224,7 @@ export class RemoteCompletionClient implements AgentCompletionProvider {
         throw new Error(`Remote completion request failed with ${response.status}${detail ? `: ${detail}` : ''}`)
       }
       if (!response.body) throw new Error('Remote completion did not return a response stream')
-      const completion = await consumeOpenAiCompletionStream(response.body, onDelta)
+      const completion = await consumeOpenAiCompletionStream(response.body, onDelta, onGeneratedCharacters)
       return this.configuration.retainReasoning ? completion : { ...completion, reasoningText: undefined }
     } catch (error) {
       if (controller.signal.aborted) {

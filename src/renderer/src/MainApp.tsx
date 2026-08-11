@@ -180,7 +180,7 @@ interface ThreadRun {
   startedAt: number
   state: 'starting' | 'streaming'
   generationStartedAt?: number
-  outputCharacters: number
+  generatedCharacters: number
   tokensPerSecond: number
 }
 
@@ -1097,24 +1097,26 @@ export default function MainApp(): JSX.Element {
   useEffect(() => window.api.onLocalCompletionEvent((event) => {
     const requestThreadId = requestThreadIdsRef.current.get(event.requestId) ?? event.threadId
     if (!requestThreadId) return
+    if (event.type === 'generation-delta') {
+      const run = threadRunsRef.current[requestThreadId]
+      if (!run) return
+      const now = Date.now()
+      const generationStartedAt = run.generationStartedAt ?? now
+      const generatedCharacters = run.generatedCharacters + event.characters
+      const elapsedSeconds = (now - generationStartedAt) / 1_000
+      setThreadRun(requestThreadId, {
+        ...run,
+        generationStartedAt,
+        generatedCharacters,
+        tokensPerSecond: elapsedSeconds > 0
+          ? generatedCharacters / ESTIMATED_CHARACTERS_PER_TOKEN / elapsedSeconds
+          : 0
+      })
+      return
+    }
     if (event.type === 'delta') {
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
-      const run = threadRunsRef.current[requestThreadId]
-      if (run) {
-        const now = Date.now()
-        const generationStartedAt = run.generationStartedAt ?? now
-        const outputCharacters = run.outputCharacters + event.delta.length
-        const elapsedSeconds = (now - generationStartedAt) / 1_000
-        setThreadRun(requestThreadId, {
-          ...run,
-          generationStartedAt,
-          outputCharacters,
-          tokensPerSecond: elapsedSeconds > 0
-            ? outputCharacters / ESTIMATED_CHARACTERS_PER_TOKEN / elapsedSeconds
-            : 0
-        })
-      }
       const messages = current.messages.map((message, index) => index === current.messages.length - 1
         ? { ...message, content: message.content + event.delta }
         : message)
@@ -1132,7 +1134,7 @@ export default function MainApp(): JSX.Element {
       if (run) setThreadRun(requestThreadId, {
         ...run,
         generationStartedAt: undefined,
-        outputCharacters: 0,
+        generatedCharacters: 0,
         tokensPerSecond: 0
       })
       const messages = current.messages.map((message, index) => index === current.messages.length - 1 && message.role === 'assistant'
@@ -1973,7 +1975,7 @@ export default function MainApp(): JSX.Element {
       source: modelProvenance.source,
       startedAt: now,
       state: 'starting',
-      outputCharacters: 0,
+      generatedCharacters: 0,
       tokensPerSecond: 0,
       loadId,
       modelName: modelProvenance.source === 'local' ? selectedModel.displayName : undefined
@@ -2043,7 +2045,7 @@ export default function MainApp(): JSX.Element {
       const current = threadsRef.current.find((item) => item.id === threadId)
       if (current?.messages.find((message) => message.id === assistantMessage.id)?.status !== 'pending') return
       requestThreadIdsRef.current.set(start.requestId, threadId)
-      setThreadRun(threadId, { requestId: start.requestId, source: modelProvenance.source, startedAt: now, state: 'streaming', outputCharacters: 0, tokensPerSecond: 0 })
+      setThreadRun(threadId, { requestId: start.requestId, source: modelProvenance.source, startedAt: now, state: 'streaming', generatedCharacters: 0, tokensPerSecond: 0 })
     } catch (error) {
       setThreadError(threadId, error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : 'The selected model could not start')
       const current = threadsRef.current.find((item) => item.id === threadId)

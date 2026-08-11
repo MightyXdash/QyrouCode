@@ -137,7 +137,9 @@ export const llamaRuntimeProfileMatches = (
 export const resolveLlamaContextTokens = (
   modelContextLimit: number | undefined,
   fallbackContextTokens: number
-): number => modelContextLimit ?? fallbackContextTokens
+): number => modelContextLimit === undefined
+  ? fallbackContextTokens
+  : Math.min(fallbackContextTokens, modelContextLimit)
 
 const boundedThreadCount = (logicalCpuCount: number, maximum: number): number =>
   Math.max(MINIMUM_THREAD_COUNT, Math.min(maximum, Math.floor(logicalCpuCount)))

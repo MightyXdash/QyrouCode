@@ -45,18 +45,26 @@ function textValue(value: unknown): string {
   }).join('')
 }
 
-function appendToolDeltas(value: unknown, pending: Map<number, PendingToolCall>): void {
-  if (!Array.isArray(value)) return
+function appendToolDeltas(value: unknown, pending: Map<number, PendingToolCall>): number {
+  if (!Array.isArray(value)) return 0
+  let generatedCharacters = 0
   for (const [position, raw] of value.entries()) {
     if (!raw || typeof raw !== 'object') continue
     const delta = raw as StreamToolCallDelta
     const index = Number.isInteger(delta.index) ? Number(delta.index) : position
     const current = pending.get(index) ?? { id: '', name: '', argumentsText: '' }
     if (typeof delta.id === 'string') current.id += delta.id
-    if (typeof delta.function?.name === 'string') current.name += delta.function.name
-    if (typeof delta.function?.arguments === 'string') current.argumentsText += delta.function.arguments
+    if (typeof delta.function?.name === 'string') {
+      current.name += delta.function.name
+      generatedCharacters += delta.function.name.length
+    }
+    if (typeof delta.function?.arguments === 'string') {
+      current.argumentsText += delta.function.arguments
+      generatedCharacters += delta.function.arguments.length
+    }
     pending.set(index, current)
   }
+  return generatedCharacters
 }
 
 function completedToolCalls(pending: ReadonlyMap<number, PendingToolCall>): LocalToolCall[] {
@@ -79,7 +87,11 @@ function completedToolCalls(pending: ReadonlyMap<number, PendingToolCall>): Loca
   })
 }
 
-export async function consumeOpenAiCompletionStream(body: ReadableStream<Uint8Array>, onDelta: (delta: string) => void): Promise<LocalCompletion> {
+export async function consumeOpenAiCompletionStream(
+  body: ReadableStream<Uint8Array>,
+  onDelta: (delta: string) => void,
+  onGeneratedCharacters?: (characters: number) => void
+): Promise<LocalCompletion> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   const pendingTools = new Map<number, PendingToolCall>()
@@ -107,11 +119,16 @@ export async function consumeOpenAiCompletionStream(body: ReadableStream<Uint8Ar
     const contentDelta = textValue(choice.delta?.content ?? choice.message?.content)
     if (contentDelta) {
       text += contentDelta
+      onGeneratedCharacters?.(contentDelta.length)
       onDelta(contentDelta)
     }
     const reasoningDelta = textValue(choice.delta?.reasoning_content ?? choice.delta?.reasoning ?? choice.message?.reasoning_content ?? choice.message?.reasoning)
-    if (reasoningDelta) reasoningText += reasoningDelta
-    appendToolDeltas(choice.delta?.tool_calls ?? choice.message?.tool_calls, pendingTools)
+    if (reasoningDelta) {
+      reasoningText += reasoningDelta
+      onGeneratedCharacters?.(reasoningDelta.length)
+    }
+    const toolCharacters = appendToolDeltas(choice.delta?.tool_calls ?? choice.message?.tool_calls, pendingTools)
+    if (toolCharacters) onGeneratedCharacters?.(toolCharacters)
     if (typeof choice.finish_reason === 'string') finishReason = choice.finish_reason
   }
 

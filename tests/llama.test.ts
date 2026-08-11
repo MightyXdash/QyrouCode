@@ -38,8 +38,8 @@ test('restarts the same model when the selected context window changes', () => {
   assert.equal(llamaRuntimeProfileMatches(status, baseProfile.modelPath, 256000), false)
 })
 
-test('loads the GGUF native context instead of the selected context window', () => {
-  assert.equal(resolveLlamaContextTokens(262144, 48000), 262144)
+test('honors the selected context window without exceeding the GGUF native limit', () => {
+  assert.equal(resolveLlamaContextTokens(262144, 48000), 48000)
   assert.equal(resolveLlamaContextTokens(32768, 48000), 32768)
   assert.equal(resolveLlamaContextTokens(undefined, 48000), 48000)
 })

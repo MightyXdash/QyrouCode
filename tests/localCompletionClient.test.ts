@@ -127,13 +127,19 @@ test('reconstructs fragmented streamed reasoning and tool calls', async () => {
   })
 
   try {
+    const generatedCharacters: number[] = []
     const completion = await new LocalCompletionClient(server.url).stream(
       { messages: [{ role: 'user', content: 'Inspect the app.' }], enableThinking: true },
-      () => {}
+      () => {},
+      (characters) => generatedCharacters.push(characters)
     )
     assert.equal(completion.reasoningText, 'checking files')
     assert.equal(completion.finishReason, 'tool_calls')
     assert.deepEqual(completion.toolCalls, [{ id: 'call_1', name: 'read', arguments: { filePath: 'src/app.ts' } }])
+    assert.equal(
+      generatedCharacters.reduce((total, characters) => total + characters, 0),
+      'checking files'.length + 'read'.length + '{"filePath":"src/app.ts"}'.length
+    )
   } finally {
     await server.close()
   }
