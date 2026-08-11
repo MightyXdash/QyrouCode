@@ -1124,6 +1124,25 @@ export default function MainApp(): JSX.Element {
       settleFinalResponse(event.requestId, requestThreadId)
       return
     }
+    if (event.type === 'response-reset') {
+      clearCompletionSettleTimer(event.requestId)
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
+      if (!current) return
+      const run = threadRunsRef.current[requestThreadId]
+      if (run) setThreadRun(requestThreadId, {
+        ...run,
+        generationStartedAt: undefined,
+        outputCharacters: 0,
+        tokensPerSecond: 0
+      })
+      const messages = current.messages.map((message, index) => index === current.messages.length - 1 && message.role === 'assistant'
+        ? { ...message, content: '' }
+        : message)
+      const updated = { ...current, messages, updatedAt: Date.now() }
+      replaceThread(updated)
+      saveThreadImmediate(updated)
+      return
+    }
     if (event.type === 'tool-call') {
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return

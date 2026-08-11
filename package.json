@@ -80,8 +80,11 @@
       "icon": "build/icon.ico",
       "extraResources": [
         {
-          "from": "vendor/llama.cpp/win32-x64",
-          "to": "llama.cpp/win32-x64"
+          "from": "vendor/llama.cpp",
+          "to": "llama.cpp",
+          "filter": [
+            "win32-x64-*/**/*"
+          ]
         }
       ],
       "target": "nsis"

@@ -45,6 +45,16 @@ test('pins CUDA and Vulkan variants to the same reviewed llama.cpp source', () =
   assert.equal(vulkan?.sha256, '0bed19f882c98c452998311de58121cf74ec572eec3343cbcd33cc507766c359')
 })
 
+test('pins Windows CUDA and Vulkan release binaries with their required backend libraries', () => {
+  const cuda = getRuntimeArtifact(INITIAL_RUNTIME_ARTIFACTS, 'win32', 'x64', 'cuda')
+  const vulkan = getRuntimeArtifact(INITIAL_RUNTIME_ARTIFACTS, 'win32', 'x64', 'vulkan')
+
+  assert.equal(cuda?.executablePath, 'llama-server.exe')
+  assert.deepEqual(cuda?.companionLibraries, ['ggml-cuda.dll', 'cublas64_13.dll', 'cublasLt64_13.dll', 'cudart64_13.dll'])
+  assert.equal(vulkan?.executablePath, 'llama-server.exe')
+  assert.deepEqual(vulkan?.companionLibraries, ['ggml-vulkan.dll'])
+})
+
 test('rejects unpinned runtime URLs and hashes', () => {
   assert.throws(
     () => validateRuntimeArtifacts([{ ...baseArtifact, sourceUrl: 'http://example.test/llama.tar.gz' }]),

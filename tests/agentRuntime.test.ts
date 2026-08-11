@@ -269,10 +269,11 @@ test('accepts only task states with at least eight Unicode-aware words', async (
   }
 })
 
-test('buffers provider deltas and paces only the confirmed final response', async () => {
+test('forwards confirmed final response deltas at provider cadence', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const requests: LocalCompletionRequest[] = []
+    const emitted: string[] = []
     let index = 0
     const provider: AgentCompletionProvider = {
       async complete(): Promise<LocalCompletion> {
@@ -283,32 +284,21 @@ test('buffers provider deltas and paces only the confirmed final response', asyn
         index += 1
         if (index === 1) return { text: '', toolCalls: [{ id: 'write', name: 'write', arguments: { filePath: 'streamed.txt', content: 'done' } }] }
         onDelta('One two three four five ')
+        assert.deepEqual(emitted, ['One two three four five '])
         onDelta('six seven eight nine ten eleven.')
         return { text: 'One two three four five six seven eight nine ten eleven.', toolCalls: [] }
       }
     }
-    let now = 0
-    const emitted: Array<{ delta: string; at: number }> = []
-    const waits: number[] = []
-    const runtime = new AgentRuntime(provider, {
-      wait: async (durationMs) => {
-        waits.push(durationMs)
-        now += durationMs
-      }
-    })
+    const runtime = new AgentRuntime(provider)
 
     await runtime.run({
       threadId: 'thread-stream',
       projectPath,
       messages: [{ role: 'user', content: 'Create the streamed result.' }]
-    }, (delta) => emitted.push({ delta, at: now }))
+    }, (delta) => emitted.push(delta))
 
     assert.equal(requests.length, 2)
-    assert.equal(emitted.map((event) => event.delta).join(''), 'One two three four five six seven eight nine ten eleven.')
-    assert.equal(emitted.length, 11)
-    assert.equal(emitted[0]?.at, 0)
-    assert.equal(emitted.at(-1)?.at, 50)
-    assert.deepEqual(waits, Array.from({ length: 10 }, () => 5))
+    assert.deepEqual(emitted, ['One two three four five ', 'six seven eight nine ten eleven.'])
     assert.equal(readFileSync(join(projectPath, 'streamed.txt'), 'utf8'), 'done')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
@@ -321,9 +311,7 @@ test('preserves Unicode, Markdown, code, and whitespace during final playback', 
     const finalText = '完成了 世界。\n\n**Result:**\n\n```ts\nconst value = 1\n```\n'
     const provider = new ScriptedProvider([{ text: finalText, toolCalls: [] }])
     const deltas: string[] = []
-    const runtime = new AgentRuntime(provider, {
-      wait: async () => {}
-    })
+    const runtime = new AgentRuntime(provider)
 
     await runtime.run({
       threadId: 'thread-playback-content',
@@ -361,16 +349,18 @@ test('discards streamed prose from a mixed tool turn and executes its side effec
         return { text: 'Implemented the confirmed fix.', toolCalls: [] }
       }
     }
-    const deltas: string[] = []
+    let visible = ''
 
     await new AgentRuntime(provider).run({
       threadId: 'thread-mixed-stream',
       projectPath,
       messages: [{ role: 'user', content: 'Create a file.' }]
-    }, (delta) => deltas.push(delta), (messages) => persisted.push(messages.map((message) => ({ ...message }))))
+    }, (delta) => { visible += delta }, (messages) => persisted.push(messages.map((message) => ({ ...message }))), (event) => {
+      if (event.type === 'response-reset') visible = ''
+    })
 
     assert.equal(requests.length, 2)
-    assert.equal(deltas.join(''), 'Implemented the confirmed fix.')
+    assert.equal(visible, 'Implemented the confirmed fix.')
     assert.equal(readFileSync(join(projectPath, 'fixed.txt'), 'utf8'), 'fixed')
     assert.ok(persisted.flat().every((message) => message.content !== 'I found the issue. Let me fix it now.'))
     const mixedTurn = persisted.flat().find((message) => message.role === 'assistant' && message.toolCalls?.some((call) => call.id === 'late_write'))
@@ -404,16 +394,19 @@ test('keeps cur_task_state as the only progress source in a mixed tool turn', as
         return { text: 'Completed both requested changes.', toolCalls: [] }
       }
     }
-    const deltas: string[] = []
+    let visible = ''
     const events: AgentToolEvent[] = []
 
     await new AgentRuntime(provider).run({
       threadId: 'thread-mixed-progress',
       projectPath,
       messages: [{ role: 'user', content: 'Create both files.' }]
-    }, (delta) => deltas.push(delta), undefined, (event) => events.push(event))
+    }, (delta) => { visible += delta }, undefined, (event) => {
+      events.push(event)
+      if (event.type === 'response-reset') visible = ''
+    })
 
-    assert.equal(deltas.join(''), 'Completed both requested changes.')
+    assert.equal(visible, 'Completed both requested changes.')
     assert.deepEqual(events.filter((event) => event.type === 'progress-update').map((event) => event.type === 'progress-update' ? event.summary : ''), [TASK_STATE])
     assert.equal(readFileSync(join(projectPath, 'first.txt'), 'utf8'), 'first')
     assert.equal(readFileSync(join(projectPath, 'second.txt'), 'utf8'), 'second')
@@ -440,15 +433,17 @@ test('discards streamed prose when healed tool markup supplies the action', asyn
         return { text: 'Created the healed result.', toolCalls: [] }
       }
     }
-    const deltas: string[] = []
+    let visible = ''
 
     await new AgentRuntime(provider).run({
       threadId: 'thread-healed-stream',
       projectPath,
       messages: [{ role: 'user', content: 'Create the healed file.' }]
-    }, (delta) => deltas.push(delta))
+    }, (delta) => { visible += delta }, undefined, (event) => {
+      if (event.type === 'response-reset') visible = ''
+    })
 
-    assert.equal(deltas.join(''), 'Created the healed result.')
+    assert.equal(visible, 'Created the healed result.')
     assert.equal(readFileSync(join(projectPath, 'healed.txt'), 'utf8'), 'healed')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
@@ -474,23 +469,25 @@ test('does not display a streamed intent-only response before recovery', async (
         return { text: 'The work is already complete.', toolCalls: [] }
       }
     }
-    const deltas: string[] = []
+    let visible = ''
 
     await new AgentRuntime(provider).run({
       threadId: 'thread-streamed-intent',
       projectPath,
       messages: [{ role: 'user', content: 'Finish the work.' }]
-    }, (delta) => deltas.push(delta))
+    }, (delta) => { visible += delta }, undefined, (event) => {
+      if (event.type === 'response-reset') visible = ''
+    })
 
     assert.equal(requests.length, 2)
-    assert.equal(deltas.join(''), 'The work is already complete.')
+    assert.equal(visible, 'The work is already complete.')
     assert.match(textContent(requests[1].messages.at(-1)?.content), /only described future actions/)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
 })
 
-test('cancels final-answer playback without emitting later deltas', async () => {
+test('preserves provider output emitted before cancellation', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const controller = new AbortController()
@@ -499,24 +496,20 @@ test('cancels final-answer playback without emitting later deltas', async () => 
         throw new Error('Streaming provider should not use complete')
       },
       async stream(_request, onDelta): Promise<LocalCompletion> {
-        onDelta('One two three four five.')
-        return { text: 'One two three four five.', toolCalls: [] }
+        onDelta('One ')
+        controller.abort(new Error('Provider stream cancelled'))
+        throw controller.signal.reason
       }
     }
     const deltas: string[] = []
-    const runtime = new AgentRuntime(provider, {
-      wait: async (_durationMs, signal) => {
-        controller.abort(new Error('Playback cancelled'))
-        signal?.throwIfAborted()
-      }
-    })
+    const runtime = new AgentRuntime(provider)
 
     await assert.rejects(runtime.run({
       threadId: 'thread-cancelled-playback',
       projectPath,
       signal: controller.signal,
       messages: [{ role: 'user', content: 'Respond with several words.' }]
-    }, (delta) => deltas.push(delta)), /Playback cancelled/)
+    }, (delta) => deltas.push(delta)), /Provider stream cancelled/)
 
     assert.deepEqual(deltas, ['One '])
   } finally {
@@ -541,16 +534,18 @@ test('cancellation during a buffered tool response prevents side effects', async
         }
       }
     }
-    const deltas: string[] = []
+    let visible = ''
 
     await assert.rejects(new AgentRuntime(provider).run({
       threadId: 'thread-cancelled-tool-stream',
       projectPath,
       signal: controller.signal,
       messages: [{ role: 'user', content: 'Create a file.' }]
-    }, (delta) => deltas.push(delta)), /Provider stream cancelled/)
+    }, (delta) => { visible += delta }, undefined, (event) => {
+      if (event.type === 'response-reset') visible = ''
+    }), /Provider stream cancelled/)
 
-    assert.deepEqual(deltas, [])
+    assert.equal(visible, '')
     assert.equal(existsSync(join(projectPath, 'cancelled.txt')), false)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })

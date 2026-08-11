@@ -911,6 +911,9 @@ app.whenReady().then(() => {
       case 'todos-updated':
         send({ requestId, type: 'todos-updated', todos: event.todos })
         break
+      case 'response-reset':
+        send({ requestId, type: 'response-reset' })
+        break
     }
   }
   type AgentRunner = (

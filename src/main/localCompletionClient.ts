@@ -74,6 +74,7 @@ export interface LocalCompletionStart {
 
 export type LocalCompletionEvent =
   | { requestId: string; threadId?: string; type: 'delta'; delta: string }
+  | { requestId: string; threadId?: string; type: 'response-reset' }
   | { requestId: string; threadId?: string; type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: import('../shared/chat').ToolUiMessage }
   | { requestId: string; threadId?: string; type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
   | { requestId: string; threadId?: string; type: 'tool-error'; toolCallId: string; error: string }

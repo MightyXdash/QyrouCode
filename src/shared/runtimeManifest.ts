@@ -74,6 +74,28 @@ export const getRuntimeArtifact = (
 
 export const INITIAL_RUNTIME_ARTIFACTS = validateRuntimeArtifacts([
   {
+    id: 'llama.cpp-b9951-win32-x64-cuda',
+    release: 'b9951',
+    platform: 'win32',
+    architecture: 'x64',
+    backend: 'cuda',
+    sourceUrl: 'https://github.com/ggml-org/llama.cpp/releases/download/b9951/llama-b9951-bin-win-cuda-13.3-x64.zip',
+    sha256: '3f35c154e6b6a2e346f0fa1ba5bea4687842a2c0867c88868418fdce650b83dc',
+    executablePath: 'llama-server.exe',
+    companionLibraries: ['ggml-cuda.dll', 'cublas64_13.dll', 'cublasLt64_13.dll', 'cudart64_13.dll']
+  },
+  {
+    id: 'llama.cpp-b9951-win32-x64-vulkan',
+    release: 'b9951',
+    platform: 'win32',
+    architecture: 'x64',
+    backend: 'vulkan',
+    sourceUrl: 'https://github.com/ggml-org/llama.cpp/releases/download/b9951/llama-b9951-bin-win-vulkan-x64.zip',
+    sha256: '85abe963d9cf0d42d9eb23e1a0f02c2a35eeadca9200d95cae59e98f2914b3c9',
+    executablePath: 'llama-server.exe',
+    companionLibraries: ['ggml-vulkan.dll']
+  },
+  {
     id: 'llama.cpp-b9951-linux-x64-cpu',
     release: 'b9951',
     platform: 'linux',
