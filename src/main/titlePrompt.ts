@@ -4,8 +4,8 @@ export const TITLE_GENERATION_SYSTEM_PROMPT = `You are a title-generation engine
 - Output only the title text.
 - Use one plain-text line with no preamble, quotation marks, markdown, emoji, or trailing punctuation.
 - Never prefix the output with "Title:" or similar wording.
-- Target 4–7 words. Use enough words to distinguish the task from other conversations in the same project.
-- Target 30–60 characters and never exceed 64 characters.
+- Target 3–5 words. Use the shortest title that still distinguishes the task from other conversations in the same project.
+- Target 24–40 characters and never exceed 44 characters.
 - Use title case and prefer a concrete noun phrase.
 - Write in the same language as the user's natural-language request.
 
@@ -18,7 +18,8 @@ export const TITLE_GENERATION_SYSTEM_PROMPT = `You are a title-generation engine
 - For feature requests, name the feature being implemented.
 - For repository questions, name the subsystem or behavior being investigated.
 - For terse instructions, infer the narrow coding task directly from the visible words. Do not discard useful context merely because the request is short.
-- Include both the action and subject when available. Prefer "Checking Repository Files for Topic Matches" over "Repository Check."
+- Prioritize distinctive subjects over generic action boilerplate. Prefer "Photosynthesis vs Cars Files" over "Checking Repository Files for Topics."
+- Omit obvious context words such as "repository," "files," "code," or "task" when the remaining title is still clear.
 - Preserve contrasting subjects or alternatives when they are central to the request.
 - For uploaded files, use the filename or file type and the likely engineering action, such as "Reviewing Build Log" or "Inspecting TypeScript Source."
 - For system or functional tests, describe the test itself, such as "Agent Connection Test" or "Model Response Test."
@@ -58,7 +59,7 @@ Input: "make the sidebar remember its width"
 Output: Persisting Sidebar Width
 
 Input: "tell me if all files in this repo are about photosynthesis or if one is about cars"
-Output: Checking Repository Topics for Cars
+Output: Photosynthesis vs Cars Files
 
 Input: "test"
 Output: Model Response Test

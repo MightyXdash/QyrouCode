@@ -62,7 +62,7 @@ test('generates a title with the isolated prompt and selected model settings', a
   assert.equal(provider.requests[0].minP, 0.1)
   assert.equal(provider.requests[0].presencePenalty, 0.2)
   assert.equal(provider.requests[0].repetitionPenalty, 1.1)
-  assert.equal(provider.requests[0].maxTokens, 48)
+  assert.equal(provider.requests[0].maxTokens, 36)
   assert.equal(provider.requests[0].tools, undefined)
   assert.equal(provider.requests[0].toolChoice, 'none')
   assert.equal(provider.requests[0].suppressReasoningPrompt, true)
@@ -78,7 +78,7 @@ test('derives a descriptive title from the request when the model returns no vis
     enableThinking: true
   })
 
-  assert.equal(title, 'Inspect Repository Files For Photosynthesis And Car')
+  assert.equal(title, 'Inspect Repository Files For Photosynthesis')
 })
 
 test('retries provider errors without placing hardcoded text in the task-state slot', async () => {

@@ -48,8 +48,8 @@ const FINAL_MAX_TOKENS = 8_192
 const MAX_INTENT_REPROMPTS = 3
 const MAX_PROVIDER_RETRIES = 3
 const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
-const TITLE_MAX_TOKENS = 48
-const TITLE_MAX_CHARACTERS = 64
+const TITLE_MAX_TOKENS = 36
+const TITLE_MAX_CHARACTERS = 44
 const TASK_STATE_MIN_WORDS = 12
 const TASK_STATE_MAX_WORDS = 63
 const TASK_STATE_MAX_CHARACTERS = 480
@@ -240,7 +240,7 @@ function fallbackTitle(message: LocalChatMessage): string {
     : Array.isArray(message.content)
       ? message.content.filter((part) => part.type === 'text').map((part) => part.text).join(' ')
       : ''
-  const words = text.replace(/[^\p{L}\p{N}+#._-]+/gu, ' ').trim().split(/\s+/).filter(Boolean).slice(0, 7)
+  const words = text.replace(/[^\p{L}\p{N}+#._-]+/gu, ' ').trim().split(/\s+/).filter(Boolean).slice(0, 5)
   if (words.length === 0) return 'Reviewing Attached Project File'
   return words
     .map((word) => word.length > 1 ? `${word[0].toUpperCase()}${word.slice(1)}` : word.toUpperCase())
