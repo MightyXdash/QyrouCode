@@ -59,7 +59,8 @@ const TASK_STATE_SIMILARITY_THRESHOLD = 0.55
 const MAX_PARALLEL_READ_TOOLS = 4
 const PARALLEL_TOOL_NAMES = new Set(['read', 'list', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_read', 'skill', 'terminal_list', 'terminal_read', 'terminal_status', 'view_file', 'view_text', 'view_json', 'view_yaml', 'view_csv', 'view_pdf', 'view_docx', 'view_pptx', 'view_xlsx', 'view_log', 'view_hex', 'view_archive', 'view_env', 'view_image'])
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
-const TASK_STATE_REMINDER = 'Agentic work is continuing after several actions without a recent visible update. If more tools are needed, include one fresh cur_task_state of 12–63 words in this same response alongside the actions it describes. Do not call it alone, repeat an earlier update, or add one when returning the final answer.'
+const CONTROL_PROSE_PATTERN = /^(?:cur_task_state\b[\s\S]*|(?:i(?:'|’)m|i am)\s+(?:checking|searching|researching|reviewing|inspecting|analyzing|planning|working)\b[\s\S]*|(?:thinking|working|searching|researching|reviewing|inspecting|analyzing|planning|checking)\b[\s\S]*)$/iu
+const TASK_STATE_REMINDER = 'Agentic work is continuing after several actions without a recent visible update. If more tools are needed, include one fresh cur_task_state of 12–63 words in this same response alongside the actions it describes. Aim for roughly 60 words and normally stay above about 25 words; use 12–24 only for genuinely simple actions. Do not call it alone, repeat an earlier update, or add one when returning the final answer.'
 
 function messageContentCharacters(content: LocalChatMessage['content']): number {
   if (typeof content === 'string') return content.length
@@ -91,7 +92,7 @@ function conversationMessages(messages: readonly LocalChatMessage[]): LocalChatM
 
 function isIntentWithoutAction(value: string): boolean {
   const normalized = value.trim()
-  return normalized.length > 0 && normalized.length < 2_000 && INTENT_PATTERN.test(normalized)
+  return normalized.length > 0 && normalized.length < 2_000 && (INTENT_PATTERN.test(normalized) || (normalized.length <= TASK_STATE_MAX_CHARACTERS && CONTROL_PROSE_PATTERN.test(normalized)))
 }
 
 interface TaskStateWord {
@@ -420,7 +421,7 @@ export class AgentRuntime {
         if (isIntentWithoutAction(finalText) && intentReprompts < MAX_INTENT_REPROMPTS) {
           resetStreamedText()
           intentReprompts += 1
-          messages.push({ role: 'user', content: 'Your previous internal turn only described future actions. Continue now with the appropriate tool calls, batching independent inspections when useful. If no tool is needed, provide only the completed final answer.' })
+          messages.push({ role: 'user', content: 'Your previous internal turn only contained progress or described future actions. Do not write cur_task_state as assistant prose. Continue now by invoking cur_task_state through the structured function-call channel in the same response as the action tools it describes. If no tool is needed, provide only the completed final answer.' })
           continue
         }
         messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
@@ -454,21 +455,26 @@ export class AgentRuntime {
       })
 
       const results = new Map<string, ToolExecution>()
+      const actions = calls.filter((call) => call.name !== TASK_STATE_TOOL_NAME)
       let acceptedTaskStateId: string | undefined
       for (const call of calls.filter((candidate) => candidate.name === TASK_STATE_TOOL_NAME)) {
         const message = normalizedTaskState(call.arguments.message)
         const duplicate = !message || visibleTaskStates.some((visible) => taskStatesAreSimilar(visible, message))
-        if (!acceptedTaskStateId && !duplicate) {
+        if (actions.length > 0 && !acceptedTaskStateId && !duplicate) {
           acceptedTaskStateId = call.id
           visibleTaskStates.push(message)
           actionsSinceTaskState = 0
           onToolEvent?.({ type: 'progress-update', progressId: call.id, summary: message, source: 'model' })
           if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] progress', { source: 'model', length: message.length })
         }
-        results.set(call.id, { call, result: call.id === acceptedTaskStateId ? 'Task state accepted.' : 'Task state ignored; continue without retrying.' })
+        const result = call.id === acceptedTaskStateId
+          ? 'Task state accepted.'
+          : actions.length === 0
+            ? 'Invalid control batch: cur_task_state must accompany at least one action tool in the same response.'
+            : 'Task state ignored; continue without retrying.'
+        results.set(call.id, { call, result })
       }
 
-      const actions = calls.filter((call) => call.name !== TASK_STATE_TOOL_NAME)
       const emitFallbackProgress = (call: LocalToolCall): void => {
         const summary = fallbackTaskState(call)
         const progressId = `fallback:${call.id}`

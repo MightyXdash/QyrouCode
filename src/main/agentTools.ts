@@ -106,8 +106,8 @@ const definition = (name: string, description: string, properties: Record<string
 }
 
 const TOOL_DEFINITIONS: readonly LocalToolDefinition[] = [
-  definition(TASK_STATE_TOOL_NAME, 'Optional user-visible progress metadata. Include at most one alongside the action tools it describes; never use it as a standalone planning turn.', {
-    message: { type: 'string', description: 'A meaningful progress update in the configured language containing 8–63 words.' }
+  definition(TASK_STATE_TOOL_NAME, 'Required control-plane progress metadata for agentic work. Invoke it only through the structured function-call channel, include at most one in the same response as the action tools it describes, and never write its message as ordinary assistant prose or call it alone.', {
+    message: { type: 'string', description: 'A friendly, specific progress update in the configured language containing 12–63 words. Aim for roughly 60 words and normally use at least 25; 12–24 words are acceptable only for genuinely simple, small actions. This value is valid only inside a structured cur_task_state function call.' }
   }, ['message']),
   definition('read', 'Read a UTF-8 text file with line numbers. Use this before editing an existing file.', {
     filePath: { type: 'string', description: 'Workspace-relative or absolute file path' },

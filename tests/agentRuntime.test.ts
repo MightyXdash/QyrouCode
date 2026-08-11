@@ -142,6 +142,8 @@ test('co-batches progress, mutation, and verification in two provider turns', as
     const system = textContent(provider.requests[0].messages[0].content)
     assert.match(system, /cur_task_state is required/)
     assert.match(system, /12–63 useful words/)
+    assert.match(system, /roughly 60 words/)
+    assert.match(system, /above about 25 words/)
     assert.match(system, /Batch independent tools/)
     assert.doesNotMatch(system, /Call exactly one tool/)
     assert.doesNotMatch(system, /Qyrou-50M/)
@@ -252,6 +254,67 @@ test('creates stable fallback progress before a tool when the model omits task s
       summary: 'I’m using write now. I’ll use that result to continue your request carefully and accurately.',
       source: 'fallback'
     })
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('rejects standalone task-state control calls and requires an associated action', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
+  try {
+    const provider = new ScriptedProvider([
+      { text: '', toolCalls: [{ id: 'orphan_state', name: 'cur_task_state', arguments: { message: TASK_STATE } }] },
+      { text: '', toolCalls: [{ id: 'write_after_state', name: 'write', arguments: { filePath: 'associated.txt', content: 'done' } }] },
+      { text: 'Created the associated result.', toolCalls: [] }
+    ])
+    const events: AgentToolEvent[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-orphan-task-state',
+      projectPath,
+      messages: [{ role: 'user', content: 'Create the associated result.' }]
+    }, () => {}, undefined, (event) => events.push(event))
+
+    assert.equal(provider.requests.length, 3)
+    assert.match(textContent(provider.requests[1].messages.at(-1)?.content), /must accompany at least one action tool/)
+    assert.deepEqual(events.filter((event) => event.type === 'progress-update').map((event) => event.type === 'progress-update' ? event.source : ''), ['fallback'])
+    assert.equal(readFileSync(join(projectPath, 'associated.txt'), 'utf8'), 'done')
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('rejects plain progress prose and repairs with structured tool calls', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
+  try {
+    const provider = new ScriptedProvider([
+      { text: 'Thinking', toolCalls: [] },
+      {
+        text: '',
+        toolCalls: [
+          { id: 'structured_state', name: 'cur_task_state', arguments: { message: TASK_STATE } },
+          { id: 'structured_write', name: 'write', arguments: { filePath: 'structured.txt', content: 'done' } }
+        ]
+      },
+      { text: 'Created the structured result.', toolCalls: [] }
+    ])
+    const events: AgentToolEvent[] = []
+    let output = ''
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-control-prose',
+      projectPath,
+      messages: [{ role: 'user', content: 'Create the structured result.' }]
+    }, (delta) => { output += delta }, undefined, (event) => {
+      events.push(event)
+      if (event.type === 'response-reset') output = ''
+    })
+
+    assert.equal(provider.requests.length, 3)
+    assert.match(textContent(provider.requests[1].messages.at(-1)?.content), /structured function-call channel/)
+    assert.equal(output, 'Created the structured result.')
+    assert.deepEqual(events.filter((event) => event.type === 'progress-update').map((event) => event.type === 'progress-update' ? event.progressId : ''), ['structured_state'])
+    assert.equal(readFileSync(join(projectPath, 'structured.txt'), 'utf8'), 'done')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
@@ -584,7 +647,7 @@ test('does not display a streamed intent-only response before recovery', async (
 
     assert.equal(requests.length, 2)
     assert.equal(visible, 'The work is already complete.')
-    assert.match(textContent(requests[1].messages.at(-1)?.content), /only described future actions/)
+    assert.match(textContent(requests[1].messages.at(-1)?.content), /only contained progress or described future actions/)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

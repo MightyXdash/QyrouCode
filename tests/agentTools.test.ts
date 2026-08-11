@@ -25,6 +25,13 @@ test('non-web tools require a compact UI message while web tools do not', () => 
         assert.ok(parameters.required.includes('ui_message'))
       }
     }
+    const taskState = tools.definitions.find((definition) => definition.name === 'cur_task_state')
+    const taskStateParameters = taskState?.parameters as { properties: { message: { description?: string } } }
+    assert.match(taskState?.description ?? '', /structured function-call channel/)
+    assert.match(taskState?.description ?? '', /never write its message as ordinary assistant prose/)
+    assert.match(taskStateParameters.properties.message.description ?? '', /12–63 words/)
+    assert.match(taskStateParameters.properties.message.description ?? '', /roughly 60 words/)
+    assert.match(taskStateParameters.properties.message.description ?? '', /at least 25/)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
