@@ -209,6 +209,15 @@
   --tool-call-progress-margin-bottom: 12px;
   --tool-bundle-list-gap: 2px;
   --tool-bundle-list-indent: 22px;
+  --work-log-gap: 14px;
+  --work-log-phase-gap: 6px;
+  --work-log-progress-font-size: 13px;
+  --work-log-progress-line-height: 1.55;
+  --work-log-margin-bottom: 18px;
+  --work-duration-row-margin-block-start: 12px;
+  --work-duration-row-margin-block-end: 14px;
+  --work-duration-button-margin-bottom: 10px;
+  --work-duration-chevron-duration: 120ms;
   --user-message-expand-gap: 5px;
   --user-message-expand-margin-top: 6px;
   --user-message-expand-padding-top: 4px;
@@ -856,7 +865,11 @@ body:has(.macos-window) {
 .terminal-activity-label { color: var(--text-weak); font-size: 13px; }
 .terminal-activity-label.error { color: var(--surface-error); }
 
-.tool-message { margin: 0 0 12px; }
+.assistant-turn { min-width: 0; }
+.work-log { display: grid; gap: var(--work-log-gap); margin: 0 0 var(--work-log-margin-bottom); }
+.work-log[hidden] { display: none; }
+.work-log-phase { display: grid; gap: var(--work-log-phase-gap); min-width: 0; }
+.tool-message { margin: 0; }
 .tool-bundle { color: var(--text-weaker); }
 .tool-bundle-summary { display: flex; align-items: center; gap: 8px; width: fit-content; padding: 5px 0; cursor: pointer; list-style: none; }
 .tool-bundle-summary::-webkit-details-marker { display: none; }
@@ -878,7 +891,7 @@ body:has(.macos-window) {
 .tool-call-summary:hover .tool-call-name, .tool-call[open] .tool-call-name { color: var(--text-base); }
 .tool-call-summary:hover .tool-call-icon-check, .tool-call-summary:hover .tool-call-icon-error, .tool-call[open] .tool-call-icon-check, .tool-call[open] .tool-call-icon-error { color: var(--text-base); }
 .tool-call-preview { max-height: var(--tool-call-preview-max-height); margin: var(--tool-call-preview-margin); padding: var(--tool-call-preview-padding); overflow: auto; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--radius-sm); background: var(--background-weak); color: var(--text-base); font: var(--tool-call-preview-font-size)/1.5 var(--font-code); white-space: pre-wrap; }
-.progress-message { margin: 0 0 var(--tool-call-progress-margin-bottom); color: var(--text-base); font-size: 13px; line-height: 1.55; }
+.progress-message { margin: 0; color: var(--text-base); font-size: var(--work-log-progress-font-size); line-height: var(--work-log-progress-line-height); }
 
 .files-changed { margin: 22px 0 0; }
 .files-changed-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; color: var(--text-strong); font-size: 13px; font-weight: 600; }
@@ -892,11 +905,11 @@ body:has(.macos-window) {
 .files-changed-row-end { flex: 0 0 auto; font-family: 'DM Sans', sans-serif; }
 .files-changed-file svg { flex: 0 0 auto; color: var(--text-weak); }
 
-.work-duration-row { margin: 12px 0 14px; border-bottom: var(--border-width-hairline) solid var(--border-weak); }
-.work-duration { display: inline-flex; align-items: center; gap: 4px; width: fit-content; margin: 0 0 10px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.work-duration-row { margin: var(--work-duration-row-margin-block-start) 0 var(--work-duration-row-margin-block-end); border-bottom: var(--border-width-hairline) solid var(--border-weak); }
+.work-duration { display: inline-flex; align-items: center; gap: 4px; width: fit-content; margin: 0 0 var(--work-duration-button-margin-bottom); padding: 0; border: 0; background: transparent; cursor: pointer; }
 .work-duration:hover .work-duration-text { color: var(--text-base); }
 .work-duration-text { font-size: 13px; color: var(--text-weak); white-space: nowrap; transition: color 120ms ease; }
-.work-duration-chevron { color: var(--text-weak); transition: transform 0.2s ease; flex-shrink: 0; }
+.work-duration-chevron { color: var(--text-weak); transition: transform var(--work-duration-chevron-duration) ease; flex-shrink: 0; }
 .work-duration-chevron.expanded { transform: rotate(90deg); }
 .message-attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--attachment-gap); margin-bottom: var(--attachment-gap); }
 .message-attachments img { width: var(--attachment-message-size); height: var(--attachment-message-size); margin: 0; border: var(--border-width-hairline) solid var(--border-base); border-radius: var(--attachment-message-radius); background: var(--surface-raised); object-fit: cover; box-shadow: var(--shadow-composer-project-strip); }

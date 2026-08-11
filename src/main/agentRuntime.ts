@@ -6,6 +6,7 @@ import type { FileChangeDisplay, TodoDisplay, ToolUiMessage } from '../shared/ch
 import type { AgentModelProvenance } from '../shared/agent'
 import { DEFAULT_NATIVE_LANGUAGE, type NativeLanguage } from '../shared/settings'
 import { COMPACTION_SYSTEM_PROMPT, buildAgentSystemPrompt } from './agentPrompt'
+import { TITLE_GENERATION_SYSTEM_PROMPT } from './titlePrompt'
 import { AgentToolbox, TASK_STATE_TOOL_NAME, type AgentTaskRequest, type ToolboxImage } from './agentTools'
 import type { AgentTerminalController } from './terminalManager'
 import { parseHealedToolCalls, stripToolCallMarkup } from './toolCallParser'
@@ -24,6 +25,7 @@ export interface AgentRunRequest extends Omit<LocalCompletionRequest, 'signal' |
   terminalController?: AgentTerminalController
   visionAvailable?: boolean
   captureScreenshot?: () => Promise<string>
+  generateTitle?: boolean
 }
 
 export type AgentStateListener = (messages: readonly LocalChatMessage[]) => void
@@ -33,7 +35,7 @@ export type AgentToolEvent =
   | { type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
   | { type: 'tool-error'; toolCallId: string; error: string }
   | { type: 'files-changed'; files: FileChangeDisplay[] }
-  | { type: 'progress-update'; summary: string }
+  | { type: 'progress-update'; progressId: string; summary: string; source: 'model' | 'fallback' }
   | { type: 'todos-updated'; todos: TodoDisplay[] }
   | { type: 'response-reset' }
 
@@ -46,7 +48,9 @@ const FINAL_MAX_TOKENS = 8_192
 const MAX_INTENT_REPROMPTS = 3
 const MAX_PROVIDER_RETRIES = 3
 const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
-const TASK_STATE_MIN_WORDS = 8
+const TITLE_MAX_TOKENS = 32
+const TITLE_MAX_CHARACTERS = 40
+const TASK_STATE_MIN_WORDS = 12
 const TASK_STATE_MAX_WORDS = 63
 const TASK_STATE_MAX_CHARACTERS = 480
 const TASK_STATE_ACTION_INTERVAL = 6
@@ -54,7 +58,7 @@ const TASK_STATE_SIMILARITY_THRESHOLD = 0.55
 const MAX_PARALLEL_READ_TOOLS = 4
 const PARALLEL_TOOL_NAMES = new Set(['read', 'list', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_read', 'skill', 'terminal_list', 'terminal_read', 'terminal_status', 'view_file', 'view_text', 'view_json', 'view_yaml', 'view_csv', 'view_pdf', 'view_docx', 'view_pptx', 'view_xlsx', 'view_log', 'view_hex', 'view_archive', 'view_env', 'view_image'])
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
-const TASK_STATE_REMINDER = 'Agentic work is continuing after several actions without a recent visible update. If more tools are needed, include one fresh cur_task_state of 8–63 words in this same response alongside the actions it describes. Do not call it alone, repeat an earlier update, or add one when returning the final answer.'
+const TASK_STATE_REMINDER = 'Agentic work is continuing after several actions without a recent visible update. If more tools are needed, include one fresh cur_task_state of 12–63 words in this same response alongside the actions it describes. Do not call it alone, repeat an earlier update, or add one when returning the final answer.'
 
 function messageContentCharacters(content: LocalChatMessage['content']): number {
   if (typeof content === 'string') return content.length
@@ -166,6 +170,13 @@ function uiMessageForCall(call: LocalToolCall): ToolUiMessage | undefined {
   return present && past ? { uim_prt: present, uim_pat: past } : deterministicUiMessage(call.name)
 }
 
+function fallbackTaskState(call: LocalToolCall): string {
+  if (call.name === 'web_search') return 'Let me search the web for current, reliable information that answers your question.'
+  if (call.name === 'web_fetch') return 'Let me open the relevant source and verify its details before answering you.'
+  const present = uiMessageForCall(call)?.uim_prt ?? deterministicUiMessage(call.name).uim_prt
+  return `I’m ${present.charAt(0).toLocaleLowerCase()}${present.slice(1)} now. I’ll use that result to continue your request carefully and accurately.`
+}
+
 interface ToolExecution {
   call: LocalToolCall
   result: string
@@ -200,6 +211,29 @@ function modelProvenance(request: AgentRunRequest): { model: AgentModelProvenanc
 
 export class AgentRuntime {
   constructor(private readonly provider: AgentCompletionProvider) {}
+
+  async generateTitle(request: AgentRunRequest): Promise<string> {
+    request.signal?.throwIfAborted()
+    const firstUserMessage = request.messages.find((message) => message.role === 'user')
+    if (!firstUserMessage) return 'Untitled Coding Task'
+    const completion = await this.completeWithRetries({
+      ...modelSettings(request),
+      messages: [
+        { role: 'system', content: TITLE_GENERATION_SYSTEM_PROMPT },
+        firstUserMessage
+      ],
+      maxTokens: TITLE_MAX_TOKENS,
+      tools: undefined,
+      toolChoice: 'none',
+      suppressReasoningPrompt: true
+    })
+    const title = completion.text
+      .split(/\r?\n/, 1)[0]
+      .replace(/^\s*Title:\s*/i, '')
+      .replace(/^[`"']+|[.!?`"']+$/g, '')
+      .trim()
+    return title.slice(0, TITLE_MAX_CHARACTERS).trim() || 'Coding Task'
+  }
 
   async run(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, onGeneratedCharacters?: (characters: number) => void): Promise<void> {
     const startedAt = Date.now()
@@ -388,23 +422,33 @@ export class AgentRuntime {
           acceptedTaskStateId = call.id
           visibleTaskStates.push(message)
           actionsSinceTaskState = 0
-          onToolEvent?.({ type: 'progress-update', summary: message })
+          onToolEvent?.({ type: 'progress-update', progressId: call.id, summary: message, source: 'model' })
           if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] progress', { source: 'model', length: message.length })
         }
         results.set(call.id, { call, result: call.id === acceptedTaskStateId ? 'Task state accepted.' : 'Task state ignored; continue without retrying.' })
       }
 
       const actions = calls.filter((call) => call.name !== TASK_STATE_TOOL_NAME)
+      const emitFallbackProgress = (call: LocalToolCall): void => {
+        const summary = fallbackTaskState(call)
+        const progressId = `fallback:${call.id}`
+        visibleTaskStates.push(summary)
+        actionsSinceTaskState = 0
+        onToolEvent?.({ type: 'progress-update', progressId, summary, source: 'fallback' })
+        if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] progress', { source: 'fallback', length: summary.length })
+      }
       let actionIndex = 0
       while (actionIndex < actions.length) {
         request.signal?.throwIfAborted()
         const first = actions[actionIndex]
+        if ((!acceptedTaskStateId && visibleTaskStates.length === 0) || actionsSinceTaskState >= TASK_STATE_ACTION_INTERVAL) emitFallbackProgress(first)
         if (PARALLEL_TOOL_NAMES.has(first.name)) {
           const batch: LocalToolCall[] = []
+          const roomBeforeProgress = Math.max(1, TASK_STATE_ACTION_INTERVAL - actionsSinceTaskState)
           while (
             actionIndex < actions.length &&
             PARALLEL_TOOL_NAMES.has(actions[actionIndex].name) &&
-            batch.length < MAX_PARALLEL_READ_TOOLS
+            batch.length < Math.min(MAX_PARALLEL_READ_TOOLS, roomBeforeProgress)
           ) {
             batch.push(actions[actionIndex])
             actionIndex += 1

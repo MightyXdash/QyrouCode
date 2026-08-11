@@ -64,6 +64,9 @@ export interface ChatMessage {
   fileChanges?: FileChangeDisplay[]
   attachments?: ChatAttachment[]
   parentAssistantId?: string
+  activityKind?: 'progress'
+  progressId?: string
+  progressSource?: 'model' | 'fallback'
   status?: AssistantMessageStatus
   startedAt?: number
   completedAt?: number

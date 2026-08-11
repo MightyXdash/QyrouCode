@@ -14,6 +14,7 @@ import type { Project } from '../../shared/projects'
 import { MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatMessage, type ChatThread, type TodoDisplay, type ToolCallDisplay } from '../../shared/chat'
 import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
+import { buildWorkLogPhases, shouldShowWorkLog, upsertProgressActivity, workLogMessagesForAssistant, type WorkLogPhase } from './workLog'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
 import { Search, Plus, ChevronDown, ChevronRight, ArrowUp, PanelLeft, PanelTop, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, ChartNoAxesGantt, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal, Paperclip, FileText, Activity, AppWindow, Binary, BookOpen, Bot, Camera, CircleStop, CornerDownLeft, Eraser, File as FileIcon, FileArchive, FileCode, FileJson, FileSpreadsheet, FileTerminal, FileType, FolderSearch, Hand, Hourglass, Image, Keyboard, KeyRound, ListChecks, ListTodo, Play, Presentation, Rocket, ScrollText, SquareX, Sparkles, Table } from 'lucide-react'
@@ -239,37 +240,10 @@ function durationFromCssVariable(name: string, fallback: number): number {
   return fallback
 }
 
-const TASK_STATE_CHARACTERS_PER_SECOND = 170
-
 function ProgressMessage({ content, animate }: { content: string; animate: boolean }): JSX.Element {
-  const characters = useMemo(() => Array.from(content), [content])
-  const [revealedCharacters, setRevealedCharacters] = useState(animate ? 0 : characters.length)
-  const visibleContent = useMemo(
-    () => characters.slice(0, revealedCharacters).join(''),
-    [characters, revealedCharacters]
-  )
-
-  useEffect(() => {
-    if (!animate) {
-      setRevealedCharacters(characters.length)
-      return
-    }
-
-    setRevealedCharacters(0)
-    const startedAt = performance.now()
-    let frameId = 0
-    const reveal = (now: number): void => {
-      const nextCount = Math.min(characters.length, Math.floor((now - startedAt) * TASK_STATE_CHARACTERS_PER_SECOND / 1_000))
-      setRevealedCharacters(nextCount)
-      if (nextCount < characters.length) frameId = requestAnimationFrame(reveal)
-    }
-    frameId = requestAnimationFrame(reveal)
-    return () => cancelAnimationFrame(frameId)
-  }, [animate, characters])
-
   return (
     <div className="chat-message progress-message">
-      <MarkdownMessage content={visibleContent} />
+      <MarkdownMessage content={content} animateWords={animate} />
     </div>
   )
 }
@@ -358,6 +332,66 @@ function completedToolLabel(toolCall: ToolCallDisplay): string {
   if (toolCall.name === 'bash') return 'Ran a command'
   if (toolCall.name === 'task') return 'Completed delegated work'
   return 'Completed a tool call'
+}
+
+function ToolBundle({ toolCalls, presentTenseToolIds }: { toolCalls: ToolCallDisplay[]; presentTenseToolIds: Set<string> }): JSX.Element | null {
+  const bundleCall = toolCalls.at(-1)
+  if (!bundleCall) return null
+  const bundleRunning = bundleCall.result === undefined && !bundleCall.error
+  const bundleUsesPresentTense = bundleRunning || presentTenseToolIds.has(bundleCall.id)
+  const BundleIcon = toolIconMap[bundleCall.name] ?? toolIconMap.default
+  const bundleLabel = bundleUsesPresentTense ? runningToolLabel(bundleCall) : completedToolLabel(bundleCall)
+  return (
+    <div className="chat-message tool-message">
+      <details className="tool-bundle">
+        <summary className="tool-bundle-summary">
+          <span className="tool-call-icon"><BundleIcon size={12} className={bundleCall.error ? 'tool-call-icon-error' : 'tool-call-icon-check'} /></span>
+          <span className="tool-bundle-label">{bundleLabel}</span>
+          <ChevronDown size={12} className="tool-bundle-chevron" />
+        </summary>
+        <div className="tool-bundle-list">
+          {toolCalls.map((toolCall) => {
+            const hasResult = toolCall.result !== undefined && !toolCall.error
+            const hasError = !!toolCall.error
+            const running = !hasResult && !hasError
+            const usesPresentTense = running || presentTenseToolIds.has(toolCall.id)
+            return (
+              <details className={hasResult ? 'tool-call completed' : hasError ? 'tool-call error' : 'tool-call running'} key={toolCall.id}>
+                <summary className="tool-call-summary">
+                  <span className="tool-call-icon">{(() => {
+                    const Icon = toolIconMap[toolCall.name] ?? toolIconMap.default
+                    return <Icon size={12} className={hasError ? 'tool-call-icon-error' : 'tool-call-icon-check'} />
+                  })()}</span>
+                  <span className="tool-call-name">{usesPresentTense ? runningToolLabel(toolCall) : completedToolLabel(toolCall)}</span>
+                </summary>
+                {(toolCall.result || toolCall.error) && <pre className="tool-call-preview">{toolCall.error ?? toolCall.result}</pre>}
+              </details>
+            )
+          })}
+        </div>
+      </details>
+    </div>
+  )
+}
+
+function WorkLog({ id, hidden, phases, pending, presentTenseToolIds }: { id: string; hidden: boolean; phases: WorkLogPhase[]; pending: boolean; presentTenseToolIds: Set<string> }): JSX.Element | null {
+  if (!phases.length) return null
+  return (
+    <section className="work-log" id={id} aria-label="Work log" hidden={hidden}>
+      {phases.map((phase, index) => {
+        const toolCalls = phase.toolMessages.flatMap((message) => message.toolCalls ?? [])
+        const isLast = index === phases.length - 1
+        const showTools = !pending || !isLast || toolCalls.some((toolCall) => toolCall.result !== undefined || !!toolCall.error)
+        const key = phase.progress?.progressId ?? phase.progress?.id ?? toolCalls[0]?.id ?? `phase-${index}`
+        return (
+          <div className="work-log-phase" key={key}>
+            {phase.progress && <ProgressMessage content={phase.progress.content} animate={pending} />}
+            {showTools && <ToolBundle toolCalls={toolCalls} presentTenseToolIds={presentTenseToolIds} />}
+          </div>
+        )
+      })}
+    </section>
+  )
 }
 
 function webSearchDetail(toolCall: ToolCallDisplay): string | undefined {
@@ -1100,6 +1134,14 @@ export default function MainApp(): JSX.Element {
   useEffect(() => window.api.onLocalCompletionEvent((event) => {
     const requestThreadId = requestThreadIdsRef.current.get(event.requestId) ?? event.threadId
     if (!requestThreadId) return
+    if (event.type === 'title') {
+      const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
+      if (!current || !event.title) return
+      const updated = { ...current, title: event.title, updatedAt: Date.now() }
+      replaceThread(updated)
+      saveThreadImmediate(updated)
+      return
+    }
     if (event.type === 'generation-delta') {
       const run = threadRunsRef.current[requestThreadId]
       if (!run) return
@@ -1231,31 +1273,7 @@ export default function MainApp(): JSX.Element {
       if (activeThreadRef.current?.id === requestThreadId) clearHeldActivity(true)
       const pendingAssistant = [...current.messages].reverse().find((message) => message.role === 'assistant' && message.status === 'pending')
       if (!pendingAssistant) return
-      const lastProgressIndex = current.messages.findLastIndex((message) =>
-        message.role === 'tool' && !message.toolCalls?.length && message.parentAssistantId === pendingAssistant.id
-      )
-      const lastToolCallIndex = current.messages.findLastIndex((message) =>
-        message.role === 'tool' && message.parentAssistantId === pendingAssistant.id && (message.toolCalls?.length ?? 0) > 0
-      )
-      const existingProgress = lastProgressIndex > lastToolCallIndex ? current.messages[lastProgressIndex] : undefined
-      if (existingProgress) {
-        const messages = current.messages.map((message) => message.id === existingProgress.id
-          ? { ...message, content: event.summary }
-          : message)
-        const updated = { ...current, messages, updatedAt: Date.now() }
-        replaceThread(updated)
-        saveThreadDebounced(updated)
-        return
-      }
-      const progressMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'tool',
-        content: event.summary,
-        timestamp: Date.now(),
-        parentAssistantId: pendingAssistant.id
-      }
-      const lastIdx = current.messages.length - 1
-      const messages = [...current.messages.slice(0, lastIdx), progressMessage, current.messages[lastIdx]]
+      const messages = upsertProgressActivity(current.messages, pendingAssistant.id, event, Date.now(), crypto.randomUUID())
       const updated = { ...current, messages, updatedAt: Date.now() }
       replaceThread(updated)
       saveThreadImmediate(updated)
@@ -1615,10 +1633,33 @@ export default function MainApp(): JSX.Element {
   const regenerateThreadTitle = async (thread: ChatThread): Promise<void> => {
     setContextMenu(null)
     const firstUserMsg = thread.messages.find((m) => m.role === 'user')
-    if (!firstUserMsg) return
+    if (!firstUserMsg || !selectedModel) return
     setRegeneratingThreadId(thread.id)
     try {
-      const title = await window.api.generateChatTitle(firstUserMsg.content)
+      if (selectedModel.source === 'local') {
+        const localModel = selectedModel.localModel
+        if (!localModel) return
+        const status = await window.api.startDownloadedModel(localModel.hf_repo, localModel.gguf_file, crypto.randomUUID())
+        if (status.state !== 'ready') return
+      }
+      const localProfile = selectedModel.localModel ? reasoningProfile(selectedModel.localModel, reasoningEffort) : undefined
+      const target: AgentExecutionTarget = selectedModel.source === 'local'
+        ? { source: 'local', modelId: selectedModel.modelId, displayName: selectedModel.displayName }
+        : { source: 'remote', connectionId: selectedModel.connectionId ?? '', modelId: selectedModel.modelId, reasoningEffort }
+      const attachmentContext = firstUserMsg.attachments?.map((attachment) => `[Attached ${attachment.kind ?? 'image'}: ${attachment.name}]`).join('\n') ?? ''
+      const title = await window.api.generateChatTitle(target, {
+        threadId: thread.id,
+        projectPath: thread.projectPath,
+        messages: [{ role: 'user', content: firstUserMsg.content || attachmentContext || 'Attachment Review' }],
+        enableThinking: localProfile?.enableThinking ?? reasoningEffort !== 'Instant',
+        temperature: localProfile?.temperature,
+        topP: localProfile?.topP,
+        topK: localProfile?.topK,
+        minP: localProfile?.minP,
+        presencePenalty: localProfile?.presencePenalty,
+        repetitionPenalty: localProfile?.repetitionPenalty,
+        maxTokens: DEFAULT_AGENT_MAX_TOKENS
+      })
       if (!title) return
       const updated = { ...thread, title, updatedAt: Date.now() }
       replaceThread(updated)
@@ -1667,19 +1708,6 @@ export default function MainApp(): JSX.Element {
     setActiveThread(thread)
     setSelectedProjectPath(thread.projectPath)
     setAutoScrollEnabled(true)
-  }
-
-  const updateThreadTitle = async (threadId: string, userMessage: string): Promise<void> => {
-    try {
-      const title = await window.api.generateChatTitle(userMessage)
-      const current = threadsRef.current.find((thread) => thread.id === threadId)
-      if (!current || !title) return
-      const updated = { ...current, title, updatedAt: Date.now() }
-      replaceThread(updated)
-      await window.api.saveChatThread(updated)
-    } catch {
-      return
-    }
   }
 
   const formatDurationShort = (durationMs: number): string => {
@@ -1991,7 +2019,6 @@ export default function MainApp(): JSX.Element {
     })
     setAutoScrollEnabled(true)
     void window.api.saveChatThread(thread)
-    if (isNewThread && content) void updateThreadTitle(threadId, content)
     try {
       if (selectedModel.source === 'local') {
         const localModel = selectedModel.localModel
@@ -2044,7 +2071,8 @@ export default function MainApp(): JSX.Element {
         minP: localProfile?.minP,
         presencePenalty: localProfile?.presencePenalty,
         repetitionPenalty: localProfile?.repetitionPenalty,
-        maxTokens: DEFAULT_AGENT_MAX_TOKENS
+        maxTokens: DEFAULT_AGENT_MAX_TOKENS,
+        generateTitle: isNewThread
       })
       if (cancelledThreadIdsRef.current.has(threadId)) {
         void window.api.cancelLocalCompletion(start.requestId)
@@ -2262,87 +2290,16 @@ export default function MainApp(): JSX.Element {
                     </div>
                   )
                 }
-                if (message.role === 'tool') {
-                  const parent = message.parentAssistantId
-                    ? activeThread.messages.find((candidate) => candidate.id === message.parentAssistantId)
-                    : activeThread.messages.slice(messageIndex + 1).find((candidate) => candidate.role === 'assistant')
-                  const parentToolCalls = parent
-                    ? activeThread.messages.filter((candidate) => candidate.role === 'tool' && candidate.parentAssistantId === parent.id).flatMap((candidate) => candidate.toolCalls ?? [])
-                    : []
-                  if (message.content.startsWith('__reasoning__') || message.content.startsWith('__progress__')) return null
-                  if (!message.toolCalls?.length && message.content) {
-                    if (parent?.role === 'assistant' && parent.status !== 'pending' && !expandedWorkIds.has(parent.id)) return null
-                    return <ProgressMessage content={message.content} animate={parent?.role === 'assistant' && parent.status === 'pending'} key={message.id} />
-                  }
-                  const parentIsFinished = parent?.role === 'assistant' && parent.status !== 'pending'
-                  if (parentIsFinished && parent && !expandedWorkIds.has(parent.id)) return null
-                  if (message.toolCalls?.every((toolCall) => toolCall.result === undefined && !toolCall.error)) return null
-                  const hasLaterProgress = activeThread.messages.slice(messageIndex + 1).some((candidate) =>
-                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && !candidate.toolCalls?.length && candidate.content && !candidate.content.startsWith('__progress__') && !candidate.content.startsWith('__reasoning__')
-                  )
-                  if (!parentIsFinished && !hasLaterProgress) return null
-                  const previousProgressOffset = activeThread.messages.slice(0, messageIndex).findLastIndex((candidate) =>
-                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && !candidate.toolCalls?.length && candidate.content && !candidate.content.startsWith('__progress__') && !candidate.content.startsWith('__reasoning__')
-                  )
-                  const nextProgressOffset = activeThread.messages.slice(messageIndex + 1).findIndex((candidate) =>
-                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && !candidate.toolCalls?.length && candidate.content && !candidate.content.startsWith('__progress__') && !candidate.content.startsWith('__reasoning__')
-                  )
-                  const phaseStart = previousProgressOffset + 1
-                  const phaseEnd = nextProgressOffset >= 0 ? messageIndex + 1 + nextProgressOffset : activeThread.messages.length
-                  const phaseToolMessages = activeThread.messages.slice(phaseStart, phaseEnd).filter((candidate) =>
-                    candidate.role === 'tool' && candidate.parentAssistantId === parent?.id && (candidate.toolCalls?.length ?? 0) > 0
-                  )
-                  if (phaseToolMessages.at(-1)?.id !== message.id) return null
-                  const phaseToolCalls = phaseToolMessages.flatMap((candidate) => candidate.toolCalls ?? [])
-                  const bundleCall = phaseToolCalls.at(-1)
-                  if (!bundleCall) return null
-                  const bundleRunning = bundleCall.result === undefined && !bundleCall.error
-                  const bundleUsesPresentTense = bundleRunning || presentTenseToolIds.has(bundleCall.id)
-                  const BundleIcon = toolIconMap[bundleCall.name] ?? toolIconMap.default
-                  const bundleLabel = bundleUsesPresentTense ? runningToolLabel(bundleCall) : completedToolLabel(bundleCall)
-                  return (
-                    <div className="chat-message tool-message" key={message.id}>
-                      <details className="tool-bundle">
-                        <summary className="tool-bundle-summary">
-                          <span className="tool-call-icon"><BundleIcon size={12} className={bundleCall.error ? 'tool-call-icon-error' : 'tool-call-icon-check'} /></span>
-                          <span className="tool-bundle-label">{bundleLabel}</span>
-                          <ChevronDown size={12} className="tool-bundle-chevron" />
-                        </summary>
-                        <div className="tool-bundle-list">
-                          {phaseToolCalls.map((tc) => {
-                            const hasResult = tc.result !== undefined && !tc.error
-                            const hasError = !!tc.error
-                            const running = !hasResult && !hasError
-                            const usesPresentTense = running || presentTenseToolIds.has(tc.id)
-                            return (
-                              <details className={hasResult ? 'tool-call completed' : hasError ? 'tool-call error' : 'tool-call running'} key={tc.id}>
-                                <summary className="tool-call-summary">
-                                  <span className="tool-call-icon">{(() => {
-                                    const Icon = toolIconMap[tc.name] ?? toolIconMap.default
-                                    return <Icon size={12} className={hasError ? 'tool-call-icon-error' : 'tool-call-icon-check'} />
-                                  })()}</span>
-                                  <span className="tool-call-name">{usesPresentTense ? runningToolLabel(tc) : completedToolLabel(tc)}</span>
-                                </summary>
-                                {(tc.result || tc.error) && <pre className="tool-call-preview">{tc.error ?? tc.result}</pre>}
-                              </details>
-                            )
-                          })}
-                        </div>
-                      </details>
-                    </div>
-                  )
-                }
+                if (message.role === 'tool') return null
                 return (() => {
-                  const turnToolCalls = activeThread.messages
-                    .filter((candidate) => candidate.role === 'tool' && candidate.parentAssistantId === message.id)
-                    .flatMap((candidate) => candidate.toolCalls ?? [])
+                  const turnMessages = workLogMessagesForAssistant(activeThread.messages, messageIndex)
+                  const workLogPhases = buildWorkLogPhases(turnMessages)
+                  const turnToolCalls = turnMessages.flatMap((candidate) => candidate.toolCalls ?? [])
                   const displayedFileChanges = message.fileChanges ?? message.filesChanged?.map((path) => ({ path, ...legacyFileChangeCounts(path, turnToolCalls) })) ?? []
                   const totalAdditions = displayedFileChanges.reduce((total, file) => total + file.additions, 0)
                   const totalDeletions = displayedFileChanges.reduce((total, file) => total + file.deletions, 0)
-                  const showDuration = message.status !== 'pending' && message.durationMs !== undefined && turnToolCalls.length > 0
-                  const runningTool = [...activeThread.messages.slice(0, messageIndex)].reverse().find((candidate) =>
-                    candidate.role === 'tool' && candidate.parentAssistantId === message.id && candidate.toolCalls?.some((toolCall) => toolCall.result === undefined && !toolCall.error)
-                  )
+                  const showDuration = message.status !== 'pending' && message.durationMs !== undefined && workLogPhases.length > 0
+                  const runningTool = [...turnMessages].reverse().find((candidate) => candidate.toolCalls?.some((toolCall) => toolCall.result === undefined && !toolCall.error))
                   const runningToolCall = runningTool?.toolCalls?.find((toolCall) => toolCall.result === undefined && !toolCall.error)
                   const heldActivityLabel = heldActivity?.assistantId === message.id && heldActivity.until > Date.now() ? heldActivity.label : undefined
                   const activeLabel = runningToolCall ? runningToolLabel(runningToolCall) : heldActivityLabel ?? 'Thinking'
@@ -2356,11 +2313,13 @@ export default function MainApp(): JSX.Element {
                     ? streamedSearchDetail ?? webSearchDetail(runningToolCall ?? mostRecentSearch ?? { id: '', name: '', arguments: {} }) ?? ''
                     : ''
                   const expanded = expandedWorkIds.has(message.id)
+                  const pending = message.status === 'pending'
+                  const workLogId = `work-log-${message.id}`
                   return (
-                    <div key={message.id}>
+                    <div className="assistant-turn" key={message.id}>
                       {showDuration && (
                         <div className="work-duration-row">
-                          <button className="work-duration" type="button" aria-expanded={expanded} onClick={() => setExpandedWorkIds((current) => {
+                          <button className="work-duration" type="button" aria-controls={workLogId} aria-expanded={expanded} onClick={() => setExpandedWorkIds((current) => {
                             const next = new Set(current)
                             if (next.has(message.id)) next.delete(message.id)
                             else next.add(message.id)
@@ -2371,6 +2330,7 @@ export default function MainApp(): JSX.Element {
                           </button>
                         </div>
                       )}
+                      <WorkLog id={workLogId} hidden={!shouldShowWorkLog(message.status, expanded)} phases={workLogPhases} pending={pending} presentTenseToolIds={presentTenseToolIds} />
                       <div className={message.content ? 'chat-message assistant-message' : 'chat-message assistant-message pending'}>
                         {message.content
                           ? <MarkdownMessage content={message.content} animateWords={message.status === 'pending'} />

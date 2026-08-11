@@ -171,17 +171,9 @@ export class LlamaRuntime {
     await new AgentRuntime(client).run(request, onDelta, onState, onToolEvent, onGeneratedCharacters)
   }
 
-  async completePrompt(prompt: string): Promise<string> {
+  async generateTitle(request: AgentRunRequest): Promise<string> {
     if (this.status.state !== 'ready') throw new Error('llama-server is not ready')
-    const completion = await new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`).completePrompt({
-      prompt,
-      maxTokens: 10,
-      temperature: 0.55,
-      topK: 15,
-      topP: 0.85,
-      repetitionPenalty: 1.35
-    })
-    return completion.text
+    return new AgentRuntime(new LocalCompletionClient(`http://${LLAMA_SERVER_HOST}:${this.port}`)).generateTitle(request)
   }
 
   async start(modelPath: string, contextTokens: number, mmprojPath?: string, onProgress?: (progress: LlamaRuntimeLoadProgress) => void): Promise<LlamaRuntimeStatus> {

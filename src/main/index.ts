@@ -9,7 +9,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { addProject, completeOnboarding, deleteChatThread, getAgentSession, getAgentSessions, getChatThreads, getExpandedProjectPaths, getNativeLanguage, getOnboardingState, getProjects, getPromptRefinementPreferences, getResponseStylePreference, getSelectedContextWindowTokens, getSpeedCounterEnabled, getTheme, getWorkspaceViewState, removeProject, renameProject, saveAgentSession, saveChatThread, saveWorkspaceViewState, setContextWindowTokens, setExpandedProjectPaths, setNativeLanguage, setPromptRefinementPreferences, setResponseStylePreference, setSpeedCounterEnabled, setTheme } from './settings'
 import { DEFAULT_NATIVE_LANGUAGE, validateNativeLanguage } from '../shared/settings'
 import { LlamaRuntime } from './llamaRuntime'
-import { LLAMA_TITLE_SERVER_PORT, type LlamaModelLoadProgress } from '../shared/llama'
+import type { LlamaModelLoadProgress } from '../shared/llama'
 import { WINDOW_COMMANDS, type WindowCommand } from '../shared/windowCommands'
 import { resolveModelArtifact } from './modelResolver'
 import { getModelArtifact, INITIAL_MODEL_ARTIFACTS } from '../shared/modelManifest'
@@ -50,10 +50,6 @@ function applyTheme(value: unknown): ReturnType<typeof setTheme> {
   nativeTheme.themeSource = theme
   return theme
 }
-const TITLE_MODEL_REPOSITORY = 'SupraLabs/Supra-Title-350M-exp-GGUF'
-const TITLE_MODEL_FILENAME = 'LiquidAI_LFM2.5-350M-Base_1781204855.Q5_K_M.gguf'
-const TITLE_MODEL_CONTEXT_TOKENS = 4096
-const TITLE_MODEL_MAX_INPUT_CHARACTERS = 12000
 const MODEL_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const INVALID_PROJECT_NAME_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/
 const WINDOWS_RESERVED_PROJECT_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
@@ -63,7 +59,6 @@ const MODEL_DOWNLOAD_ATTEMPTS = 3
 
 let mainAppWindow: BrowserWindow | null = null
 let llamaRuntime: LlamaRuntime | null = null
-let titleRuntime: LlamaRuntime | null = null
 const activeCompletionRequests = new Map<string, { senderId: number; controller: AbortController; source: AgentModelSource }>()
 const activeModelDownloads = new Map<string, () => void>()
 
@@ -611,7 +606,6 @@ app.whenReady().then(() => {
   registerModelDownloadIpc()
   electronApp.setAppUserModelId('com.qyroucode')
   llamaRuntime = new LlamaRuntime()
-  titleRuntime = new LlamaRuntime(LLAMA_TITLE_SERVER_PORT)
   createMacApplicationMenu()
 
   app.on('browser-window-created', (_, window) => {
@@ -879,16 +873,6 @@ app.whenReady().then(() => {
       } satisfies LlamaModelLoadProgress)
     })
   })
-  ipcMain.handle('generate-chat-title', async (_event, userMessage: unknown) => {
-    if (typeof userMessage !== 'string' || !userMessage.trim()) throw new Error('A user message is required for title generation')
-    if (!titleRuntime) throw new Error('Title model runtime is unavailable')
-    const modelPath = resolveDownloadedModel(TITLE_MODEL_REPOSITORY, TITLE_MODEL_FILENAME)
-    const status = await titleRuntime.start(modelPath, TITLE_MODEL_CONTEXT_TOKENS)
-    if (status.state !== 'ready') throw new Error(status.message ?? 'Title model could not start')
-    const titleInput = userMessage.trim().slice(0, TITLE_MODEL_MAX_INPUT_CHARACTERS)
-    const title = await titleRuntime.completePrompt(`User: ${titleInput}\nTitle: `)
-    return title.replace(/[\r\n]+/g, ' ').replace(/^Title:\s*/i, '').trim()
-  })
   ipcMain.handle('stop-llama-server', () => llamaRuntime?.stop())
 
   const sendToolEvent = (send: (event: LocalCompletionEvent) => void, requestId: string, event: AgentToolEvent): void => {
@@ -906,7 +890,7 @@ app.whenReady().then(() => {
         send({ requestId, type: 'files-changed', files: event.files })
         break
       case 'progress-update':
-        send({ requestId, type: 'progress-update', summary: event.summary })
+        send({ requestId, type: 'progress-update', progressId: event.progressId, summary: event.summary, source: event.source })
         break
       case 'todos-updated':
         send({ requestId, type: 'todos-updated', todos: event.todos })
@@ -923,12 +907,14 @@ app.whenReady().then(() => {
     onToolEvent?: (event: AgentToolEvent) => void,
     onGeneratedCharacters?: (characters: number) => void
   ) => Promise<void>
+  type TitleGenerator = (request: AgentRunRequest) => Promise<string>
 
   const startAgentRun = (
     event: Electron.IpcMainInvokeEvent,
     request: AgentRunRequest,
     model: AgentModelProvenance,
-    runner: AgentRunner
+    runner: AgentRunner,
+    generateTitle: TitleGenerator
   ): LocalCompletionStart => {
     if (!request || typeof request.threadId !== 'string' || !request.threadId) throw new Error('A chat thread is required for the agent')
     const nativeLanguage = validateNativeLanguage(request.nativeLanguage ?? DEFAULT_NATIVE_LANGUAGE)
@@ -959,6 +945,7 @@ app.whenReady().then(() => {
     const resumedMessages = persisted
       ? [...systemMessages, ...persisted.messages, ...(latestUserMessage && (persistedFinished || !messageContentEquals(latestUserMessage.content, persistedLastUser?.content)) ? [latestUserMessage] : [])]
       : request.messages
+    const shouldGenerateTitle = request.generateTitle === true && !persisted && resumedMessages.filter((message) => message.role === 'user').length === 1
     const agentRequest = {
       ...request,
       nativeLanguage,
@@ -976,18 +963,29 @@ app.whenReady().then(() => {
         (url) => openUrlInBrowserPanel(event.sender, url)
       )
     }
-    void runner(
-      agentRequest,
-      (delta) => send({ requestId, type: 'delta', delta }),
-      (messages) => saveAgentSession({
-        threadId: request.threadId,
-        projectPath: project.path,
-        messages: messages.filter((message) => message.role !== 'system'),
-        updatedAt: Date.now()
-      }),
-      (toolEvent) => sendToolEvent(send, requestId, toolEvent),
-      (characters) => send({ requestId, type: 'generation-delta', characters })
-    )
+    void (async () => {
+      if (shouldGenerateTitle) {
+        try {
+          const title = await generateTitle(agentRequest)
+          controller.signal.throwIfAborted()
+          send({ requestId, type: 'title', title })
+        } catch (error) {
+          if (controller.signal.aborted) throw error
+        }
+      }
+      await runner(
+        agentRequest,
+        (delta) => send({ requestId, type: 'delta', delta }),
+        (messages) => saveAgentSession({
+          threadId: request.threadId,
+          projectPath: project.path,
+          messages: messages.filter((message) => message.role !== 'system'),
+          updatedAt: Date.now()
+        }),
+        (toolEvent) => sendToolEvent(send, requestId, toolEvent),
+        (characters) => send({ requestId, type: 'generation-delta', characters })
+      )
+    })()
       .then(() => send({ requestId, type: controller.signal.aborted ? 'cancelled' : 'complete' }))
       .catch((error) => send(controller.signal.aborted
         ? { requestId, type: 'cancelled' }
@@ -1017,7 +1015,7 @@ app.whenReady().then(() => {
     await runtimeCatalogModel(connection, modelId)
   }
 
-  const remoteRunner = async (target: Extract<AgentExecutionTarget, { source: 'remote' }>): Promise<{ model: AgentModelProvenance; runner: AgentRunner }> => {
+  const remoteRunner = async (target: Extract<AgentExecutionTarget, { source: 'remote' }>): Promise<{ model: AgentModelProvenance; runner: AgentRunner; generateTitle: TitleGenerator }> => {
     const connection = resolveConnection(target.connectionId)
     if (!connection.selectedModelIds.includes(target.modelId)) throw new Error('Select this model in Settings before using it')
     if (connection.kind === 'openai-compatible' && !connection.modelIds.includes(target.modelId)) {
@@ -1057,20 +1055,31 @@ app.whenReady().then(() => {
         displayName: catalogModel?.displayName ?? (connection.kind === 'openai-compatible' ? target.modelId : humanizeRemoteModelId(target.modelId)),
         reasoningRetention: retainReasoning ? 'retain' : 'discard'
       },
-      runner: runtime.run.bind(runtime)
+      runner: runtime.run.bind(runtime),
+      generateTitle: runtime.generateTitle.bind(runtime)
     }
   }
+
+  ipcMain.handle('generate-chat-title', async (_event, target: AgentExecutionTarget, request: AgentRunRequest): Promise<string> => {
+    if (!target || !['local', 'remote'].includes(target.source) || !request) throw new Error('Choose a valid model')
+    if (target.source === 'local') {
+      if (!llamaRuntime || llamaRuntime.getStatus().state !== 'ready') throw new Error('Start the selected local model before generating a title')
+      return llamaRuntime.generateTitle(request)
+    }
+    if (typeof target.connectionId !== 'string' || !target.connectionId || typeof target.modelId !== 'string' || !target.modelId) throw new Error('Choose a valid remote model')
+    return (await remoteRunner(target)).generateTitle(request)
+  })
 
   ipcMain.handle('start-agent-completion', async (event, target: AgentExecutionTarget, request: AgentRunRequest): Promise<LocalCompletionStart> => {
     if (!target || !['local', 'remote'].includes(target.source)) throw new Error('Choose a valid model')
     if (target.source === 'local') {
       if (!llamaRuntime) throw new Error('llama-server is not available')
       if (typeof target.modelId !== 'string' || !target.modelId || typeof target.displayName !== 'string' || !target.displayName) throw new Error('Choose a valid local model')
-      return startAgentRun(event, request, localTargetModel(target), llamaRuntime.runAgent.bind(llamaRuntime))
+      return startAgentRun(event, request, localTargetModel(target), llamaRuntime.runAgent.bind(llamaRuntime), llamaRuntime.generateTitle.bind(llamaRuntime))
     }
     if (typeof target.connectionId !== 'string' || !target.connectionId || typeof target.modelId !== 'string' || !target.modelId) throw new Error('Choose a valid remote model')
     const remote = await remoteRunner(target)
-    return startAgentRun(event, request, remote.model, remote.runner)
+    return startAgentRun(event, request, remote.model, remote.runner, remote.generateTitle)
   })
 
   ipcMain.handle('start-local-completion', (event, request: AgentRunRequest): LocalCompletionStart => {
@@ -1081,7 +1090,7 @@ app.whenReady().then(() => {
       modelId: requested?.modelId ?? 'local-model',
       displayName: requested?.displayName ?? 'Local model'
     }
-    return startAgentRun(event, request, localTargetModel(target), llamaRuntime.runAgent.bind(llamaRuntime))
+    return startAgentRun(event, request, localTargetModel(target), llamaRuntime.runAgent.bind(llamaRuntime), llamaRuntime.generateTitle.bind(llamaRuntime))
   })
   ipcMain.handle('cancel-local-completion', (event, requestId: string): boolean => {
     const request = activeCompletionRequests.get(requestId)

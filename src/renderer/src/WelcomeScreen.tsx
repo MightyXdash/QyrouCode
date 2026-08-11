@@ -15,10 +15,6 @@ import {
 import { MAX_CUSTOM_RESPONSE_STYLE_LENGTH } from '../../shared/settings'
 import './WelcomeScreen.css'
 
-const ESSENTIAL_MODELS: { id: string; hf_repo: string; label: string; gguf_file: string }[] = [
-  { id: 'supra-title', hf_repo: 'SupraLabs/Supra-Title-350M-exp-GGUF', label: 'Title Generator', gguf_file: 'LiquidAI_LFM2.5-350M-Base_1781204855.Q5_K_M.gguf' },
-]
-
 const ROLES = [
   'General Agent',
   'Coding & Software Engineering',
@@ -81,7 +77,7 @@ const READY_SUBTITLE_CHAR_FADE_MS = 120
 const READY_CARD_DELAY_AFTER_TEXT_MS = 110
 const READY_CARD_STAGGER_MS = 70
 const READY_CARD_POP_MS = 360
-const READY_MAX_DOWNLOAD_ITEM_COUNT = MODEL_LIST.length + ESSENTIAL_MODELS.length
+const READY_MAX_DOWNLOAD_ITEM_COUNT = MODEL_LIST.length
 const INITIAL_ASSET_TIMEOUT_MS = 1200
 const INITIAL_MOTION_FRAME_COUNT = 2
 const COMPLETION_HANDOFF_EXIT_MS = 360
@@ -370,7 +366,7 @@ export default function WelcomeScreen(): JSX.Element {
     let cancelled = false
     setModelCacheReady(false)
 
-    const allModels = [...MODEL_LIST, ...ESSENTIAL_MODELS]
+    const allModels = MODEL_LIST
 
     const checkCaches = async () => {
       try {
@@ -403,14 +399,9 @@ export default function WelcomeScreen(): JSX.Element {
     })
   }, [])
 
-  const pendingDownloadList = useMemo<DownloadEntry[]>(() => [
-    ...MODEL_LIST
-      .filter(model => selectedModels.has(model.id) && !cachedModels.has(model.id))
-      .map(model => ({ id: model.id, name: model.name, hf_repo: model.hf_repo, gguf_file: model.gguf_file })),
-    ...ESSENTIAL_MODELS
-      .filter(model => !cachedModels.has(model.id))
-      .map(model => ({ id: model.id, name: model.label, hf_repo: model.hf_repo, gguf_file: model.gguf_file }))
-  ], [cachedModels, selectedModels])
+  const pendingDownloadList = useMemo<DownloadEntry[]>(() => MODEL_LIST
+    .filter(model => selectedModels.has(model.id) && !cachedModels.has(model.id))
+    .map(model => ({ id: model.id, name: model.name, hf_repo: model.hf_repo, gguf_file: model.gguf_file })), [cachedModels, selectedModels])
 
   const cachedSelectableModelIds = useMemo(
     () => MODEL_LIST.filter(model => cachedModels.has(model.id)).map(model => model.id),

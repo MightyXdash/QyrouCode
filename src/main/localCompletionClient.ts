@@ -50,15 +50,7 @@ export interface LocalCompletionRequest {
   tools?: readonly LocalToolDefinition[]
   toolChoice?: 'auto' | 'none'
   signal?: AbortSignal
-}
-
-export interface LocalPromptRequest {
-  prompt: string
-  maxTokens: number
-  temperature: number
-  topK: number
-  topP: number
-  repetitionPenalty: number
+  suppressReasoningPrompt?: boolean
 }
 
 export interface LocalCompletion {
@@ -73,6 +65,7 @@ export interface LocalCompletionStart {
 }
 
 export type LocalCompletionEvent =
+  | { requestId: string; threadId?: string; type: 'title'; title: string }
   | { requestId: string; threadId?: string; type: 'delta'; delta: string }
   | { requestId: string; threadId?: string; type: 'generation-delta'; characters: number }
   | { requestId: string; threadId?: string; type: 'response-reset' }
@@ -80,7 +73,7 @@ export type LocalCompletionEvent =
   | { requestId: string; threadId?: string; type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
   | { requestId: string; threadId?: string; type: 'tool-error'; toolCallId: string; error: string }
   | { requestId: string; threadId?: string; type: 'files-changed'; files: import('../shared/chat').FileChangeDisplay[] }
-  | { requestId: string; threadId?: string; type: 'progress-update'; summary: string }
+  | { requestId: string; threadId?: string; type: 'progress-update'; progressId: string; summary: string; source: 'model' | 'fallback' }
   | { requestId: string; threadId?: string; type: 'todos-updated'; todos: import('../shared/chat').TodoDisplay[] }
   | { requestId: string; threadId?: string; type: 'complete' }
   | { requestId: string; threadId?: string; type: 'cancelled' }
@@ -99,10 +92,6 @@ interface CompletionResponse {
     }
     finish_reason?: unknown
   }>
-}
-
-interface PromptCompletionResponse {
-  content?: unknown
 }
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
@@ -303,28 +292,6 @@ export class LocalCompletionClient {
       clearTimeout(timeout)
       request.signal?.removeEventListener('abort', abort)
     }
-  }
-
-  async completePrompt(request: LocalPromptRequest): Promise<LocalCompletion> {
-    const endpoint = new URL('/completion', this.endpoint)
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        prompt: request.prompt,
-        n_predict: request.maxTokens,
-        temperature: request.temperature,
-        top_k: request.topK,
-        top_p: request.topP,
-        repeat_penalty: request.repetitionPenalty,
-        stream: false
-      })
-    })
-    const body = await response.text()
-    if (!response.ok) throw new Error(`Local title request failed with ${response.status}${body ? `: ${describeResponseBody(body)}` : ''}`)
-    const parsed = JSON.parse(body) as PromptCompletionResponse
-    if (typeof parsed.content !== 'string' || !parsed.content.trim()) throw new Error('Local title model returned an empty title')
-    return { text: parsed.content.trim(), toolCalls: [] }
   }
 
   async stream(request: LocalCompletionRequest, onDelta: (delta: string) => void, onGeneratedCharacters?: (characters: number) => void): Promise<LocalCompletion> {

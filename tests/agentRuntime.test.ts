@@ -8,7 +8,7 @@ import type { LocalCompletion, LocalCompletionRequest, LocalImageContentPart, Lo
 
 const textContent = (content: LocalMessageContent | undefined): string => typeof content === 'string' ? content : ''
 const uiMessage = (uim_prt: string, uim_pat: string): { uim_prt: string; uim_pat: string } => ({ uim_prt, uim_pat })
-const TASK_STATE = 'Inspecting the relevant files before making the smallest safe change.'
+const TASK_STATE = 'I’m inspecting the relevant files before making the smallest safe and verifiable change.'
 
 class ScriptedProvider implements AgentCompletionProvider {
   readonly requests: LocalCompletionRequest[] = []
@@ -24,6 +24,49 @@ class ScriptedProvider implements AgentCompletionProvider {
     return response
   }
 }
+
+test('generates a title with the isolated prompt and selected model settings', async () => {
+  const provider = new ScriptedProvider([{
+    text: '"Debugging Postgres Connection Timeout."\nIgnored explanation',
+    toolCalls: []
+  }])
+  const runtime = new AgentRuntime(provider)
+
+  const title = await runtime.generateTitle({
+    threadId: 'thread-title',
+    projectPath: 'unused',
+    messages: [
+      { role: 'system', content: 'Agent instructions that must not enter title generation.' },
+      { role: 'user', content: 'Why does my Postgres connection keep timing out?' }
+    ],
+    enableThinking: true,
+    temperature: 0.7,
+    topP: 0.8,
+    topK: 24,
+    minP: 0.1,
+    presencePenalty: 0.2,
+    repetitionPenalty: 1.1,
+    maxTokens: 4096
+  })
+
+  assert.equal(title, 'Debugging Postgres Connection Timeout')
+  assert.equal(provider.requests.length, 1)
+  assert.match(textContent(provider.requests[0].messages[0].content), /title-generation engine/)
+  assert.match(textContent(provider.requests[0].messages[0].content), /agentic coding platform/)
+  assert.equal(provider.requests[0].messages[1].content, 'Why does my Postgres connection keep timing out?')
+  assert.equal(provider.requests[0].messages.length, 2)
+  assert.equal(provider.requests[0].enableThinking, true)
+  assert.equal(provider.requests[0].temperature, 0.7)
+  assert.equal(provider.requests[0].topP, 0.8)
+  assert.equal(provider.requests[0].topK, 24)
+  assert.equal(provider.requests[0].minP, 0.1)
+  assert.equal(provider.requests[0].presencePenalty, 0.2)
+  assert.equal(provider.requests[0].repetitionPenalty, 1.1)
+  assert.equal(provider.requests[0].maxTokens, 32)
+  assert.equal(provider.requests[0].tools, undefined)
+  assert.equal(provider.requests[0].toolChoice, 'none')
+  assert.equal(provider.requests[0].suppressReasoningPrompt, true)
+})
 
 test('retries provider errors without placing hardcoded text in the task-state slot', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
@@ -84,7 +127,7 @@ test('co-batches progress, mutation, and verification in two provider turns', as
     assert.equal(output, 'Implemented and verified the result module.')
     assert.equal(readFileSync(join(projectPath, 'src/result.ts'), 'utf8'), 'export const result = 1\n')
     const system = textContent(provider.requests[0].messages[0].content)
-    assert.match(system, /cur_task_state is optional/)
+    assert.match(system, /cur_task_state is required/)
     assert.match(system, /8–63 useful words/)
     assert.match(system, /Batch independent tools/)
     assert.doesNotMatch(system, /Call exactly one tool/)
@@ -93,7 +136,12 @@ test('co-batches progress, mutation, and verification in two provider turns', as
     const persistedAssistant = persisted.flat().find((message) => message.role === 'assistant' && message.toolCalls?.some((call) => call.id === 'write'))
     assert.deepEqual(persistedAssistant?.toolCalls?.map((call) => call.id), ['write', 'read'])
     assert.ok(persisted.flat().every((message) => message.name !== 'cur_task_state'))
-    assert.equal(events.filter((event) => event.type === 'progress-update' && event.summary === TASK_STATE).length, 1)
+    assert.deepEqual(events.find((event) => event.type === 'progress-update'), {
+      type: 'progress-update',
+      progressId: 'state',
+      summary: TASK_STATE,
+      source: 'model'
+    })
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
@@ -164,7 +212,7 @@ test('truncates progress, suppresses duplicates, and never reprompts for status'
   }
 })
 
-test('keeps local UI fallbacks inside tool rows without creating task-state progress', async () => {
+test('creates stable fallback progress before a tool when the model omits task state', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const provider = new ScriptedProvider([
@@ -182,13 +230,21 @@ test('keeps local UI fallbacks inside tool rows without creating task-state prog
     assert.equal(provider.requests.length, 2)
     const toolCall = events.find((event) => event.type === 'tool-call' && event.toolCallId === 'missing_ui')
     assert.deepEqual(toolCall?.type === 'tool-call' ? toolCall.summary : undefined, uiMessage('Using write', 'Used write'))
-    assert.equal(events.filter((event) => event.type === 'progress-update').length, 0)
+    const progressIndex = events.findIndex((event) => event.type === 'progress-update')
+    const toolIndex = events.findIndex((event) => event.type === 'tool-call')
+    assert.ok(progressIndex >= 0 && progressIndex < toolIndex)
+    assert.deepEqual(events[progressIndex], {
+      type: 'progress-update',
+      progressId: 'fallback:missing_ui',
+      summary: 'I’m using write now. I’ll use that result to continue your request carefully and accurately.',
+      source: 'fallback'
+    })
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
 })
 
-test('adds a transient cadence reminder without creating hardcoded progress or another request', async () => {
+test('guarantees fallback progress initially and again before the seventh action', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const writes = Array.from({ length: 7 }, (_, index) => ({
@@ -214,31 +270,33 @@ test('adds a transient cadence reminder without creating hardcoded progress or a
 
     assert.equal(provider.requests.length, 2)
     assert.equal(readFileSync(join(projectPath, 'phase-6.txt'), 'utf8'), '6')
-    assert.equal(events.filter((event) => event.type === 'progress-update').length, 0)
-    assert.match(textContent(provider.requests[1].messages[0].content), /continuing after several actions without a recent visible update/)
+    assert.deepEqual(events.filter((event) => event.type === 'progress-update'), [
+      { type: 'progress-update', progressId: 'fallback:write_0', summary: 'I’m writing phase file 0 now. I’ll use that result to continue your request carefully and accurately.', source: 'fallback' },
+      { type: 'progress-update', progressId: 'fallback:write_6', summary: 'I’m writing phase file 6 now. I’ll use that result to continue your request carefully and accurately.', source: 'fallback' }
+    ])
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
 })
 
-test('accepts only task states with at least eight Unicode-aware words', async () => {
+test('accepts only task states with at least twelve Unicode-aware words', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
-    const sevenWords = 'Inspecting relevant files before making safe changes'
-    const eightWords = 'Inspecting relevant files before making one safe change'
+    const elevenWords = 'I am inspecting relevant files before making one safe verified change'
+    const twelveWords = 'I am inspecting the relevant files before making one safe verified change'
     const unicodeWords = '正在检查相关文件并确认安全修改方案然后继续验证最终结果'
     const provider = new ScriptedProvider([
       {
         text: '',
         toolCalls: [
-          { id: 'short_state', name: 'cur_task_state', arguments: { message: sevenWords } },
+          { id: 'short_state', name: 'cur_task_state', arguments: { message: elevenWords } },
           { id: 'write_one', name: 'write', arguments: { filePath: 'one.txt', content: 'one' } }
         ]
       },
       {
         text: '',
         toolCalls: [
-          { id: 'minimum_state', name: 'cur_task_state', arguments: { message: eightWords } },
+          { id: 'minimum_state', name: 'cur_task_state', arguments: { message: twelveWords } },
           { id: 'write_two', name: 'write', arguments: { filePath: 'two.txt', content: 'two' } }
         ]
       },
@@ -260,7 +318,8 @@ test('accepts only task states with at least eight Unicode-aware words', async (
     }, () => {}, undefined, (event) => events.push(event))
 
     assert.deepEqual(events.filter((event) => event.type === 'progress-update').map((event) => event.type === 'progress-update' ? event.summary : ''), [
-      eightWords,
+      'I’m using write now. I’ll use that result to continue your request carefully and accurately.',
+      twelveWords,
       unicodeWords
     ])
     assert.equal(readFileSync(join(projectPath, 'three.txt'), 'utf8'), 'three')

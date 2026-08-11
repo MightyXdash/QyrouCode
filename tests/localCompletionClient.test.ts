@@ -243,38 +243,3 @@ test('accepts up to 8192 output tokens', async () => {
   }
 })
 
-test('uses the raw completion endpoint for chat titles', async () => {
-  let receivedBody = ''
-  const server = await startServer((request, response) => {
-    request.on('data', (chunk: Buffer) => { receivedBody += chunk.toString() })
-    request.on('end', () => {
-      assert.equal(request.url, '/completion')
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ content: 'Streaming Local Responses' }))
-    })
-  })
-
-  try {
-    const client = new LocalCompletionClient(server.url)
-    const completion = await client.completePrompt({
-      prompt: 'User: Make local streaming work\nTitle: ',
-      maxTokens: 10,
-      temperature: 0.55,
-      topK: 15,
-      topP: 0.85,
-      repetitionPenalty: 1.35
-    })
-    assert.equal(completion.text, 'Streaming Local Responses')
-    assert.deepEqual(JSON.parse(receivedBody), {
-      prompt: 'User: Make local streaming work\nTitle: ',
-      n_predict: 10,
-      temperature: 0.55,
-      top_k: 15,
-      top_p: 0.85,
-      repeat_penalty: 1.35,
-      stream: false
-    })
-  } finally {
-    await server.close()
-  }
-})

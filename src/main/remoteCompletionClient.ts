@@ -112,7 +112,7 @@ function reasoningFields(kind: ConnectionKind, configuration: RemoteReasoningCon
 }
 
 function completionBody(request: LocalCompletionRequest, configuration: RemoteCompletionConfiguration, stream = false): Record<string, unknown> {
-  const messages: readonly LocalChatMessage[] = configuration.reasoning.fallbackPrompt
+  const messages: readonly LocalChatMessage[] = configuration.reasoning.fallbackPrompt && !request.suppressReasoningPrompt
     ? [{ role: 'system', content: configuration.reasoning.fallbackPrompt }, ...request.messages]
     : request.messages
   const usesNativeReasoning = Boolean(configuration.reasoning.nativeEffort || configuration.reasoning.enabled)

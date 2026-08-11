@@ -100,6 +100,35 @@ test('injects prompt fallback controls for compatible models', async () => {
   })
 })
 
+test('omits the reasoning fallback when a request supplies its own isolated system prompt', async () => {
+  await withServer(async (request, response) => {
+    const body = await requestBody(request)
+    assert.deepEqual(body.messages, [
+      { role: 'system', content: 'Generate only a title.' },
+      { role: 'user', content: 'Debug the timeout.' }
+    ])
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ choices: [{ message: { content: 'Timeout Debugging' } }] }))
+  }, async (baseUrl) => {
+    const client = new RemoteCompletionClient({
+      kind: 'openai-compatible',
+      baseUrl,
+      apiKey: 'custom-key',
+      modelId: 'custom/model',
+      retainReasoning: false,
+      reasoning: { fallbackPrompt: 'Use brief reasoning.' }
+    })
+    const completion = await client.complete({
+      messages: [
+        { role: 'system', content: 'Generate only a title.' },
+        { role: 'user', content: 'Debug the timeout.' }
+      ],
+      suppressReasoningPrompt: true
+    })
+    assert.equal(completion.text, 'Timeout Debugging')
+  })
+})
+
 test('streams remote text and reconstructs fragmented tool calls', async () => {
   let requestCount = 0
   await withServer(async (request, response) => {

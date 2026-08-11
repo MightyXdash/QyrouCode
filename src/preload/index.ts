@@ -105,7 +105,7 @@ const api = {
     ipcRenderer.on('local-model-load-progress', handler)
     return () => { ipcRenderer.removeListener('local-model-load-progress', handler) }
   },
-  generateChatTitle: (userMessage: string): Promise<string> => ipcRenderer.invoke('generate-chat-title', userMessage),
+  generateChatTitle: (target: AgentExecutionTarget, request: AgentRunRequest): Promise<string> => ipcRenderer.invoke('generate-chat-title', target, request),
   checkModelCache: (modelId: string): Promise<boolean> =>
     ipcRenderer.invoke('check-model-cache', modelId),
   getDownloadedModels: (repos: string[]): Promise<string[]> =>

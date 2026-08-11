@@ -33,6 +33,7 @@
     "src/main/webSearch.ts",
     "src/renderer/src/modelCatalog.ts",
     "src/renderer/src/reasoningProfiles.ts",
+    "src/renderer/src/workLog.ts",
     "scripts/bootstrapLlamaRuntime.ts",
     "scripts/verifyVisionModels.ts",
     "tests/llama.test.ts",
@@ -56,6 +57,7 @@
     "tests/remoteModels.test.ts",
     "tests/conversationExport.test.ts",
     "tests/reasoningProfiles.test.ts",
+    "tests/workLog.test.ts",
     "tests/browser.test.ts"
   ]
 }

@@ -82,7 +82,7 @@ declare global {
       saveWorkspaceViewState: (state: WorkspaceViewState) => Promise<WorkspaceViewState>
       startDownloadedModel: (repoId: string, filename: string, loadId: string, requireVision?: boolean) => Promise<LlamaRuntimeStatus>
       onLocalModelLoadProgress: (callback: (progress: LlamaModelLoadProgress) => void) => () => void
-      generateChatTitle: (userMessage: string) => Promise<string>
+      generateChatTitle: (target: AgentExecutionTarget, request: AgentRunRequest) => Promise<string>
       checkModelCache: (modelId: string) => Promise<boolean>
       getDownloadedModels: (repos: string[]) => Promise<string[]>
       downloadModel: (repoId: string, ggufFile: string) => Promise<void>
