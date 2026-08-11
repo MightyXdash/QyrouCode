@@ -112,10 +112,11 @@ function reasoningFields(kind: ConnectionKind, configuration: RemoteReasoningCon
 }
 
 function completionBody(request: LocalCompletionRequest, configuration: RemoteCompletionConfiguration, stream = false): Record<string, unknown> {
-  const messages: readonly LocalChatMessage[] = configuration.reasoning.fallbackPrompt && !request.suppressReasoningPrompt
-    ? [{ role: 'system', content: configuration.reasoning.fallbackPrompt }, ...request.messages]
+  const reasoning = request.suppressReasoning ? { enabled: false } : configuration.reasoning
+  const messages: readonly LocalChatMessage[] = reasoning.fallbackPrompt && !request.suppressReasoningPrompt
+    ? [{ role: 'system', content: reasoning.fallbackPrompt }, ...request.messages]
     : request.messages
-  const usesNativeReasoning = Boolean(configuration.reasoning.nativeEffort || configuration.reasoning.enabled)
+  const usesNativeReasoning = Boolean(reasoning.nativeEffort || reasoning.enabled)
   return {
     model: configuration.modelId,
     messages: messages.map(serializeMessage),
@@ -129,7 +130,7 @@ function completionBody(request: LocalCompletionRequest, configuration: RemoteCo
       ? { enable_thinking: request.enableThinking }
       : undefined,
     store: configuration.kind === 'openai' ? false : undefined,
-    ...reasoningFields(configuration.kind, configuration.reasoning, configuration.retainReasoning)
+    ...reasoningFields(configuration.kind, reasoning, configuration.retainReasoning)
   }
 }
 

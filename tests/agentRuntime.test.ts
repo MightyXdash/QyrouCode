@@ -55,17 +55,30 @@ test('generates a title with the isolated prompt and selected model settings', a
   assert.match(textContent(provider.requests[0].messages[0].content), /agentic coding platform/)
   assert.equal(provider.requests[0].messages[1].content, 'Why does my Postgres connection keep timing out?')
   assert.equal(provider.requests[0].messages.length, 2)
-  assert.equal(provider.requests[0].enableThinking, true)
+  assert.equal(provider.requests[0].enableThinking, false)
   assert.equal(provider.requests[0].temperature, 0.7)
   assert.equal(provider.requests[0].topP, 0.8)
   assert.equal(provider.requests[0].topK, 24)
   assert.equal(provider.requests[0].minP, 0.1)
   assert.equal(provider.requests[0].presencePenalty, 0.2)
   assert.equal(provider.requests[0].repetitionPenalty, 1.1)
-  assert.equal(provider.requests[0].maxTokens, 32)
+  assert.equal(provider.requests[0].maxTokens, 48)
   assert.equal(provider.requests[0].tools, undefined)
   assert.equal(provider.requests[0].toolChoice, 'none')
   assert.equal(provider.requests[0].suppressReasoningPrompt, true)
+  assert.equal(provider.requests[0].suppressReasoning, true)
+})
+
+test('derives a descriptive title from the request when the model returns no visible title', async () => {
+  const provider = new ScriptedProvider([{ text: '', reasoningText: 'Hidden title reasoning', toolCalls: [] }])
+  const title = await new AgentRuntime(provider).generateTitle({
+    threadId: 'thread-title-fallback',
+    projectPath: 'unused',
+    messages: [{ role: 'user', content: 'inspect repository files for photosynthesis and car topics' }],
+    enableThinking: true
+  })
+
+  assert.equal(title, 'Inspect Repository Files For Photosynthesis And Car')
 })
 
 test('retries provider errors without placing hardcoded text in the task-state slot', async () => {
@@ -128,7 +141,7 @@ test('co-batches progress, mutation, and verification in two provider turns', as
     assert.equal(readFileSync(join(projectPath, 'src/result.ts'), 'utf8'), 'export const result = 1\n')
     const system = textContent(provider.requests[0].messages[0].content)
     assert.match(system, /cur_task_state is required/)
-    assert.match(system, /8–63 useful words/)
+    assert.match(system, /12–63 useful words/)
     assert.match(system, /Batch independent tools/)
     assert.doesNotMatch(system, /Call exactly one tool/)
     assert.doesNotMatch(system, /Qyrou-50M/)
@@ -239,6 +252,37 @@ test('creates stable fallback progress before a tool when the model omits task s
       summary: 'I’m using write now. I’ll use that result to continue your request carefully and accurately.',
       source: 'fallback'
     })
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('personalizes web fallback progress with the search subject', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
+  const controller = new AbortController()
+  try {
+    const provider = new ScriptedProvider([{
+      text: '',
+      toolCalls: [{ id: 'search_apple', name: 'web_search', arguments: { query: 'who will become the next Apple CEO?' } }]
+    }])
+    const events: AgentToolEvent[] = []
+
+    await assert.rejects(new AgentRuntime(provider).run({
+      threadId: 'thread-personalized-web-fallback',
+      projectPath,
+      signal: controller.signal,
+      messages: [{ role: 'user', content: 'Who is going to be the new Apple CEO?' }]
+    }, () => {}, undefined, (event) => {
+      events.push(event)
+      if (event.type === 'progress-update') controller.abort(new Error('Stop before web execution'))
+    }), /Stop before web execution/)
+
+    assert.deepEqual(events.filter((event) => event.type === 'progress-update'), [{
+      type: 'progress-update',
+      progressId: 'fallback:search_apple',
+      summary: 'Let me search the web for reliable, up-to-date information about who will become the next Apple CEO before I answer.',
+      source: 'fallback'
+    }])
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

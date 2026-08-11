@@ -48,11 +48,12 @@ const FINAL_MAX_TOKENS = 8_192
 const MAX_INTENT_REPROMPTS = 3
 const MAX_PROVIDER_RETRIES = 3
 const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
-const TITLE_MAX_TOKENS = 32
-const TITLE_MAX_CHARACTERS = 40
+const TITLE_MAX_TOKENS = 48
+const TITLE_MAX_CHARACTERS = 64
 const TASK_STATE_MIN_WORDS = 12
 const TASK_STATE_MAX_WORDS = 63
 const TASK_STATE_MAX_CHARACTERS = 480
+const TASK_STATE_SUBJECT_MAX_CHARACTERS = 160
 const TASK_STATE_ACTION_INTERVAL = 6
 const TASK_STATE_SIMILARITY_THRESHOLD = 0.55
 const MAX_PARALLEL_READ_TOOLS = 4
@@ -170,9 +171,25 @@ function uiMessageForCall(call: LocalToolCall): ToolUiMessage | undefined {
   return present && past ? { uim_prt: present, uim_pat: past } : deterministicUiMessage(call.name)
 }
 
+function fallbackSubject(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const compact = value.replace(/\s+/gu, ' ').trim().replace(/[.!?;:,]+$/u, '')
+  if (!compact) return fallback
+  if (compact.length <= TASK_STATE_SUBJECT_MAX_CHARACTERS) return compact
+  const shortened = compact.slice(0, TASK_STATE_SUBJECT_MAX_CHARACTERS).trimEnd()
+  const boundary = shortened.lastIndexOf(' ')
+  return `${boundary > TASK_STATE_SUBJECT_MAX_CHARACTERS / 2 ? shortened.slice(0, boundary) : shortened}…`
+}
+
 function fallbackTaskState(call: LocalToolCall): string {
-  if (call.name === 'web_search') return 'Let me search the web for current, reliable information that answers your question.'
-  if (call.name === 'web_fetch') return 'Let me open the relevant source and verify its details before answering you.'
+  if (call.name === 'web_search') {
+    const subject = fallbackSubject(call.arguments.query, 'the specific topic you asked about')
+    return `Let me search the web for reliable, up-to-date information about ${subject} before I answer.`
+  }
+  if (call.name === 'web_fetch') {
+    const source = fallbackSubject(call.arguments.url, 'the most relevant source')
+    return `Let me open ${source} and verify its details carefully before I answer your question.`
+  }
   const present = uiMessageForCall(call)?.uim_prt ?? deterministicUiMessage(call.name).uim_prt
   return `I’m ${present.charAt(0).toLocaleLowerCase()}${present.slice(1)} now. I’ll use that result to continue your request carefully and accurately.`
 }
@@ -209,6 +226,28 @@ function modelProvenance(request: AgentRunRequest): { model: AgentModelProvenanc
   return request.model ? { model: request.model } : {}
 }
 
+function truncateTitle(value: string): string {
+  const title = value.trim()
+  if (title.length <= TITLE_MAX_CHARACTERS) return title
+  const shortened = title.slice(0, TITLE_MAX_CHARACTERS + 1)
+  const boundary = shortened.lastIndexOf(' ')
+  return (boundary > TITLE_MAX_CHARACTERS / 2 ? shortened.slice(0, boundary) : shortened.slice(0, TITLE_MAX_CHARACTERS)).trim()
+}
+
+function fallbackTitle(message: LocalChatMessage): string {
+  const text = typeof message.content === 'string'
+    ? message.content
+    : Array.isArray(message.content)
+      ? message.content.filter((part) => part.type === 'text').map((part) => part.text).join(' ')
+      : ''
+  const words = text.replace(/[^\p{L}\p{N}+#._-]+/gu, ' ').trim().split(/\s+/).filter(Boolean).slice(0, 7)
+  if (words.length === 0) return 'Reviewing Attached Project File'
+  return words
+    .map((word) => word.length > 1 ? `${word[0].toUpperCase()}${word.slice(1)}` : word.toUpperCase())
+    .join(' ')
+    .trim()
+}
+
 export class AgentRuntime {
   constructor(private readonly provider: AgentCompletionProvider) {}
 
@@ -217,7 +256,7 @@ export class AgentRuntime {
     const firstUserMessage = request.messages.find((message) => message.role === 'user')
     if (!firstUserMessage) return 'Untitled Coding Task'
     const completion = await this.completeWithRetries({
-      ...modelSettings(request),
+      ...modelSettings(request, false),
       messages: [
         { role: 'system', content: TITLE_GENERATION_SYSTEM_PROMPT },
         firstUserMessage
@@ -225,14 +264,15 @@ export class AgentRuntime {
       maxTokens: TITLE_MAX_TOKENS,
       tools: undefined,
       toolChoice: 'none',
-      suppressReasoningPrompt: true
+      suppressReasoningPrompt: true,
+      suppressReasoning: true
     })
     const title = completion.text
       .split(/\r?\n/, 1)[0]
       .replace(/^\s*Title:\s*/i, '')
       .replace(/^[`"']+|[.!?`"']+$/g, '')
       .trim()
-    return title.slice(0, TITLE_MAX_CHARACTERS).trim() || 'Coding Task'
+    return truncateTitle(title || fallbackTitle(firstUserMessage))
   }
 
   async run(request: AgentRunRequest, onDelta: (delta: string) => void, onState?: AgentStateListener, onToolEvent?: (event: AgentToolEvent) => void, onGeneratedCharacters?: (characters: number) => void): Promise<void> {

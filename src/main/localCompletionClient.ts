@@ -51,6 +51,7 @@ export interface LocalCompletionRequest {
   toolChoice?: 'auto' | 'none'
   signal?: AbortSignal
   suppressReasoningPrompt?: boolean
+  suppressReasoning?: boolean
 }
 
 export interface LocalCompletion {
