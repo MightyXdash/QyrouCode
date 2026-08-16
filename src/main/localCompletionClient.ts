@@ -72,14 +72,14 @@ export interface LocalCompletionStart {
 
 export type LocalCompletionEvent =
   | { requestId: string; threadId?: string; type: 'title'; title: string }
-  | { requestId: string; threadId?: string; type: 'delta'; delta: string }
+  | { requestId: string; threadId?: string; type: 'delta'; phase: 'final_answer'; delta: string }
   | { requestId: string; threadId?: string; type: 'generation-metrics'; tokens: number; durationMs: number }
   | { requestId: string; threadId?: string; type: 'response-reset' }
   | { requestId: string; threadId?: string; type: 'tool-call'; toolCallId: string; name: string; arguments: Record<string, unknown>; summary?: import('../shared/chat').ToolUiMessage }
   | { requestId: string; threadId?: string; type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
   | { requestId: string; threadId?: string; type: 'tool-error'; toolCallId: string; error: string }
   | { requestId: string; threadId?: string; type: 'files-changed'; files: import('../shared/chat').FileChangeDisplay[] }
-  | { requestId: string; threadId?: string; type: 'progress-update'; progressId: string; summary: string; source: 'model' | 'fallback' }
+  | { requestId: string; threadId?: string; type: 'progress-update'; progressId: string; phase: 'commentary'; summary: string; source: 'model' | 'fallback' }
   | { requestId: string; threadId?: string; type: 'todos-updated'; todos: import('../shared/chat').TodoDisplay[] }
   | { requestId: string; threadId?: string; type: 'complete' }
   | { requestId: string; threadId?: string; type: 'cancelled' }

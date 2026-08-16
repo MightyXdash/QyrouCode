@@ -29,9 +29,9 @@ test('non-web tools require a compact UI message while web tools do not', () => 
     const taskStateParameters = taskState?.parameters as { properties: { message: { description?: string } } }
     assert.match(taskState?.description ?? '', /structured function-call channel/)
     assert.match(taskState?.description ?? '', /never write its message as ordinary assistant prose/)
-    assert.match(taskStateParameters.properties.message.description ?? '', /12–63 words/)
-    assert.match(taskStateParameters.properties.message.description ?? '', /roughly 60 words/)
-    assert.match(taskStateParameters.properties.message.description ?? '', /at least 25/)
+    assert.match(taskState?.description ?? '', /meaningful transitions/)
+    assert.match(taskStateParameters.properties.message.description ?? '', /normally 8–12 words total/)
+    assert.match(taskStateParameters.properties.message.description ?? '', /avoid generic narration/)
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

@@ -140,10 +140,9 @@ test('co-batches progress, mutation, and verification in two provider turns', as
     assert.equal(output, 'Implemented and verified the result module.')
     assert.equal(readFileSync(join(projectPath, 'src/result.ts'), 'utf8'), 'export const result = 1\n')
     const system = textContent(provider.requests[0].messages[0].content)
-    assert.match(system, /cur_task_state is required/)
-    assert.match(system, /12–63 useful words/)
-    assert.match(system, /roughly 60 words/)
-    assert.match(system, /above about 25 words/)
+    assert.match(system, /commentary-phase progress update/)
+    assert.match(system, /normally 8–12 words total/)
+    assert.match(system, /Do not send one for every trivial read/)
     assert.match(system, /Batch independent tools/)
     assert.doesNotMatch(system, /Call exactly one tool/)
     assert.doesNotMatch(system, /Qyrou-50M/)
@@ -154,6 +153,7 @@ test('co-batches progress, mutation, and verification in two provider turns', as
     assert.deepEqual(events.find((event) => event.type === 'progress-update'), {
       type: 'progress-update',
       progressId: 'state',
+      phase: 'commentary',
       summary: TASK_STATE,
       source: 'model'
     })
@@ -220,7 +220,7 @@ test('truncates progress, suppresses duplicates, and never reprompts for status'
     const progress = events.filter((event): event is Extract<AgentToolEvent, { type: 'progress-update' }> => event.type === 'progress-update')
     assert.equal(provider.requests.length, 2)
     assert.equal(progress.length, 1)
-    assert.equal(progress[0].summary.split(/\s+/).length, 63)
+    assert.equal(progress[0].summary.split(/\s+/).length, 20)
     assert.equal(readFileSync(join(projectPath, 'result.txt'), 'utf8'), 'done')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
@@ -251,7 +251,8 @@ test('creates stable fallback progress before a tool when the model omits task s
     assert.deepEqual(events[progressIndex], {
       type: 'progress-update',
       progressId: 'fallback:missing_ui',
-      summary: 'I’m using write now. I’ll use that result to continue your request carefully and accurately.',
+      phase: 'commentary',
+      summary: 'I found the change point; now I’ll patch it.',
       source: 'fallback'
     })
   } finally {
@@ -320,7 +321,7 @@ test('rejects plain progress prose and repairs with structured tool calls', asyn
   }
 })
 
-test('personalizes web fallback progress with the search subject', async () => {
+test('uses a concise commentary fallback when web progress is omitted', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   const controller = new AbortController()
   try {
@@ -343,7 +344,8 @@ test('personalizes web fallback progress with the search subject', async () => {
     assert.deepEqual(events.filter((event) => event.type === 'progress-update'), [{
       type: 'progress-update',
       progressId: 'fallback:search_apple',
-      summary: 'Let me search the web for reliable, up-to-date information about who will become the next Apple CEO before I answer.',
+      phase: 'commentary',
+      summary: 'I’ll verify current reliable sources before forming the answer.',
       source: 'fallback'
     }])
   } finally {
@@ -351,7 +353,7 @@ test('personalizes web fallback progress with the search subject', async () => {
   }
 })
 
-test('guarantees fallback progress initially and again before the seventh action', async () => {
+test('emits one initial fallback without narrating every sixth action', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const writes = Array.from({ length: 7 }, (_, index) => ({
@@ -378,32 +380,72 @@ test('guarantees fallback progress initially and again before the seventh action
     assert.equal(provider.requests.length, 2)
     assert.equal(readFileSync(join(projectPath, 'phase-6.txt'), 'utf8'), '6')
     assert.deepEqual(events.filter((event) => event.type === 'progress-update'), [
-      { type: 'progress-update', progressId: 'fallback:write_0', summary: 'I’m writing phase file 0 now. I’ll use that result to continue your request carefully and accurately.', source: 'fallback' },
-      { type: 'progress-update', progressId: 'fallback:write_6', summary: 'I’m writing phase file 6 now. I’ll use that result to continue your request carefully and accurately.', source: 'fallback' }
+      { type: 'progress-update', progressId: 'fallback:write_0', phase: 'commentary', summary: 'I found the change point; now I’ll patch it.', source: 'fallback' }
     ])
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }
 })
 
-test('accepts only task states with at least twelve Unicode-aware words', async () => {
+test('keeps distinct model commentary at meaningful phase transitions', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
-    const elevenWords = 'I am inspecting relevant files before making one safe verified change'
-    const twelveWords = 'I am inspecting the relevant files before making one safe verified change'
+    const firstState = 'I’ve mapped the failing flow; next I’ll inspect lifecycle ownership.'
+    const secondState = 'The lifecycle bug is isolated; now I’ll replace timer completion.'
+    const provider = new ScriptedProvider([
+      {
+        text: '',
+        toolCalls: [
+          { id: 'state_inspect', name: 'cur_task_state', arguments: { message: firstState } },
+          { id: 'create_fixture', name: 'write', arguments: { filePath: 'phase.txt', content: 'before' } }
+        ]
+      },
+      {
+        text: '',
+        toolCalls: [
+          { id: 'state_fix', name: 'cur_task_state', arguments: { message: secondState } },
+          { id: 'read_fixture', name: 'read', arguments: { filePath: 'phase.txt' } },
+          { id: 'apply_fix', name: 'edit', arguments: { filePath: 'phase.txt', oldString: 'before', newString: 'after' } }
+        ]
+      },
+      { text: 'Completed both meaningful phases.', toolCalls: [] }
+    ])
+    const events: AgentToolEvent[] = []
+
+    await new AgentRuntime(provider).run({
+      threadId: 'thread-commentary-phases',
+      projectPath,
+      messages: [{ role: 'user', content: 'Trace and fix the lifecycle.' }]
+    }, () => {}, undefined, (event) => events.push(event))
+
+    assert.deepEqual(events.filter((event) => event.type === 'progress-update'), [
+      { type: 'progress-update', progressId: 'state_inspect', phase: 'commentary', summary: firstState, source: 'model' },
+      { type: 'progress-update', progressId: 'state_fix', phase: 'commentary', summary: secondState, source: 'model' }
+    ])
+    assert.equal(readFileSync(join(projectPath, 'phase.txt'), 'utf8'), 'after')
+  } finally {
+    rmSync(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('accepts concise Unicode-aware commentary and rejects fragments', async () => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
+  try {
+    const fragment = 'Checking code now'
+    const conciseState = 'Checking relevant code paths now'
     const unicodeWords = '正在检查相关文件并确认安全修改方案然后继续验证最终结果'
     const provider = new ScriptedProvider([
       {
         text: '',
         toolCalls: [
-          { id: 'short_state', name: 'cur_task_state', arguments: { message: elevenWords } },
+          { id: 'short_state', name: 'cur_task_state', arguments: { message: fragment } },
           { id: 'write_one', name: 'write', arguments: { filePath: 'one.txt', content: 'one' } }
         ]
       },
       {
         text: '',
         toolCalls: [
-          { id: 'minimum_state', name: 'cur_task_state', arguments: { message: twelveWords } },
+          { id: 'minimum_state', name: 'cur_task_state', arguments: { message: conciseState } },
           { id: 'write_two', name: 'write', arguments: { filePath: 'two.txt', content: 'two' } }
         ]
       },
@@ -425,8 +467,8 @@ test('accepts only task states with at least twelve Unicode-aware words', async 
     }, () => {}, undefined, (event) => events.push(event))
 
     assert.deepEqual(events.filter((event) => event.type === 'progress-update').map((event) => event.type === 'progress-update' ? event.summary : ''), [
-      'I’m using write now. I’ll use that result to continue your request carefully and accurately.',
-      twelveWords,
+      'I found the change point; now I’ll patch it.',
+      conciseState,
       unicodeWords
     ])
     assert.equal(readFileSync(join(projectPath, 'three.txt'), 'utf8'), 'three')
@@ -435,7 +477,7 @@ test('accepts only task states with at least twelve Unicode-aware words', async 
   }
 })
 
-test('forwards confirmed final response deltas at provider cadence', async () => {
+test('buffers provider prose until the final-answer phase is confirmed', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const requests: LocalCompletionRequest[] = []
@@ -448,9 +490,13 @@ test('forwards confirmed final response deltas at provider cadence', async () =>
       async stream(request, onDelta): Promise<LocalCompletion> {
         requests.push(request)
         index += 1
-        if (index === 1) return { text: '', toolCalls: [{ id: 'write', name: 'write', arguments: { filePath: 'streamed.txt', content: 'done' } }] }
+        if (index === 1) {
+          onDelta('I found the issue. Let me fix it now.')
+          assert.deepEqual(emitted, [])
+          return { text: 'I found the issue. Let me fix it now.', toolCalls: [{ id: 'write', name: 'write', arguments: { filePath: 'streamed.txt', content: 'done' } }] }
+        }
         onDelta('One two three four five ')
-        assert.deepEqual(emitted, ['One two three four five '])
+        assert.deepEqual(emitted, [])
         onDelta('six seven eight nine ten eleven.')
         return { text: 'One two three four five six seven eight nine ten eleven.', toolCalls: [] }
       }
@@ -464,7 +510,7 @@ test('forwards confirmed final response deltas at provider cadence', async () =>
     }, (delta) => emitted.push(delta))
 
     assert.equal(requests.length, 2)
-    assert.deepEqual(emitted, ['One two three four five ', 'six seven eight nine ten eleven.'])
+    assert.deepEqual(emitted, ['One two three four five six seven eight nine ten eleven.'])
     assert.equal(readFileSync(join(projectPath, 'streamed.txt'), 'utf8'), 'done')
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
@@ -653,7 +699,7 @@ test('does not display a streamed intent-only response before recovery', async (
   }
 })
 
-test('preserves provider output emitted before cancellation', async () => {
+test('discards uncommitted provider prose when generation is cancelled', async () => {
   const projectPath = mkdtempSync(join(tmpdir(), 'qyroucode-agent-'))
   try {
     const controller = new AbortController()
@@ -677,7 +723,7 @@ test('preserves provider output emitted before cancellation', async () => {
       messages: [{ role: 'user', content: 'Respond with several words.' }]
     }, (delta) => deltas.push(delta)), /Provider stream cancelled/)
 
-    assert.deepEqual(deltas, ['One '])
+    assert.deepEqual(deltas, [])
   } finally {
     rmSync(projectPath, { recursive: true, force: true })
   }

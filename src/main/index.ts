@@ -890,7 +890,7 @@ app.whenReady().then(() => {
         send({ requestId, type: 'files-changed', files: event.files })
         break
       case 'progress-update':
-        send({ requestId, type: 'progress-update', progressId: event.progressId, summary: event.summary, source: event.source })
+        send({ requestId, type: 'progress-update', progressId: event.progressId, phase: event.phase, summary: event.summary, source: event.source })
         break
       case 'todos-updated':
         send({ requestId, type: 'todos-updated', todos: event.todos })
@@ -975,7 +975,7 @@ app.whenReady().then(() => {
       }
       await runner(
         agentRequest,
-        (delta) => send({ requestId, type: 'delta', delta }),
+        (delta) => send({ requestId, type: 'delta', phase: 'final_answer', delta }),
         (messages) => saveAgentSession({
           threadId: request.threadId,
           projectPath: project.path,

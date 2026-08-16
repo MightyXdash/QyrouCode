@@ -14,7 +14,7 @@ import type { Project } from '../../shared/projects'
 import { MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_ATTACHMENTS, type ChatAttachment, type ChatMessage, type ChatThread, type TodoDisplay, type ToolCallDisplay } from '../../shared/chat'
 import WindowControls from './WindowControls'
 import MarkdownMessage from './MarkdownMessage'
-import { buildWorkLogPhases, shouldShowWorkLog, upsertProgressActivity, workLogMessagesForAssistant, type WorkLogPhase } from './workLog'
+import { buildWorkLogPhases, shouldShowToolPhase, shouldShowWorkLog, upsertProgressActivity, workLogMessagesForAssistant, type WorkLogPhase } from './workLog'
 import { REASONING_EFFORTS, reasoningProfile, type ReasoningEffort } from './reasoningProfiles'
 import { responseStylePrompt } from './responseStylePrompts'
 import { Search, Plus, ChevronDown, ChevronRight, ArrowUp, PanelLeft, PanelTop, Square, ArrowDown, FolderPlus, Folder, FolderOpen, Check, X, CheckCircle, XCircle, Terminal, SquareTerminal, FileEdit, FilePlus, Globe, Code, List, Eye, Braces, PenLine, RefreshCw, ChartNoAxesGantt, LoaderCircle, SquarePen, Trash2, Copy, Settings, Circle, MoreHorizontal, Paperclip, FileText, Activity, AppWindow, Binary, BookOpen, Bot, Camera, CircleStop, CornerDownLeft, Eraser, File as FileIcon, FileArchive, FileCode, FileJson, FileSpreadsheet, FileTerminal, FileType, FolderSearch, Hand, Hourglass, Image, Keyboard, KeyRound, ListChecks, ListTodo, Play, Presentation, Rocket, ScrollText, SquareX, Sparkles, Table } from 'lucide-react'
@@ -46,7 +46,6 @@ function playCaptureSound(): void {
 const AUTO_SCROLL_THRESHOLD = 72
 const WEB_SEARCH_REVEAL_CHARACTERS_PER_SECOND = 150
 const DEFAULT_ACTIVITY_SWEEP_DURATION_MS = 1_800
-const FINAL_RESPONSE_SETTLE_DELAY_MS = 250
 const PROJECT_THREAD_STAGGER_MS = 45
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 128_000
@@ -382,7 +381,7 @@ function WorkLog({ id, hidden, phases, pending, presentTenseToolIds }: { id: str
       {phases.map((phase, index) => {
         const toolCalls = phase.toolMessages.flatMap((message) => message.toolCalls ?? [])
         const isLast = index === phases.length - 1
-        const showTools = !pending || !isLast || toolCalls.some((toolCall) => toolCall.result !== undefined || !!toolCall.error)
+        const showTools = shouldShowToolPhase(pending, isLast)
         const key = phase.progress?.progressId ?? phase.progress?.id ?? toolCalls[0]?.id ?? `phase-${index}`
         return (
           <div className="work-log-phase" key={key}>
@@ -626,7 +625,6 @@ export default function MainApp(): JSX.Element {
   const viewStateLoadedRef = useRef(false)
   const modelMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
-  const completionSettleTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const webSearchRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const toolCallStartedAtRef = useRef<Map<string, number>>(new Map())
   const toolTenseTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
@@ -737,47 +735,12 @@ export default function MainApp(): JSX.Element {
     setThreadRuns(next)
   }
 
-  const clearCompletionSettleTimer = (requestId: string): void => {
-    const timer = completionSettleTimerRefs.current.get(requestId)
-    if (!timer) return
-    clearTimeout(timer)
-    completionSettleTimerRefs.current.delete(requestId)
-  }
-
-  const settleFinalResponse = (requestId: string, threadId: string): void => {
-    clearCompletionSettleTimer(requestId)
-    const timer = setTimeout(() => {
-      completionSettleTimerRefs.current.delete(requestId)
-      const run = threadRunsRef.current[threadId]
-      if (run?.requestId !== requestId) return
-      const current = threadsRef.current.find((thread) => thread.id === threadId)
-      if (!current) return
-      const completedAt = Date.now()
-      const messages = current.messages.map((message, index) => index === current.messages.length - 1 && message.role === 'assistant' && message.status === 'pending'
-        ? {
-            ...message,
-            status: 'completed' as const,
-            completedAt,
-            durationMs: Math.max(0, completedAt - (message.startedAt ?? run.startedAt))
-          }
-        : message)
-      const completedThread = { ...current, messages, todos: [], updatedAt: completedAt }
-      replaceThread(completedThread)
-      void window.api.saveChatThread(completedThread)
-      requestThreadIdsRef.current.delete(requestId)
-      settledCompletionRequestIdsRef.current.add(requestId)
-      setThreadRun(threadId, undefined)
-    }, FINAL_RESPONSE_SETTLE_DELAY_MS)
-    completionSettleTimerRefs.current.set(requestId, timer)
-  }
-
   const stopThreadRun = (threadId: string): void => {
     const run = threadRunsRef.current[threadId]
     if (!run) return
     const completedAt = Date.now()
     cancelledThreadIdsRef.current.add(threadId)
     if (run.requestId) {
-      clearCompletionSettleTimer(run.requestId)
       requestThreadIdsRef.current.delete(run.requestId)
     }
     setThreadRun(threadId, undefined)
@@ -806,7 +769,6 @@ export default function MainApp(): JSX.Element {
     for (const threadId of staleThreadIds) {
       const run = threadRunsRef.current[threadId]
       if (run?.requestId) {
-        clearCompletionSettleTimer(run.requestId)
         requestThreadIdsRef.current.delete(run.requestId)
       }
       setThreadRun(threadId, undefined)
@@ -1164,19 +1126,18 @@ export default function MainApp(): JSX.Element {
       return
     }
     if (event.type === 'delta') {
+      if (event.phase !== 'final_answer') return
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
-      const messages = current.messages.map((message, index) => index === current.messages.length - 1
+      const messages = current.messages.map((message, index) => index === current.messages.length - 1 && message.role === 'assistant' && message.messagePhase !== 'commentary'
         ? { ...message, content: message.content + event.delta }
         : message)
       const updated = { ...current, messages, updatedAt: Date.now() }
       replaceThread(updated)
       saveThreadDebounced(updated)
-      settleFinalResponse(event.requestId, requestThreadId)
       return
     }
     if (event.type === 'response-reset') {
-      clearCompletionSettleTimer(event.requestId)
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       const messages = current.messages.map((message, index) => index === current.messages.length - 1 && message.role === 'assistant'
@@ -1260,6 +1221,7 @@ export default function MainApp(): JSX.Element {
       return
     }
     if (event.type === 'progress-update') {
+      if (event.phase !== 'commentary') return
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
       if (!current) return
       if (activeThreadRef.current?.id === requestThreadId) clearHeldActivity(true)
@@ -1312,7 +1274,6 @@ export default function MainApp(): JSX.Element {
       saveThreadImmediate(updated)
       return
     }
-    clearCompletionSettleTimer(event.requestId)
     if (!requestThreadIdsRef.current.has(event.requestId)) settledCompletionRequestIdsRef.current.add(event.requestId)
     if (event.type === 'error') {
       const current = threadsRef.current.find((thread) => thread.id === requestThreadId)
@@ -1362,7 +1323,6 @@ export default function MainApp(): JSX.Element {
     if (webSearchRevealTimerRef.current) clearInterval(webSearchRevealTimerRef.current)
     for (const timer of toolTenseTimerRefs.current.values()) clearTimeout(timer)
     for (const timer of saveTimerRefs.current.values()) clearTimeout(timer)
-    for (const timer of completionSettleTimerRefs.current.values()) clearTimeout(timer)
   }, [])
 
   useLayoutEffect(() => {
@@ -1981,7 +1941,7 @@ export default function MainApp(): JSX.Element {
           reasoningRetention: shouldRetainRemoteReasoning(connections?.find((connection) => connection.id === selectedModel.connectionId)?.kind ?? 'openai') ? 'retain' : 'discard'
         }
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content, attachments: pendingForSend, timestamp: now }
-    const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '', timestamp: now, startedAt: now, status: 'pending', model: modelProvenance }
+    const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '', timestamp: now, startedAt: now, status: 'pending', messagePhase: 'final_answer', model: modelProvenance }
     const thread: ChatThread = {
       id: threadId,
       projectPath,

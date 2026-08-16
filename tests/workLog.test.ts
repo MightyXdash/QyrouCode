@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ChatMessage } from '../src/shared/chat.js'
-import { buildWorkLogPhases, isProgressActivity, shouldShowWorkLog, upsertProgressActivity, workLogMessagesForAssistant } from '../src/renderer/src/workLog.js'
+import { buildWorkLogPhases, isProgressActivity, shouldShowToolPhase, shouldShowWorkLog, upsertProgressActivity, workLogMessagesForAssistant } from '../src/renderer/src/workLog.js'
 
 const assistant = (id: string, status: ChatMessage['status'] = 'pending'): ChatMessage => ({ id, role: 'assistant', content: '', status })
 const progress = (id: string, parentAssistantId: string, content: string): ChatMessage => ({
@@ -37,6 +37,7 @@ test('upserts progress by stable id without duplicating the activity row', () =>
   assert.equal(updated.length, 2)
   assert.equal(updated[0].id, 'message-1')
   assert.equal(updated[0].content, 'Inspecting the relevant project files before making the requested change.')
+  assert.equal(updated[0].messagePhase, 'commentary')
   assert.equal(updated[1].id, parent.id)
 })
 
@@ -67,4 +68,10 @@ test('active work is visible while completed work requires disclosure expansion'
   assert.equal(shouldShowWorkLog('cancelled', false), false)
   assert.equal(shouldShowWorkLog('error', false), false)
   assert.equal(shouldShowWorkLog('completed', true), true)
+})
+
+test('keeps the active tool phase behind the single live activity row', () => {
+  assert.equal(shouldShowToolPhase(true, true), false)
+  assert.equal(shouldShowToolPhase(true, false), true)
+  assert.equal(shouldShowToolPhase(false, true), true)
 })

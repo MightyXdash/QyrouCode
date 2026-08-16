@@ -65,6 +65,7 @@ export interface ChatMessage {
   attachments?: ChatAttachment[]
   parentAssistantId?: string
   activityKind?: 'progress'
+  messagePhase?: 'commentary' | 'final_answer'
   progressId?: string
   progressSource?: 'model' | 'fallback'
   status?: AssistantMessageStatus

@@ -14,7 +14,7 @@ export interface ProgressActivityUpdate {
 export function isProgressActivity(message: ChatMessage): boolean {
   if (message.role !== 'tool' || !message.content || message.toolCalls?.length) return false
   if (message.content.startsWith('__reasoning__') || message.content.startsWith('__progress__')) return false
-  return message.activityKind === 'progress' || !message.toolCalls?.length
+  return message.messagePhase === 'commentary' || message.activityKind === 'progress' || !message.toolCalls?.length
 }
 
 export function workLogMessagesForAssistant(messages: readonly ChatMessage[], assistantIndex: number): ChatMessage[] {
@@ -52,6 +52,10 @@ export function shouldShowWorkLog(status: ChatMessage['status'], expanded: boole
   return status === 'pending' || expanded
 }
 
+export function shouldShowToolPhase(pending: boolean, isLast: boolean): boolean {
+  return !pending || !isLast
+}
+
 export function upsertProgressActivity(
   messages: readonly ChatMessage[],
   parentAssistantId: string,
@@ -65,7 +69,7 @@ export function upsertProgressActivity(
     message.progressId === update.progressId
   )
   if (existingIndex >= 0) return messages.map((message, index) => index === existingIndex
-    ? { ...message, content: update.summary, progressSource: update.source }
+    ? { ...message, content: update.summary, activityKind: 'progress', messagePhase: 'commentary', progressSource: update.source }
     : message)
   const progressMessage: ChatMessage = {
     id: messageId,
@@ -74,6 +78,7 @@ export function upsertProgressActivity(
     timestamp,
     parentAssistantId,
     activityKind: 'progress',
+    messagePhase: 'commentary',
     progressId: update.progressId,
     progressSource: update.source
   }

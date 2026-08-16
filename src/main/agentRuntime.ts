@@ -35,7 +35,7 @@ export type AgentToolEvent =
   | { type: 'tool-result'; toolCallId: string; result: string; filePath?: string }
   | { type: 'tool-error'; toolCallId: string; error: string }
   | { type: 'files-changed'; files: FileChangeDisplay[] }
-  | { type: 'progress-update'; progressId: string; summary: string; source: 'model' | 'fallback' }
+  | { type: 'progress-update'; progressId: string; phase: 'commentary'; summary: string; source: 'model' | 'fallback' }
   | { type: 'todos-updated'; todos: TodoDisplay[] }
   | { type: 'response-reset' }
 
@@ -50,17 +50,16 @@ const MAX_PROVIDER_RETRIES = 3
 const IMAGE_CONTEXT_CHARACTER_WEIGHT = 64
 const TITLE_MAX_TOKENS = 36
 const TITLE_MAX_CHARACTERS = 44
-const TASK_STATE_MIN_WORDS = 12
-const TASK_STATE_MAX_WORDS = 63
-const TASK_STATE_MAX_CHARACTERS = 480
-const TASK_STATE_SUBJECT_MAX_CHARACTERS = 160
-const TASK_STATE_ACTION_INTERVAL = 6
+const TASK_STATE_MIN_WORDS = 4
+const TASK_STATE_MAX_WORDS = 20
+const TASK_STATE_MAX_CHARACTERS = 240
 const TASK_STATE_SIMILARITY_THRESHOLD = 0.55
 const MAX_PARALLEL_READ_TOOLS = 4
 const PARALLEL_TOOL_NAMES = new Set(['read', 'list', 'glob', 'grep', 'web_search', 'web_fetch', 'todo_read', 'skill', 'terminal_list', 'terminal_read', 'terminal_status', 'view_file', 'view_text', 'view_json', 'view_yaml', 'view_csv', 'view_pdf', 'view_docx', 'view_pptx', 'view_xlsx', 'view_log', 'view_hex', 'view_archive', 'view_env', 'view_image'])
+const CODE_INSPECTION_TOOLS = new Set(['read', 'list', 'glob', 'grep', 'view_file', 'view_text', 'view_json', 'view_yaml', 'view_log', 'view_env'])
+const MUTATION_TOOLS = new Set(['write', 'edit', 'apply_patch'])
 const INTENT_PATTERN = /\b(?:i(?:'|’)ll|i will|let me|i am going to|first,? i|next,? i|here(?:'|’)s (?:my|the) plan)\b/i
 const CONTROL_PROSE_PATTERN = /^(?:cur_task_state\b[\s\S]*|(?:i(?:'|’)m|i am)\s+(?:checking|searching|researching|reviewing|inspecting|analyzing|planning|working)\b[\s\S]*|(?:thinking|working|searching|researching|reviewing|inspecting|analyzing|planning|checking)\b[\s\S]*)$/iu
-const TASK_STATE_REMINDER = 'Agentic work is continuing after several actions without a recent visible update. If more tools are needed, include one fresh cur_task_state of 12–63 words in this same response alongside the actions it describes. Aim for roughly 60 words and normally stay above about 25 words; use 12–24 only for genuinely simple actions. Do not call it alone, repeat an earlier update, or add one when returning the final answer.'
 
 function messageContentCharacters(content: LocalChatMessage['content']): number {
   if (typeof content === 'string') return content.length
@@ -172,27 +171,12 @@ function uiMessageForCall(call: LocalToolCall): ToolUiMessage | undefined {
   return present && past ? { uim_prt: present, uim_pat: past } : deterministicUiMessage(call.name)
 }
 
-function fallbackSubject(value: unknown, fallback: string): string {
-  if (typeof value !== 'string') return fallback
-  const compact = value.replace(/\s+/gu, ' ').trim().replace(/[.!?;:,]+$/u, '')
-  if (!compact) return fallback
-  if (compact.length <= TASK_STATE_SUBJECT_MAX_CHARACTERS) return compact
-  const shortened = compact.slice(0, TASK_STATE_SUBJECT_MAX_CHARACTERS).trimEnd()
-  const boundary = shortened.lastIndexOf(' ')
-  return `${boundary > TASK_STATE_SUBJECT_MAX_CHARACTERS / 2 ? shortened.slice(0, boundary) : shortened}…`
-}
-
 function fallbackTaskState(call: LocalToolCall): string {
-  if (call.name === 'web_search') {
-    const subject = fallbackSubject(call.arguments.query, 'the specific topic you asked about')
-    return `Let me search the web for reliable, up-to-date information about ${subject} before I answer.`
-  }
-  if (call.name === 'web_fetch') {
-    const source = fallbackSubject(call.arguments.url, 'the most relevant source')
-    return `Let me open ${source} and verify its details carefully before I answer your question.`
-  }
-  const present = uiMessageForCall(call)?.uim_prt ?? deterministicUiMessage(call.name).uim_prt
-  return `I’m ${present.charAt(0).toLocaleLowerCase()}${present.slice(1)} now. I’ll use that result to continue your request carefully and accurately.`
+  if (call.name === 'web_search') return 'I’ll verify current reliable sources before forming the answer.'
+  if (call.name === 'web_fetch') return 'I found a relevant source; now I’ll verify it.'
+  if (CODE_INSPECTION_TOOLS.has(call.name)) return 'I’ll trace the relevant code path before making changes.'
+  if (MUTATION_TOOLS.has(call.name)) return 'I found the change point; now I’ll patch it.'
+  return 'I’ll complete this step, then verify the resulting behavior.'
 }
 
 interface ToolExecution {
@@ -314,7 +298,6 @@ export class AgentRuntime {
     const duplicateCalls = new Map<string, number>()
     let intentReprompts = 0
     let emptyCompletionRetries = 0
-    let actionsSinceTaskState = 0
     let enableThinking = request.enableThinking ?? false
     const toolbox = new AgentToolbox({
       projectPath: request.projectPath,
@@ -380,46 +363,28 @@ export class AgentRuntime {
         messages = await this.compact(request, messages, onToolEvent, onGenerationMetrics)
         onState?.(persistedMessages(messages))
       }
-      let streamedText = ''
-      const liveDelta = depth === 0 && onFinalDelta
-        ? (delta: string): void => {
-            streamedText += delta
-            onFinalDelta(delta)
-          }
-        : undefined
-      const resetStreamedText = (): void => {
-        if (!streamedText) return
-        streamedText = ''
-        onToolEvent?.({ type: 'response-reset' })
-      }
       const completion = await this.completeWithRetries({
         ...modelSettings(request, enableThinking),
-        messages: [{
-          role: 'system',
-          content: actionsSinceTaskState >= TASK_STATE_ACTION_INTERVAL ? `${systemPrompt}\n\n${TASK_STATE_REMINDER}` : systemPrompt
-        }, ...messages],
+        messages: [{ role: 'system', content: systemPrompt }, ...messages],
         tools: toolbox.definitions,
         toolChoice: 'auto',
         signal: request.signal
-      }, onToolEvent, liveDelta, onGenerationMetrics)
+      }, onToolEvent, undefined, onGenerationMetrics)
       const contentCalls = parseHealedToolCalls(completion.text, allowedNames)
       const reasoningCalls = parseHealedToolCalls(completion.reasoningText ?? '', allowedNames)
       const availableCalls = completion.toolCalls.length ? completion.toolCalls : contentCalls.length ? contentCalls : reasoningCalls
       if (!availableCalls.length) {
         const finalText = stripToolCallMarkup(completion.text)
         if (!finalText.trim() && completion.reasoningText && emptyCompletionRetries < MAX_INTENT_REPROMPTS) {
-          resetStreamedText()
           emptyCompletionRetries += 1
           enableThinking = false
           messages.push({ role: 'user', content: 'Your previous turn contained only private reasoning and no visible answer or action. Continue with thinking disabled: use the available tools if needed, otherwise provide the completed final answer now.' })
           continue
         }
         if (!finalText.trim()) {
-          resetStreamedText()
           throw new Error('The local model completed a turn without a visible answer or usable tool call')
         }
         if (isIntentWithoutAction(finalText) && intentReprompts < MAX_INTENT_REPROMPTS) {
-          resetStreamedText()
           intentReprompts += 1
           messages.push({ role: 'user', content: 'Your previous internal turn only contained progress or described future actions. Do not write cur_task_state as assistant prose. Continue now by invoking cur_task_state through the structured function-call channel in the same response as the action tools it describes. If no tool is needed, provide only the completed final answer.' })
           continue
@@ -427,10 +392,7 @@ export class AgentRuntime {
         messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
         onState?.(persistedMessages(messages))
         if (depth === 0 && onFinalDelta) {
-          if (streamedText !== finalText) {
-            resetStreamedText()
-            onFinalDelta(finalText)
-          }
+          onFinalDelta(finalText)
           return { text: finalText, streamed: true }
         }
         return { text: finalText, streamed: false }
@@ -438,7 +400,6 @@ export class AgentRuntime {
 
       intentReprompts = 0
       emptyCompletionRetries = 0
-      resetStreamedText()
       const usedCallIds = new Set<string>()
       const calls = availableCalls.map((call) => {
         let id = call.id || randomUUID()
@@ -463,8 +424,7 @@ export class AgentRuntime {
         if (actions.length > 0 && !acceptedTaskStateId && !duplicate) {
           acceptedTaskStateId = call.id
           visibleTaskStates.push(message)
-          actionsSinceTaskState = 0
-          onToolEvent?.({ type: 'progress-update', progressId: call.id, summary: message, source: 'model' })
+          onToolEvent?.({ type: 'progress-update', progressId: call.id, phase: 'commentary', summary: message, source: 'model' })
           if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] progress', { source: 'model', length: message.length })
         }
         const result = call.id === acceptedTaskStateId
@@ -479,22 +439,20 @@ export class AgentRuntime {
         const summary = fallbackTaskState(call)
         const progressId = `fallback:${call.id}`
         visibleTaskStates.push(summary)
-        actionsSinceTaskState = 0
-        onToolEvent?.({ type: 'progress-update', progressId, summary, source: 'fallback' })
+        onToolEvent?.({ type: 'progress-update', progressId, phase: 'commentary', summary, source: 'fallback' })
         if (process.env.NODE_ENV === 'development') console.debug('[AgentRuntime] progress', { source: 'fallback', length: summary.length })
       }
       let actionIndex = 0
       while (actionIndex < actions.length) {
         request.signal?.throwIfAborted()
         const first = actions[actionIndex]
-        if ((!acceptedTaskStateId && visibleTaskStates.length === 0) || actionsSinceTaskState >= TASK_STATE_ACTION_INTERVAL) emitFallbackProgress(first)
+        if (!acceptedTaskStateId && visibleTaskStates.length === 0) emitFallbackProgress(first)
         if (PARALLEL_TOOL_NAMES.has(first.name)) {
           const batch: LocalToolCall[] = []
-          const roomBeforeProgress = Math.max(1, TASK_STATE_ACTION_INTERVAL - actionsSinceTaskState)
           while (
             actionIndex < actions.length &&
             PARALLEL_TOOL_NAMES.has(actions[actionIndex].name) &&
-            batch.length < Math.min(MAX_PARALLEL_READ_TOOLS, roomBeforeProgress)
+            batch.length < MAX_PARALLEL_READ_TOOLS
           ) {
             batch.push(actions[actionIndex])
             actionIndex += 1
@@ -503,13 +461,11 @@ export class AgentRuntime {
           for (const execution of executions) {
             results.set(execution.call.id, execution)
             emitExecution(execution)
-            actionsSinceTaskState += 1
           }
         } else {
           const execution = await executeAction(first)
           results.set(first.id, execution)
           emitExecution(execution)
-          actionsSinceTaskState += 1
           actionIndex += 1
         }
       }
@@ -528,7 +484,6 @@ export class AgentRuntime {
       onState?.(persistedMessages(messages))
     }
 
-    let streamedText = ''
     const completion = await this.completeWithRetries({
       ...modelSettings(request, false),
       messages: [
@@ -540,19 +495,13 @@ export class AgentRuntime {
       toolChoice: 'none',
       maxTokens: Math.min(request.maxTokens ?? FINAL_MAX_TOKENS, FINAL_MAX_TOKENS),
       signal: request.signal
-    }, onToolEvent, depth === 0 && onFinalDelta ? (delta) => {
-      streamedText += delta
-      onFinalDelta(delta)
-    } : undefined, onGenerationMetrics)
+    }, onToolEvent, undefined, onGenerationMetrics)
     const finalText = stripToolCallMarkup(completion.text)
     if (!finalText.trim()) throw new Error('The local model completed the final turn without a visible answer')
     messages.push({ role: 'assistant', content: finalText, reasoningText: retainedReasoning(request, completion.reasoningText), ...modelProvenance(request) })
     onState?.(persistedMessages(messages))
     if (depth === 0 && onFinalDelta) {
-      if (streamedText !== finalText) {
-        if (streamedText) onToolEvent?.({ type: 'response-reset' })
-        onFinalDelta(finalText)
-      }
+      onFinalDelta(finalText)
       return { text: finalText, streamed: true }
     }
     return { text: finalText, streamed: false }
